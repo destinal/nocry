@@ -143,6 +143,46 @@ nocry: the model field and the installed firmware's rtos image must agree, or th
 shows the mountain picture during start. It still starts; only the boot picture is wrong.
 Each image carries 8 JPEGs; not all are used by a given build.
 
+## What the stock image does to the hardware
+
+Recorded by running the stock image in an emulator that logs every register access
+(`tools/rtos-analysis/emu.py`), then checked against register captures taken on the board
+right after the image has run (`tools/rtos-analysis/regdump`: a small program the loader
+starts in place of the kernel).
+
+| Step | Registers |
+|---|---|
+| CPU core | interrupt lines of core 1 in the core control unit; `Config7` bits 3-5; kseg0 cached; FPU and MSA enabled |
+| Clock gates opened | UART4, interrupt controller, OST, TCU, PWM, LCD |
+| Timers | TCU channel and OST started for the scheduler tick; their interrupt lines unmasked |
+| Pins | PA2/PA3 function 1; PB0-15 and PB24-27 function 1 (16-bit RGB data, clock, enable, syncs); PC22 output low |
+| PWM | clock divider `0x40000004`; `PWMCCFG0` 0, `PWMLVL` 1, `PWMDCR0` 0; the PWM is not started |
+| Pixel clock | `LPCDR` = `0x4400008b` (MPLL / 140, about 10.7 MHz, inverted). Set **before** the display registers: a write to them without a running pixel clock never completes |
+| Display controller | interrupt enables `0x00028142`; `COM_CONFIG` = reset value with burst fields set (`0x00cf003c`); `DISP_COM` = `0x002600f1` (TFT, RGB565 out, dithering); TFT timings `0x0014021c`, `0x0014014c`, `0x00280208`, `0x00280138`; `TFT_CFG` `0x102` |
+| Panel power | PC21 high, PB16 low, PC21 low (power on, active low), 30 ms, PB16 high / low / high 5 ms apart, 20 ms |
+| Picture | layer-composer path: a frame descriptor (480x272, direct output, layer 0 enabled) and a layer descriptor pointing at a 32-bit xRGB frame buffer; `DC_FRM_CFG_ADDR`, then `DC_FRM_CFG_CTRL` = 1; wait for "display end" |
+| Backlight | PC0 driven high as a plain output, then PC22 (its supply) high |
+| Hand-over | panel id to the shared word, first word of the image set to 1, core 1's interrupt lines off, cache flushed, `wait` |
+
+"Display end" (status bit 17) is raised at the end of every frame. The stock image's
+interrupt handler clears it each time, so at hand-over it was last cleared at a frame end.
+
+### nocry-rtos compared with the stock image
+
+After the last change, 1048 captured registers (clock module, pins, PWM, display controller,
+timers, core control, interrupt controller) show these differences, all intended or without
+effect:
+
+| Difference | Reason |
+|---|---|
+| TCU and OST timer registers; two interrupt-controller mask bits for them and one for UART4 | the stock image runs a scheduler with a timer tick and a serial console; nocry-rtos has neither |
+| one pending bit in the core control unit | follows from the timer interrupt above |
+| addresses of the frame and layer descriptors | the stock image allocates them; nocry-rtos uses fixed ones |
+| level of one sync pin, display position counters, timer counts, `CPM+0xcc` | change from run to run, also between captures of the stock image |
+
+Three real differences were found this way and fixed: two display registers whose reset
+bits nocry-rtos had cleared, and the moment at which "display end" is cleared last.
+
 ## Method
 
 `dd` the partition from a full backup; `strings` for source paths and the toolchain banner;

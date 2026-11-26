@@ -142,42 +142,39 @@ u32 *nocry_display_init(void)
 	int i;
 
 	/* "main init": clocks for PWM and the timers the stock image uses, backlight off */
-	log_str("> gates\n");
 	REG(CPM_CLKGR1) &= ~((1u << 17) | (1u << 26));
 	REG(CPM_CLKGR0) &= ~((1u << 20) | (1u << 18));
-	log_str("> pwm divider\n");
 	set_divider(CPM_PWMCDR, 0x40000004);
 	REG(CPM_CLKGR1) &= ~(1u << 5);
-	log_str("> pins\n");
 	gpio_func(PB, 0x0f00ffff, 1);		/* PB0-15 data, PB24-27 clock, enable, syncs */
 	gpio_out(PC, 1u << 22, 0);		/* backlight supply off */
-	log_str("> pwm regs\n");
 	REG(PWM_CCFG0) = 0;
 	REG(PWM_LVL) = 1;
 	REG(PWM_DCR0) = 0;
 
 	/* "enable fb": controller set-up, pixel clock, panel power-on */
-	log_str("> lcd gate\n");
 	REG(CPM_CLKGR0) &= ~(1u << 23);
 	/*
 	 * The pixel clock has to run before the display registers are written: a write to them
 	 * without it never completes (second hardware test, 2026-11-26). The stock image sets
 	 * the rate here and only the "inverted" bit after the TFT registers.
 	 */
-	log_str("> pixel clock\n");
 	set_divider(CPM_LPCDR, 0x4400008b);	/* MPLL / 140, about 10.7 MHz, clock inverted */
-	log_str("> dpu regs\n");
 	REG(DC_INT_EN) = 0x00028142;
 	REG(DC_CLR_ST) = 0;
-	REG(DC_COM_CONFIG) = 0x3c;
-	REG(DISP_COM) = 0x00260011;		/* TFT, RGB565 out with dithering */
+	/*
+	 * The stock image sets fields in these two registers and keeps the rest of their reset
+	 * values (clock-gate enables: 0x00cf0000 and 0xe0). A capture on the board showed them;
+	 * the emulator trace, where registers start at 0, did not.
+	 */
+	REG(DC_COM_CONFIG) = 0x00cf003c;
+	REG(DISP_COM) = 0x002600f1;		/* TFT, RGB565 out with dithering */
 	REG(TFT_HSYNC) = 0x0014021c;
 	REG(TFT_VSYNC) = 0x0014014c;
 	REG(TFT_HDE) = 0x00280208;
 	REG(TFT_VDE) = 0x00280138;
 	REG(TFT_CFG) = 0x00000102;
 
-	log_str("> panel power\n");
 	gpio_out(PC, 1u << 21, 1);		/* panel power off (active low) */
 	gpio_out(PB, 1u << 16, 0);		/* reset asserted */
 	gpio_out(PC, 1u << 21, 0);
@@ -188,11 +185,9 @@ u32 *nocry_display_init(void)
 	mdelay(5);
 	gpio_out(PB, 1u << 16, 1);
 	mdelay(25);
-	log_str("> com config\n");
 	REG(DC_COM_CONFIG) |= 2;
 
 	/* one visible layer, 480x272 xRGB; two frame descriptors as the stock image leaves them */
-	log_str("> descriptors\n");
 	for (i = 0; i < 4; i++) {
 		static const u32 cfg[4] = { 0x001500ff, 0x00000641, 0x000005e1, 0x00000581 };
 		int k;
@@ -229,17 +224,32 @@ void nocry_display_start(void)
 {
 	int n;
 
-	log_str("> frame start\n");
 	REG(DC_FRM_CFG_ADDR) = FRAME0_PHYS;
 	REG(DC_FRM_CFG_CTRL) = 1;
 	/* the stock image waits up to 300 ms for the "frame done" interrupt */
 	for (n = 0; n < 300 && !(REG(DC_INT_FLAG) & INT_FRAME_DONE); n++)
 		mdelay(1);
 	log_hex("frame done after ms ", n);
-	log_hex("int flags ", REG(DC_INT_FLAG));
 	REG(DC_CLR_ST) = INT_FRAME_DONE;
 
 	/* backlight: PC0 driven high (full brightness), then its supply PC22 on */
 	gpio_out(PC, 1u << 0, 1);
 	gpio_out(PC, 1u << 22, 1);
+}
+
+/*
+ * The controller raises "frame done" again at the end of every frame. The stock image's
+ * interrupt handler clears it each time, so when that image hands over, the flag was last
+ * cleared exactly at a frame end. Do the same: wait for the next frame end, clear, return.
+ * (Captures on the board: after the stock image the flag stays clear for several
+ * milliseconds; cleared at an arbitrary moment it was already set again.)
+ */
+void nocry_display_quiesce(void)
+{
+	volatile u32 n;
+
+	REG(DC_CLR_ST) = INT_FRAME_DONE;
+	for (n = 0; n < 4000000 && !(REG(DC_INT_FLAG) & INT_FRAME_DONE); n++)
+		;
+	REG(DC_CLR_ST) = INT_FRAME_DONE;
 }

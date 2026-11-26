@@ -14,9 +14,13 @@ powers the 480x272 panel up, shows one frame through the layer composer, switche
 backlight on, then hands back to the loader (`main.c`). The sequence and values were taken
 from a trace of the stock image (`tools/rtos-analysis/`), not guessed.
 
+The hardware state it hands over was compared with the stock image's on the board, register
+by register (1048 registers); what still differs is listed and explained in
+`docs/rtos-partition.md`.
+
 Not done yet: a real boot picture and the model-dependent choice the stock image makes;
-other panels (480x800 boards); comparing the hardware state we hand over with the stock
-image's, register by register.
+other panels (480x800 boards); FPU/MSA set-up on core 1, which the stock image does and this
+one leaves out (core 1 is reset before Linux starts).
 
 Build: `tools/rtos-build/build.sh` (needs Docker) gives `tools/rtos-build/out/nocry-rtos.bin`.
 

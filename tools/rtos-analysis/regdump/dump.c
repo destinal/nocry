@@ -47,6 +47,26 @@ void dump_main(void)
 			o[2] = ++n;
 		}
 	o[3 + 2 * n] = 0xffffffff;	/* complete */
+
+	/*
+	 * Then watch the display controller's "display end" status (DC_ST bit 17) for a while:
+	 * 64 samples of DC_ST: 32 untouched, then 32 with the bit cleared after each sample.
+	 * Stored after the table as "NCRS", then the samples.
+	 */
+	{
+		volatile u32 *st = (volatile u32 *)0xb3052004u, *clr = (volatile u32 *)0xb3052008u;
+		volatile u32 *q = o + 4 + 2 * n, d;
+
+		q[0] = 0x5352434e;
+		for (i = 0; i < 64; i++) {
+			q[1 + i] = *st;
+			if (i >= 32)		/* first half: only look */
+				*clr = 0x20000;
+			for (d = 0; d < 200000; d++)
+				;
+		}
+		q[65] = 0xffffffff;
+	}
 	for (;;)
 		__asm__ volatile("wait");
 }

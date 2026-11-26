@@ -119,6 +119,7 @@ void nocry_rtos_main(void *spl_args)
 	draw(nocry_display_init());
 	nocry_display_start();
 
+	nocry_display_quiesce();
 	nocry_spl_word = 0;		/* panel id for the kernel command line: lcm_id=0 */
 	_start[0] = 1;			/* "done": the SPL watches this word */
 	log_str("handing back to the SPL\n");
@@ -129,7 +130,6 @@ void nocry_rtos_main(void *spl_args)
 	REG(CCU_OIMR) &= ~bit;
 	__asm__ volatile("sync");
 	flush_dcache();
-	mdelay(1);
 	__asm__ volatile("sync\n wait");
 	log_str("woke up after wait: unexpected\n");
 	for (;;)

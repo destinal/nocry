@@ -14,5 +14,6 @@ void mdelay(u32 ms);
 /* display.c: returns the 480x272 frame buffer (0xffRRGGBB per pixel) */
 u32 *nocry_display_init(void);
 void nocry_display_start(void);
+void nocry_display_quiesce(void);
 
 #endif
