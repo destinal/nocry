@@ -10,9 +10,9 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 
 | Platform | Package | State |
 |---|---|---|
-| Linux (x86-64) | `.AppImage` | Tested, including downloading firmware from Creality's list and installing it (in the development build; the list is not in the 0.1.0-alpha.1 packages yet). Install `60-nocry.rules` once so a normal user can open the board (see Building). |
+| Linux (x86-64) | `.AppImage` | Tested: backup, firmware install from Creality's list, slot copy, secure erase. On first run the window offers to install the udev rule a normal user needs (one password prompt). |
 | macOS (Apple silicon) | `.dmg`, drag to Applications | Tested: a full backup and a firmware install on a Nebula Pad both worked. No driver or setup needed. Unsigned: right-click the app and choose Open the first time. |
-| Windows (x64) | `-setup.exe`, installs for the current user without administrator rights | Builds, **not yet tested**. The board in USB boot mode probably needs a WinUSB driver that the installer does not provide yet. |
+| Windows (x64) | `-setup.exe`, installs for the current user without administrator rights | The app starts, but Windows needs a one-time USB driver setup before it can talk to the board. Builds after 0.1.0-alpha.2 offer it in the window ("Set up driver…", one administrator prompt); talking to a board on Windows is **not yet tested**. See "Windows driver" below. |
 
 ![The nocry window: board details and the main actions](docs/screenshots/home.png)
 
@@ -59,6 +59,14 @@ cmake -S gui -B gui/build -DCMAKE_BUILD_TYPE=Release && cmake --build gui/build 
 ```
 
 On Linux a udev rule is needed so a normal user can open the USB devices. The window offers to install it on first run (one password prompt); by hand, copy `host/contrib/60-nocry.rules` into `/etc/udev/rules.d/`. See `host/README.md` for the command-line tool and `gui/README.md` for the GUI.
+
+## Windows driver
+
+Windows does not let a program talk to a USB device until a driver is assigned to it. nocry uses WinUSB, which is part of Windows, so no driver code is installed; `host/contrib/windows/nocry.inf` only names the board's USB IDs.
+
+Windows accepts such a file only when it is signed by a publisher the computer trusts, and nocry has no bought signing certificate. So `install-driver.ps1` (run by "Set up driver…" in the window, or by hand from an administrator PowerShell) creates a certificate on your computer, signs the file once, adds the certificate to the computer's trusted lists and then destroys the certificate's private key, so nothing else can ever be signed with it. `install-driver.ps1 -Uninstall` removes the driver package and the certificate again; uninstalling nocry does not.
+
+A GitHub Actions job (`windows-driver`) checks on a current Windows that the package is accepted, can be installed twice, and uninstalls cleanly.
 
 ## Safety
 

@@ -109,6 +109,7 @@ jobs:
           New-Item -ItemType Directory stage | Out-Null
           Copy-Item gui/build/nocry-gui.exe, host/target/release/nocry.exe, LICENSE stage/
           Copy-Item -Recurse images stage/images
+          Copy-Item -Recurse host/contrib/windows stage/driver
           windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw stage/nocry-gui.exe
           # app-local C++ runtime: no separate (administrator) redistributable install
           Get-ChildItem "$env:VCToolsRedistDir\x64\Microsoft.VC*.CRT\*.dll" | Copy-Item -Destination stage/

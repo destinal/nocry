@@ -114,6 +114,23 @@ public:
         v->addWidget(udevBanner);
         udevBanner->setVisible(!udevRuleInstalled());
 #endif
+#ifdef Q_OS_WIN
+        // first run on Windows: the board's USB devices need Windows' WinUSB driver assigned to them
+        udevBanner = new QWidget;
+        {
+            auto *h = new QHBoxLayout(udevBanner);
+            h->setContentsMargins(0, 0, 0, 0);
+            auto *l = new QLabel(tr("<b>One-time setup needed.</b> Windows cannot talk to the board until a USB driver is set up for it."));
+            l->setWordWrap(true);
+            auto *b = new QPushButton(tr("Set up driver…"));
+            h->addWidget(l, 1);
+            h->addWidget(b);
+            connect(b, &QPushButton::clicked, this, [this] { installWindowsDriver(); });
+        }
+        v->addWidget(udevBanner);
+        udevBanner->setVisible(false);
+        checkWindowsDriver();
+#endif
         v->addWidget(stateTitle);
         auto *hintRow = new QHBoxLayout;
         hintRow->addWidget(stateHint, 1);
@@ -1535,6 +1552,78 @@ private:
         v->addWidget(bb);
         d.exec();
     }
+
+#ifdef Q_OS_WIN
+    // Shows the setup banner unless nocry's driver package is in Windows' driver store.
+    void checkWindowsDriver()
+    {
+        auto *p = new QProcess(this);
+        connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
+            const bool have = p->readAllStandardOutput().contains("nocry.inf");
+            p->deleteLater();
+            udevBanner->setVisible(!have);
+        });
+        connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
+            if (e == QProcess::FailedToStart) {
+                p->deleteLater();
+                udevBanner->setVisible(true);
+            }
+        });
+        p->start(QStringLiteral("pnputil.exe"), {QStringLiteral("/enum-drivers")});
+    }
+
+    // Runs the driver setup script with administrator rights (one Windows prompt).
+    void installWindowsDriver()
+    {
+        QMessageBox ask(QMessageBox::Question, tr("Set up driver"), tr("Set up the USB driver for the board?"), QMessageBox::Ok | QMessageBox::Cancel, this);
+        ask.setInformativeText(tr("Windows will ask for administrator permission once.\n\n"
+                                  "No driver software is added: the board is assigned to WinUSB, a driver that is part of Windows. "
+                                  "Windows only accepts that from a trusted publisher, so the setup creates a certificate on this computer, "
+                                  "uses it once, marks it as trusted and then destroys its signing key so it cannot be used for anything else.\n\n"
+                                  "This also lets the adb and fastboot tools reach the board."));
+        if (ask.exec() != QMessageBox::Ok)
+            return;
+        const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QStringLiteral("nocry-driver-setup"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        for (const char *n : {"nocry.inf", "install-driver.ps1"}) {
+            QFile in(QStringLiteral(":/windows/%1").arg(n)), out(QDir(dir).filePath(n));
+            if (!in.open(QIODevice::ReadOnly) || !out.open(QIODevice::WriteOnly) || out.write(in.readAll()) <= 0) {
+                QMessageBox::warning(this, tr("Set up driver"), tr("Could not write a temporary file."));
+                return;
+            }
+        }
+        QString script = QDir::toNativeSeparators(QDir(dir).filePath(QStringLiteral("install-driver.ps1")));
+        const QString logFile = QDir(dir).filePath(QStringLiteral("install-driver.log"));
+        script.replace(QLatin1Char('\''), QStringLiteral("''"));
+        // an elevated PowerShell runs the script; this one waits for it and passes on its result
+        const QString cmd = QStringLiteral("try { $p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Hidden "
+                                           "-ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"%1\"'; exit $p.ExitCode } catch { exit 1223 }").arg(script);
+        auto *proc = new QProcess(this);
+        setBusy(true);
+        connect(proc, &QProcess::finished, this, [this, proc, logFile](int code, QProcess::ExitStatus) {
+            proc->deleteLater();
+            setBusy(false);
+            checkWindowsDriver();
+            QString text;
+            QFile f(logFile);
+            if (f.open(QIODevice::ReadOnly))
+                text = QString::fromLocal8Bit(f.readAll()).trimmed();
+            log->appendPlainText(tr("Driver setup:\n%1").arg(text));
+            if (code == 0) {
+                QMessageBox::information(this, tr("Set up driver"), tr("The driver is set up. If the board is connected, unplug it and plug it in again."));
+            } else if (code == 1223) {
+                QMessageBox::information(this, tr("Set up driver"), tr("The administrator prompt was declined; nothing was changed."));
+            } else {
+                QMessageBox box(QMessageBox::Warning, tr("Set up driver"), tr("The driver could not be set up."), QMessageBox::Close, this);
+                box.setInformativeText(tr("Details are in the Activity log tab."));
+                box.setDetailedText(text);
+                box.exec();
+            }
+        });
+        proc->start(QStringLiteral("powershell.exe"), {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"), QStringLiteral("-Command"), cmd});
+    }
+#endif
 
     static bool udevRuleInstalled()
     {
