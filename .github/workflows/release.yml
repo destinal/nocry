@@ -121,8 +121,16 @@ jobs:
           if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) { choco install nsis -y --no-progress; $env:PATH += ';C:\Program Files (x86)\NSIS' }
           makensis /DVERSION=$v "/DSTAGE=$PWD\stage" "/DOUT=$PWD\nocry-$v-windows-x64-setup.exe" gui\packaging\installer.nsi
           if ($LASTEXITCODE) { exit 1 }
+          # portable: the same files in a folder, nothing installed; unzip anywhere and run nocry-gui.exe
+          Rename-Item stage "nocry-$v-windows-x64-portable"
+          Compress-Archive -Path "nocry-$v-windows-x64-portable" -DestinationPath "nocry-$v-windows-x64-portable.zip" -CompressionLevel Optimal
+          Get-ChildItem nocry-*-setup.exe, nocry-*-portable.zip | Select-Object Name, Length
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: "nocry-*-setup.exe" }
+        with:
+          name: windows
+          path: |
+            nocry-*-setup.exe
+            nocry-*-portable.zip
 
   macos:
     name: macOS dmg (Apple silicon)
@@ -191,10 +199,10 @@ jobs:
           prerelease: true
           files: out/*
           body: |
-            **Early pre-release.** Tested only on Linux with a Creality Nebula Pad. The Windows and macOS packages are built automatically and have **not been run on real hardware**; on Windows the board in USB boot mode probably needs a WinUSB driver that this installer does not provide yet.
+            **Early pre-release.** Tested on Linux and macOS with a Creality Nebula Pad. On Windows the app runs, but talking to a board has **not been tested**: use "Set up driver…" in the window once (one administrator prompt; see "Windows driver" in the README).
 
-            - Linux: `nocry-*-x86_64.AppImage` (make it executable; install `60-nocry.rules` once, see the README)
-            - Windows: `nocry-*-windows-x64-setup.exe` (installs for the current user, no administrator rights)
+            - Linux: `nocry-*-x86_64.AppImage` (make it executable; the window offers the one-time udev rule setup)
+            - Windows: `nocry-*-windows-x64-setup.exe` (installs for the current user, no administrator rights), or `nocry-*-windows-x64-portable.zip` (unzip anywhere and run `nocry-gui.exe`; nothing is installed)
             - macOS (Apple silicon): `nocry-*-macos-arm64.dmg` (unsigned: right-click the app and choose Open the first time)
             - `nocry-board-images-*.tar.gz`: the SPL, U-Boot stages and recovery Linux loaded onto the board, built from the sources and patches in this repository
 
