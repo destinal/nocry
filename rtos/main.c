@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * nocry-rtos, stage 1: the smallest image the board's SPL accepts in place of Creality's.
+ * nocry-rtos: an open image for the rtos partition, in place of Creality's.
  *
- * It does the hand-over the SPL waits for and nothing else (no picture yet):
+ * It brings up the display (display.c), shows a picture and does the hand-over the SPL waits for:
  *   - report the panel id (0, as the retail Nebula Pad image does),
  *   - change the first word of the image so the SPL knows we are done,
  *   - put this core to sleep; the SPL then resets it and goes on to start Linux.
  * See docs/rtos-partition.md for how this was worked out.
  */
-typedef unsigned int u32;
+#include "nocry_rtos.h"
 
-#define REG(a)		(*(volatile u32 *)(a))
 #define CCU		0xb2200000u	/* core control unit, through kseg1 */
 #define CCU_PIMR	(CCU + 0x120)
 #define CCU_MIMR	(CCU + 0x160)
@@ -26,14 +25,14 @@ extern char __heap_end[];
 #define LOG_ADDR	0xa6e00000u	/* kseg1: reaches RAM without a cache flush */
 static char *logp;
 
-static void log_str(const char *s)
+void log_str(const char *s)
 {
 	while (*s)
 		*logp++ = *s++;
 	*logp = 0;
 }
 
-static void log_hex(const char *name, u32 v)
+void log_hex(const char *name, u32 v)
 {
 	static const char d[] = "0123456789abcdef";
 	int i;
@@ -48,10 +47,31 @@ static void log_hex(const char *name, u32 v)
 #define mfc0(reg, sel) ({ u32 v_; __asm__ volatile("mfc0 %0, $" #reg ", " #sel : "=r"(v_)); v_; })
 #define mtc0(reg, sel, v) __asm__ volatile("mtc0 %0, $" #reg ", " #sel "\n ehb" : : "r"((u32)(v)))
 
-static void delay(u32 n)
+/* Rough: at least `ms` milliseconds at any CPU clock the SPL sets (up to about 1.5 GHz). */
+void mdelay(u32 ms)
 {
-	while (n--)
-		__asm__ volatile("nop");
+	volatile u32 n;
+
+	while (ms--)
+		for (n = 0; n < 300000; n++)
+			;
+}
+
+/* Placeholder picture until there is a real one: dark background, a lighter frame and bar. */
+static void draw(u32 *fb)
+{
+	int x, y;
+
+	for (y = 0; y < 272; y++)
+		for (x = 0; x < 480; x++) {
+			u32 c = 0xff101216;
+
+			if (x < 4 || x >= 476 || y < 4 || y >= 268)
+				c = 0xff2f80ed;
+			else if (y >= 126 && y < 146 && x >= 140 && x < 340)
+				c = 0xffe8e8e8;
+			fb[y * 480 + x] = c;
+		}
 }
 
 /* write back and invalidate the whole data cache of this core */
@@ -96,7 +116,8 @@ void nocry_rtos_main(void *spl_args)
 	log_hex("config7 now ", mfc0(16, 7));
 	log_hex("sn_mac size from spl, after setup ", nocry_spl_word);
 
-	/* (the picture will be drawn here) */
+	draw(nocry_display_init());
+	nocry_display_start();
 
 	nocry_spl_word = 0;		/* panel id for the kernel command line: lcm_id=0 */
 	_start[0] = 1;			/* "done": the SPL watches this word */
@@ -108,7 +129,7 @@ void nocry_rtos_main(void *spl_args)
 	REG(CCU_OIMR) &= ~bit;
 	__asm__ volatile("sync");
 	flush_dcache();
-	delay(100000);
+	mdelay(1);
 	__asm__ volatile("sync\n wait");
 	log_str("woke up after wait: unexpected\n");
 	for (;;)

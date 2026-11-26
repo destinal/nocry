@@ -12,7 +12,8 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$ROOT/rtos:/src:ro" -v "$OUT:/out" $I
   CF="-EL -mips32r2 -mno-abicalls -fno-pic -G0 -msoft-float -ffreestanding -fno-builtin -nostdlib -Os -Wall -Werror"
   mipsel-linux-gnu-gcc $CF -c /src/start.S -o /out/start.o
   mipsel-linux-gnu-gcc $CF -c /src/main.c -o /out/main.o
-  mipsel-linux-gnu-ld -EL -T /src/link.ld -Map /out/nocry-rtos.map -o /out/nocry-rtos.elf /out/start.o /out/main.o
+  mipsel-linux-gnu-gcc $CF -c /src/display.c -o /out/display.o
+  mipsel-linux-gnu-ld -EL -T /src/link.ld -Map /out/nocry-rtos.map -o /out/nocry-rtos.elf /out/start.o /out/main.o /out/display.o
   mipsel-linux-gnu-objcopy -O binary /out/nocry-rtos.elf /out/nocry-rtos.bin
   mipsel-linux-gnu-objdump -d /out/nocry-rtos.elf > /out/nocry-rtos.lst
 '
