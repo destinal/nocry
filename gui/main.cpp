@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QButtonGroup>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QTabWidget>
@@ -94,6 +95,17 @@ public:
         stateHint->setWordWrap(true);
         v->addWidget(stateTitle);
         v->addWidget(stateHint);
+        // shell access to the running recovery: what works right now, and how to use it
+        shellLine = new QLabel;
+        shellLine->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        shellButton = new QPushButton(tr("How to get a shell…"));
+        auto *shellRow = new QHBoxLayout;
+        shellRow->addWidget(shellLine, 1);
+        shellRow->addWidget(shellButton);
+        v->addLayout(shellRow);
+        shellLine->setVisible(false);
+        shellButton->setVisible(false);
+        connect(shellButton, &QPushButton::clicked, this, [this] { showShellHelp(); });
 
         auto *tabs = new QTabWidget;
         v->addWidget(tabs, 1);
@@ -474,6 +486,7 @@ public:
 
     QTabWidget *tabWidget = nullptr;
     void openInstallDialog() { chooseInstall(); }
+    void openShellHelp() { showShellHelp(); }
     std::function<void()> onIdle;   // used by the self-tests
     QJsonObject lastResult;
     bool quiet = false;             // self-tests: no modal dialogs
@@ -903,6 +916,11 @@ private:
         }
         if (s == "none")
             autoBlocked = false;
+        recoveryRunning = s == "recovery";
+        if (!recoveryRunning && !busy) {
+            shellLine->setVisible(false);
+            shellButton->setVisible(false);
+        }
         // fill in the details by itself when a board shows up or after something changed it
         if (canRead && (!infoLoaded || infoStale) && !autoBlocked && !busy && !quiet && !QApplication::activeModalWidget()) {
             readDevice();
@@ -935,6 +953,102 @@ private:
         restoreButton->setEnabled(!busy && canRead);
     }
 
+    // Ask (off the UI thread) whether adb sees the board and where its serial console is.
+    void refreshShell(const QString &sn)
+    {
+        const QByteArray serialNo = sn.toUtf8();
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w] {
+            shell = w->result();
+            w->deleteLater();
+            const QString port = shell.value("console_port").toString();
+            QString adb;
+            if (shell.value("adb_ready").toBool())
+                adb = tr("ADB: ready");
+            else if (!shell.value("adb_installed").toBool())
+                adb = tr("ADB: the adb tool is not installed on this computer");
+            else if (!shell.value("adb_state").toString().isEmpty())
+                adb = tr("ADB: board seen, but %1").arg(shell.value("adb_state").toString());
+            else
+                adb = tr("ADB: not connected");
+            const QString con = port.isEmpty() ? tr("Serial console: not found") : tr("Serial console: %1").arg(port);
+            shellLine->setText(adb + QStringLiteral("   ·   ") + con);
+            shellLine->setVisible(recoveryRunning);
+            shellButton->setVisible(recoveryRunning);
+        });
+        w->setFuture(QtConcurrent::run([serialNo] { return takeJson(nocry_shell_status_json(serialNo.constData())); }));
+    }
+
+    void showShellHelp()
+    {
+        const QString sn = shell.value("adb_serial").toString().isEmpty() ? serial->text() : shell.value("adb_serial").toString();
+        const QString port = shell.value("console_port").toString();
+        const QString adbCmd = QStringLiteral("adb -s %1 shell").arg(sn);
+#if defined(Q_OS_WIN)
+        const QString conCmd = port.isEmpty() ? QString() : tr("PuTTY: connection type Serial, line %1, speed 115200").arg(port);
+        const QString adbInstall = tr("Download \"SDK Platform-Tools for Windows\" from developer.android.com, unzip it, and run adb.exe from that folder.");
+        const QString conTool = tr("Use a serial terminal such as PuTTY.");
+#elif defined(Q_OS_MACOS)
+        const QString conCmd = port.isEmpty() ? QString() : QStringLiteral("screen %1 115200").arg(port);
+        const QString adbInstall = tr("Install it with Homebrew: brew install android-platform-tools");
+        const QString conTool = tr("screen is part of macOS. To leave it: Ctrl-A, then K, then Y.");
+#else
+        const QString conCmd = port.isEmpty() ? QString() : QStringLiteral("picocom %1").arg(port);
+        const QString adbInstall = tr("Install your distribution's package: android-tools (Arch, Fedora) or adb (Debian, Ubuntu).");
+        const QString conTool = tr("picocom is in every distribution's packages (screen %1 115200 also works). To leave picocom: Ctrl-A, then Ctrl-X.").arg(port.isEmpty() ? QStringLiteral("<port>") : port);
+#endif
+        QDialog d(this);
+        d.setWindowTitle(tr("Getting a shell on the board"));
+        auto *v = new QVBoxLayout(&d);
+        auto para = [&](const QString &t) {
+            auto *l = new QLabel(t);
+            l->setWordWrap(true);
+            l->setMinimumWidth(520);
+            v->addWidget(l);
+        };
+        auto command = [&](const QString &c) {
+            auto *row = new QHBoxLayout;
+            auto *e = new QLineEdit(c);
+            e->setReadOnly(true);
+            QFont f = e->font();
+            f.setFamily(QStringLiteral("monospace"));
+            f.setStyleHint(QFont::Monospace);
+            e->setFont(f);
+            auto *b = new QPushButton(tr("Copy"));
+            connect(b, &QPushButton::clicked, &d, [c] { QApplication::clipboard()->setText(c); });
+            row->addWidget(e, 1);
+            row->addWidget(b);
+            v->addLayout(row);
+        };
+        para(tr("While the recovery system runs, the board offers a root shell in two ways. It runs from memory: "
+                "nothing you do in it changes the printer unless you write to its storage (/dev/mmcblk0)."));
+        para(tr("<b>ADB</b> — the easier one, with file copy (adb push, adb pull)."));
+        if (shell.value("adb_ready").toBool()) {
+            para(tr("Ready. In a terminal, run:"));
+            command(adbCmd);
+        } else if (!shell.value("adb_installed").toBool()) {
+            para(tr("The adb tool is not installed on this computer. %1 Then press Refresh in the main window and run:").arg(adbInstall));
+            command(adbCmd);
+        } else {
+            para(tr("adb is installed but does not list the board as ready%1. Unplug and reconnect the board, or press Refresh. The command will be:")
+                     .arg(shell.value("adb_state").toString().isEmpty() ? QString() : tr(" (it says \"%1\")").arg(shell.value("adb_state").toString())));
+            command(adbCmd);
+        }
+        para(tr("<b>USB serial console</b> — works without adb."));
+        if (port.isEmpty()) {
+            para(tr("No serial port from the board was found on this computer."));
+        } else {
+            para(tr("The board's console is on %1. %2").arg(port, conTool));
+            command(conCmd);
+            para(tr("Press Enter once to get the prompt."));
+        }
+        para(tr("Only one program can use the board at a time for nocry's own actions, but a shell can stay open while you use this window."));
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        v->addWidget(bb);
+        d.exec();
+    }
+
     void showInfo(const QJsonObject &o)
     {
         if (!o.value("ok").toBool()) {
@@ -944,6 +1058,7 @@ private:
             return;
         }
         autoBlocked = false;
+        refreshShell(o.value("sn").toString());
         QLocale loc;
         const QString desc = o.value("model_description").toString();
         const QString m = o.value("model").toString();
@@ -981,7 +1096,10 @@ private:
     }
 
     QLabel *stateTitle, *stateHint, *model, *serial, *mac, *board, *slot, *otherSlot, *storage, *progressLabel;
-    bool infoLoaded = false, infoStale = false, autoBlocked = false;
+    bool infoLoaded = false, infoStale = false, autoBlocked = false, recoveryRunning = false;
+    QLabel *shellLine;
+    QPushButton *shellButton;
+    QJsonObject shell;
     QPushButton *readButton, *backupButton, *installButton, *switchButton, *resetButton, *restoreButton, *cancelButton;
     QString modelId;
     qint64 emmcBytes = 0;
@@ -1061,6 +1179,27 @@ int main(int argc, char **argv)
             });
         };
         QTimer::singleShot(1500, [&w, img] { w.startRestore(img, false, false); });
+    }
+    // --selftest-shell shot.png: read the board, save the main window and the shell help dialog
+    const int sh = args.indexOf("--selftest-shell");
+    if (sh > 0 && sh + 1 < args.size()) {
+        const QString shot = args[sh + 1];
+        w.onIdle = [&w, shot] {
+            QTimer::singleShot(2500, [&w, shot] {       // let the adb query finish
+                w.grab().save(shot);
+                QTimer::singleShot(700, [shot] {
+                    if (QWidget *m = QApplication::activeModalWidget()) {
+                        m->grab().save(shot + ".help.png");
+                        static_cast<QDialog *>(m)->reject();
+                    }
+                    QTimer::singleShot(200, [] { QApplication::quit(); });
+                });
+                w.openShellHelp();
+            });
+            w.onIdle = nullptr;
+        };
+        QTimer::singleShot(1500, [&w] { w.readDevice(); });
+        QTimer::singleShot(60000, [] { QApplication::exit(2); });
     }
     // --selftest-install-dialog shot.png: open the Install firmware dialog, save a picture of it
     const int sd = args.indexOf("--selftest-install-dialog");

@@ -67,6 +67,11 @@ char *nocry_catalog_json(const char *data_dir, int refresh);
  * Cancellable. {"ok":true,"path":"..."} */
 char *nocry_download_firmware_json(const char *url, const char *file, uint64_t size, const char *data_dir);
 
+/* Shell access to the running recovery, as far as this computer can tell:
+ * {"adb_installed":bool,"adb_ready":bool,"adb_serial":"...","adb_state":"...","console_port":"..."}
+ * serial: the board's serial number (may be NULL). Runs `adb devices`; call from a worker thread. */
+char *nocry_shell_status_json(const char *serial);
+
 /* Ask the running operation to stop at its next safe point (callable from any thread). */
 void nocry_cancel(void);
 

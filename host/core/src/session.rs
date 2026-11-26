@@ -852,3 +852,122 @@ pub fn restore_backup(
     r.executed = true;
     Ok(r)
 }
+
+/// Ways to get a shell on the running recovery system, as far as this computer can tell.
+#[derive(Debug, Clone, Default)]
+pub struct ShellStatus {
+    /// the `adb` program was found on this computer
+    pub adb_installed: bool,
+    /// adb lists the board as ready; `adb -s <adb_serial> shell` will work
+    pub adb_ready: bool,
+    pub adb_serial: String,
+    /// what adb says about the board when it is listed but not ready ("unauthorized", "offline"...)
+    pub adb_state: String,
+    /// the recovery's USB serial console: /dev/ttyACM0, /dev/cu.usbmodem..., COM5; "" if not found
+    pub console_port: String,
+}
+
+fn quiet_command(program: &str) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut c = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash from a GUI
+    }
+    c
+}
+
+#[cfg(target_os = "linux")]
+fn find_console_port(_serial: &str) -> String {
+    // the ACM interface of a 1209:0003 device
+    let Ok(rd) = std::fs::read_dir("/sys/class/tty") else { return String::new() };
+    let mut found: Vec<String> = vec![];
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.starts_with("ttyACM") {
+            continue;
+        }
+        // /sys/class/tty/ttyACM0/device -> the USB interface; its parent is the USB device
+        let Ok(dev) = std::fs::canonicalize(e.path().join("device")) else { continue };
+        let Some(usb) = dev.parent() else { continue };
+        let rdf = |n: &str| std::fs::read_to_string(usb.join(n)).unwrap_or_default().trim().to_lowercase();
+        if rdf("idVendor") == format!("{:04x}", usb::NOCRY_UMS_VID) && rdf("idProduct") == format!("{:04x}", usb::NOCRY_RECOVERY_PID) {
+            found.push(format!("/dev/{name}"));
+        }
+    }
+    found.sort();
+    found.into_iter().next().unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn find_console_port(serial: &str) -> String {
+    // macOS names a CDC-ACM port after the device's serial number: /dev/cu.usbmodem<serial><n>
+    let Ok(rd) = std::fs::read_dir("/dev") else { return String::new() };
+    let mut all: Vec<String> = rd
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("cu.usbmodem"))
+        .map(|n| format!("/dev/{n}"))
+        .collect();
+    all.sort();
+    if !serial.is_empty() {
+        if let Some(p) = all.iter().find(|p| p.contains(serial)) {
+            return p.clone();
+        }
+    }
+    if all.len() == 1 {
+        all.remove(0)
+    } else {
+        String::new()
+    }
+}
+
+#[cfg(windows)]
+fn find_console_port(_serial: &str) -> String {
+    // COM port assigned to interface 0 (CDC-ACM) of 1209:0003, if it is currently present
+    let key = format!("HKLM\\SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_{:04X}&PID_{:04X}&MI_00", usb::NOCRY_UMS_VID, usb::NOCRY_RECOVERY_PID);
+    let query = |args: &[&str]| quiet_command("reg").args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    let assigned: Vec<String> = query(&["query", &key, "/s", "/v", "PortName"])
+        .lines()
+        .filter_map(|l| l.split_whitespace().last().filter(|w| w.starts_with("COM")).map(String::from))
+        .collect();
+    let active = query(&["query", "HKLM\\HARDWARE\\DEVICEMAP\\SERIALCOMM"]);
+    assigned.into_iter().find(|p| active.split_whitespace().any(|w| w == p)).unwrap_or_default()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn find_console_port(_serial: &str) -> String {
+    String::new()
+}
+
+/// Looks for the recovery's serial console and asks `adb` (if installed) whether it sees the
+/// board. `serial` is the board's serial number (its USB and adb serial). Starts the adb
+/// server if it is not running, like any adb command does.
+pub fn shell_status(serial: &str) -> ShellStatus {
+    let mut s = ShellStatus { console_port: find_console_port(serial), ..Default::default() };
+    if let Ok(o) = quiet_command("adb").arg("devices").output() {
+        s.adb_installed = true;
+        let out = String::from_utf8_lossy(&o.stdout);
+        let mut rows: Vec<(String, String)> = out
+            .lines()
+            .skip(1)
+            .filter_map(|l| {
+                let mut w = l.split_whitespace();
+                Some((w.next()?.to_string(), w.next()?.to_string()))
+            })
+            .collect();
+        // prefer the row with this board's serial; otherwise a lone device
+        let row = match rows.iter().position(|(sn, _)| !serial.is_empty() && sn == serial) {
+            Some(i) => Some(rows.remove(i)),
+            None if rows.len() == 1 && serial.is_empty() => Some(rows.remove(0)),
+            None => None,
+        };
+        if let Some((sn, state)) = row {
+            s.adb_ready = state == "device";
+            s.adb_serial = sn;
+            s.adb_state = state;
+        }
+    }
+    s
+}

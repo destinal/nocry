@@ -331,6 +331,20 @@ pub unsafe extern "C" fn nocry_download_firmware_json(url: *const c_char, file: 
     })
 }
 
+/// How to get a shell on the running recovery: {"adb_installed":bool,"adb_ready":bool,
+/// "adb_serial":"...","adb_state":"...","console_port":"..."}. Runs `adb devices` (blocks briefly).
+/// # Safety
+/// `serial` must be NULL or a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_shell_status_json(serial: *const c_char) -> *mut c_char {
+    let serial = if serial.is_null() { String::new() } else { CStr::from_ptr(serial).to_string_lossy().to_string() };
+    let s = std::panic::catch_unwind(|| session::shell_status(&serial)).unwrap_or_default();
+    out(format!(
+        "{{\"adb_installed\":{},\"adb_ready\":{},\"adb_serial\":\"{}\",\"adb_state\":\"{}\",\"console_port\":\"{}\"}}",
+        s.adb_installed, s.adb_ready, esc(&s.adb_serial), esc(&s.adb_state), esc(&s.console_port)
+    ))
+}
+
 /// Ask the running operation to stop at its next safe point.
 #[no_mangle]
 pub extern "C" fn nocry_cancel() {

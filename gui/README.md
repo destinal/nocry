@@ -50,3 +50,7 @@ Install firmware now offers "Download from Creality": a printer and a version ar
 Command line: `nocry catalog [--refresh]`, `nocry fetch <MODEL> <VERSION|latest>`.
 
 Tested on image copies through the GUI's self-test (`--selftest-install-list`): a retail copy updated from 1.1.0.23 to the downloaded 1.1.0.30 keeping data; a repeat neither downloads nor writes again; a clean install of the downloaded Ender-5 Max firmware converts the copy. Not yet run against a real board.
+
+## Shell status
+
+While the recovery runs, a line under the status shows "ADB: ready / not installed / not connected" and "Serial console: <port>", with "How to get a shell…" opening per-platform instructions and copyable commands. Detection is in `session::shell_status`: `adb devices` for ADB; for the console, sysfs on Linux, `/dev/cu.usbmodem*` on macOS, the registry (via `reg query`) on Windows. Verified on Linux with the Nebula; the macOS and Windows detection paths have not been run.

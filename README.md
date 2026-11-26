@@ -10,7 +10,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 
 | Platform | Package | State |
 |---|---|---|
-| Linux (x86-64) | `.AppImage` | Tested. Install `60-nocry.rules` once so a normal user can open the board (see Building). |
+| Linux (x86-64) | `.AppImage` | Tested, including downloading firmware from Creality's list and installing it (in the development build; the list is not in the 0.1.0-alpha.1 packages yet). Install `60-nocry.rules` once so a normal user can open the board (see Building). |
 | macOS (Apple silicon) | `.dmg`, drag to Applications | Tested: a full backup and a firmware install on a Nebula Pad both worked. No driver or setup needed. Unsigned: right-click the app and choose Open the first time. |
 | Windows (x64) | `-setup.exe`, installs for the current user without administrator rights | Builds, **not yet tested**. The board in USB boot mode probably needs a WinUSB driver that the installer does not provide yet. |
 
@@ -27,6 +27,8 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 - **Install firmware** from a Creality `.ingenic` package or an unpacked OTA: repair in place (keep data) or clean install. Handles a completely blank board, generating a serial number and MAC address if needed.
 - **Convert** between Nebula-based models (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max) by installing the other model's firmware.
 - **Switch the active firmware slot** (A/B) and **factory reset**.
+- **Pick firmware from a list**: versions published by Creality for the supported printers, downloaded and checksum-verified, or use a local update file (`*_ota_img_V*.img`), `.ingenic` package or folder.
+- **Shell access**: the window shows whether `adb` and the USB serial console are available on the running recovery and gives the exact command for each.
 
 ## Layout
 
