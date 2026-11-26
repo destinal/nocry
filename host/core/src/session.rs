@@ -1075,11 +1075,23 @@ pub fn partition_backup(soc: &SocProfile, via: Via, name: &str, out: &std::path:
 
 /// Make `len` bytes at `off` equal to what `src(piece_offset, n)` returns; only pieces that
 /// differ are written, and everything written is verified. Returns bytes written.
-fn write_range(t: &restore::Target, off: u64, len: u64, what: &str, mut src: impl FnMut(u64, usize) -> Result<Vec<u8>>) -> Result<u64> {
+fn write_range(t: &restore::Target, off: u64, len: u64, what: &str, src: impl FnMut(u64, usize) -> Result<Vec<u8>>) -> Result<u64> {
+    let mut m = crate::events::Meter::new(what, len);
+    let r = write_range_m(t, off, len, what, src, &mut m);
+    m.end();
+    r
+}
+
+/// `write_range` as one part of a larger operation: progress goes to the operation's meter.
+fn write_range_m(
+    t: &restore::Target, off: u64, len: u64, what: &str, mut src: impl FnMut(u64, usize) -> Result<Vec<u8>>, m: &mut crate::events::Meter,
+) -> Result<u64> {
+    const STEP: u64 = 8 << 20;
     let mut written = 0;
     let mut done = 0;
     while done < len {
-        let n = PIECE.min(len - done) as usize;
+        crate::events::check_cancelled()?;
+        let n = STEP.min(len - done) as usize;
         let data = src(done, n)?;
         if !t.matches(off + done, &data)? {
             t.write_raw(off + done, &data, what)?;
@@ -1090,9 +1102,8 @@ fn write_range(t: &restore::Target, off: u64, len: u64, what: &str, mut src: imp
             written += n as u64;
         }
         done += n as u64;
-        crate::events::progress(what, done, len, "");
+        m.add(n as u64);
     }
-    crate::events::progress_end();
     Ok(written)
 }
 
@@ -1112,7 +1123,7 @@ pub fn partition_restore(
         bail!("{} is {flen} bytes, larger than partition {name} ({size} bytes)", file.display());
     }
     safety_copy(&t, safety_dir, "partition-restore")?;
-    let written = write_range(&t, off, flen, "writing", |o, n| {
+    let written = write_range(&t, off, flen, &format!("Writing {name}"), |o, n| {
         let mut v = vec![0u8; n];
         f.seek(std::io::SeekFrom::Start(o))?;
         f.read_exact(&mut v)?;
@@ -1127,7 +1138,7 @@ pub fn partition_erase(soc: &SocProfile, via: Via, name: &str, safety_dir: Optio
     let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
     let (off, size) = find_part(&t, name)?;
     safety_copy(&t, safety_dir, "partition-erase")?;
-    let written = write_range(&t, off, size, "erasing", |_, n| Ok(vec![0u8; n]))?;
+    let written = write_range(&t, off, size, &format!("Erasing {name}"), |_, n| Ok(vec![0u8; n]))?;
     say!("partition {name} erased ({written} bytes needed writing); verified");
     Ok(PartReport { name: name.into(), bytes: size, bytes_written: written, executed: true, ..Default::default() })
 }
@@ -1137,7 +1148,7 @@ pub fn partition_erase(soc: &SocProfile, via: Via, name: &str, safety_dir: Optio
 pub fn erase_disk(soc: &SocProfile, via: Via, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>) -> Result<PartReport> {
     let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
     safety_copy(&t, safety_dir, "full-erase")?;
-    let written = write_range(&t, 0, t.size, "erasing", |_, n| Ok(vec![0u8; n]))?;
+    let written = write_range(&t, 0, t.size, "Erasing the whole storage", |_, n| Ok(vec![0u8; n]))?;
     say!("the whole storage is erased ({written} bytes needed writing); verified");
     Ok(PartReport { name: "(entire storage)".into(), bytes: t.size, bytes_written: written, executed: true, ..Default::default() })
 }
@@ -1241,9 +1252,11 @@ pub fn install_other_slot(
         return Ok(r);
     }
     safety_copy(&t, safety_dir, "slot-install")?;
+    let mut m = crate::events::Meter::new(format!("Installing to slot {}", slot.to_uppercase()), plan.iter().map(|p| p.1.len() as u64).sum());
     for (off, data, name) in &plan {
-        write_range(&t, *off, data.len() as u64, name, |o, n| Ok(data[o as usize..o as usize + n].to_vec()))?;
+        write_range_m(&t, *off, data.len() as u64, name, |o, n| Ok(data[o as usize..o as usize + n].to_vec()), &mut m)?;
     }
+    m.end();
     r.executed = true;
     say!("firmware {} installed into slot {} and verified; the active slot was not changed", r.firmware_version, slot.to_uppercase());
     Ok(r)
@@ -1265,25 +1278,36 @@ pub fn secure_wipe_data(soc: &SocProfile, via: Via, safety_dir: Option<&std::pat
         .context("this board has no valid partition table (blank board?)")?;
     safety_copy(&t, safety_dir, "secure-erase")?;
     let mut r = WipeReport::default();
+    let mut parts = vec![];
     for name in ["rootfs_data", "userdata"] {
         let p = g.find(name).with_context(|| format!("no {name} partition"))?;
-        let method = t.secure_erase(p.offset(), p.size(), "erasing")?;
-        // independent check: every byte must now be zero
-        let zeros = vec![0u8; PIECE as usize];
+        parts.push((name, p.offset(), p.size()));
+    }
+    let total: u64 = parts.iter().map(|p| p.2).sum();
+    let mut m = crate::events::Meter::new("Secure erase", total);
+    for &(name, off, size) in &parts {
+        let method = t.secure_erase(off, size, name, &mut |n| m.add(n))?;
+        r.partitions.push((name.to_string(), method));
+    }
+    m.end();
+    // independent check: every byte must now be zero
+    const STEP: u64 = 8 << 20;
+    let zeros = vec![0u8; STEP as usize];
+    let mut m = crate::events::Meter::new("Checking that everything is erased", total);
+    for (i, &(name, off, size)) in parts.iter().enumerate() {
         let mut done = 0;
-        while done < p.size() {
-            let n = PIECE.min(p.size() - done) as usize;
-            if !t.matches(p.offset() + done, &zeros[..n])? {
-                bail!("{name} is not fully erased at {:#x}", p.offset() + done);
+        while done < size {
+            let n = STEP.min(size - done) as usize;
+            if !t.matches(off + done, &zeros[..n])? {
+                bail!("{name} is not fully erased at {:#x}", off + done);
             }
             done += n as u64;
-            crate::events::progress("verifying", done, p.size(), "");
+            m.add(n as u64);
         }
-        crate::events::progress_end();
-        say!("{name}: erased ({method}) and verified, {} bytes", p.size());
-        r.partitions.push((name.to_string(), method));
-        r.bytes += p.size();
+        say!("{name}: erased ({}) and verified, {size} bytes", r.partitions[i].1);
+        r.bytes += size;
     }
+    m.end();
     Ok(r)
 }
 
@@ -1333,9 +1357,11 @@ pub fn copy_slot(soc: &SocProfile, via: Via, from: &str, safety_dir: Option<&std
     }
     safety_copy(&t, safety_dir, "slot-copy")?;
     let mut written = 0;
+    let mut m = crate::events::Meter::new(format!("Copying slot {} to slot {}", from.to_uppercase(), to.to_uppercase()), jobs.iter().map(|j| j.2).sum());
     for (src, dst, size, name) in &jobs {
-        written += write_range(&t, *dst, *size, name, |o, n| t.read(src + o, n))?;
+        written += write_range_m(&t, *dst, *size, name, |o, n| t.read(src + o, n), &mut m)?;
     }
+    m.end();
     say!("slot {} copied to slot {} and verified ({} bytes written); the active slot was not changed", from.to_uppercase(), to.to_uppercase(), written);
     Ok(read_slots(&t)?.1)
 }

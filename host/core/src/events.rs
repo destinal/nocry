@@ -72,3 +72,40 @@ pub fn check_cancelled() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Progress of one whole operation, possibly spanning several partitions and steps: one bar
+/// from start to end, with speed and time left.
+pub struct Meter {
+    label: String,
+    total: u64,
+    done: u64,
+    t0: std::time::Instant,
+    last: Option<std::time::Instant>,
+}
+
+impl Meter {
+    pub fn new(label: impl Into<String>, total: u64) -> Self {
+        let m = Meter { label: label.into(), total: total.max(1), done: 0, t0: std::time::Instant::now(), last: None };
+        progress(&m.label, 0, m.total, "");
+        m
+    }
+    /// `n` more bytes are finished.
+    pub fn add(&mut self, n: u64) {
+        self.done = (self.done + n).min(self.total);
+        if self.done < self.total && self.last.is_some_and(|l| l.elapsed().as_millis() < 250) {
+            return;
+        }
+        self.last = Some(std::time::Instant::now());
+        let s = self.t0.elapsed().as_secs_f64();
+        let note = if s >= 2.0 && self.done > 0 && self.done < self.total {
+            let rate = self.done as f64 / s;
+            format!("  {:.1} MB/s  {} left", rate / 1e6, crate::diskimage::fmt_duration((self.total - self.done) as f64 / rate))
+        } else {
+            String::new()
+        };
+        progress(&self.label, self.done, self.total, &note);
+    }
+    pub fn end(self) {
+        progress_end();
+    }
+}

@@ -393,22 +393,21 @@ impl Target {
     /// Erase a range so the old data cannot be read back: eMMC secure discard where the board
     /// service and card support it, otherwise overwriting with zeros. Always ends all-zero.
     /// Returns the method used ("secure-discard", "discard" or "overwrite").
-    pub fn secure_erase(&self, off: u64, len: u64, what: &str) -> Result<String> {
+    pub fn secure_erase(&self, off: u64, len: u64, what: &str, tick: &mut dyn FnMut(u64)) -> Result<String> {
         if !self.writable {
             bail!("{} was opened read-only", self.path.display());
         }
         if let Backend::Fb(fb) = &self.b {
             let has = fb.borrow_mut().getvar("nocry-ext").unwrap_or_default().contains("secure-erase");
             if has && off % 512 == 0 && len % 512 == 0 {
-                // per 512 MiB, so progress is visible and no single command runs very long
+                // in pieces, so progress is visible and no single command runs very long
                 let (mut done, mut method) = (0u64, String::new());
                 while done < len {
-                    let n = (512 * MIB).min(len - done);
+                    let n = (128 * MIB).min(len - done);
                     method = fb.borrow_mut().secure_erase("mmc0", off + done, n).with_context(|| format!("erasing {what}"))?;
                     done += n;
-                    events::progress(what, done, len, "");
+                    tick(n);
                 }
-                events::progress_end();
                 return Ok(method);
             }
         }
@@ -420,9 +419,8 @@ impl Target {
                 self.write_raw(off + done, &zeros[..n], what)?;
             }
             done += n as u64;
-            events::progress(what, done, len, "");
+            tick(n as u64);
         }
-        events::progress_end();
         self.sync()?;
         Ok("overwrite".into())
     }
