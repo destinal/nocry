@@ -57,20 +57,29 @@ void mdelay(u32 ms)
 			;
 }
 
+void udelay(u32 us)
+{
+	volatile u32 n;
+
+	while (us--)
+		for (n = 0; n < 300; n++)
+			;
+}
+
 /* Shown when the image carries no picture store: dark background, a lighter frame and bar. */
-static void draw(u32 *fb)
+static void draw(u32 *fb, int w, int h)
 {
 	int x, y;
 
-	for (y = 0; y < 272; y++)
-		for (x = 0; x < 480; x++) {
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++) {
 			u32 c = 0xff101216;
 
-			if (x < 4 || x >= 476 || y < 4 || y >= 268)
+			if (x < 4 || x >= w - 4 || y < 4 || y >= h - 4)
 				c = 0xff2f80ed;
-			else if (y >= 126 && y < 146 && x >= 140 && x < 340)
+			else if (y >= h / 2 - 10 && y < h / 2 + 10 && x >= w / 2 - 100 && x < w / 2 + 100)
 				c = 0xffe8e8e8;
-			fb[y * 480 + x] = c;
+			fb[y * w + x] = c;
 		}
 }
 
@@ -170,8 +179,8 @@ void nocry_rtos_main(void *spl_args)
 		u32 len = nocry_spl_word;	/* size of the sn_mac partition the SPL put below heap_end */
 		const char *rec = (len && len <= 0x1000000) ? __heap_end - len : 0;
 
-		if (!nocry_show_picture(fb, rec, len))
-			draw(fb);
+		if (!nocry_show_picture(fb, nocry_panel->xres, nocry_panel->yres, rec, len))
+			draw(fb, nocry_panel->xres, nocry_panel->yres);
 	}
 	nocry_display_start();
 
@@ -189,7 +198,7 @@ void nocry_rtos_main(void *spl_args)
 	flush_dcache();
 	flush_scache();
 	invalidate_icache();
-	nocry_spl_word = 0;		/* panel id for the kernel command line: lcm_id=0 */
+	nocry_spl_word = nocry_panel->lcm_id;	/* panel id for the kernel command line (lcm_id=) */
 	_start[0] = 1;			/* "done": the SPL watches this word */
 	log_str("handing back to the SPL\n");
 

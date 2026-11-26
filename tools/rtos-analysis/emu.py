@@ -13,10 +13,18 @@ CODE_END = _h[5]; HEAP_END = _h[7]; SPL_WORD = _h[8]
 img = img[:CODE_END - 0x86000000]
 KEY = hashlib.sha256(img).hexdigest()[:16]
 PROFILES = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'profiles.json')))
-if KEY not in PROFILES:
+NOCRY_MAP = os.environ.get('NOCRY_MAP')     # running nocry-rtos itself: its linker map gives the two delay routines
+if NOCRY_MAP:
+    import re as _re
+    _m = open(NOCRY_MAP).read()
+    OWN = {n: int(_re.search(r'0x0*([0-9a-f]{8})\s+%s\b' % n, _m).group(1), 16) for n in ('mdelay', 'udelay')}
+    A = collections.defaultdict(lambda: 0x8fff0000)          # stock-only functions: nowhere
+    print('# image %s: nocry-rtos' % KEY)
+elif KEY not in PROFILES:
     sys.exit('no address profile for this image (%s); make one with match.py' % KEY)
-A = {k: int(v, 16) for k, v in PROFILES[KEY]['functions'].items()}
-print('# image %s: %s' % (KEY, PROFILES[KEY]['name']))
+else:
+    A = {k: int(v, 16) for k, v in PROFILES[KEY]['functions'].items()}
+    print('# image %s: %s' % (KEY, PROFILES[KEY]['name']))
 BASE = 0x86000000
 mu = Uc(UC_ARCH_MIPS, UC_MODE_MIPS32 | UC_MODE_LITTLE_ENDIAN)
 mu.ctl_set_cpu_model(UC_CPU_MIPS32_74KF)
@@ -36,7 +44,10 @@ for o in range(0, len(img) - 3, 4):
         rd, sel, rt = (w >> 11) & 31, w & 7, (w >> 16) & 31
         if (rd, sel) in ((16, 7), (26, 0), (16, 2), (16, 3), (16, 4), (16, 5), (28, 0), (28, 1), (29, 0)) or (rd == 15 and sel == 1 and w & 0x00800000):
             struct.pack_into('<I', img, o, (0x24000000 | rt << 16) if not w & 0x00800000 else 0); patched += 1
-for a in (A['msa_on'], A['msa_off'], A['fpu_on'], A['fpu_off']):   # MSA enable/disable: cfcmsa/ctcmsa do not exist on the emulated CPU
+for o in range(0, len(img) - 3, 4):
+    if struct.unpack_from('<I', img, o)[0] in (0x4442f800, 0x787e0899):      # cfc1 / cfcmsa: read as 0
+        struct.pack_into('<I', img, o, 0x24020000)
+for a in ([] if NOCRY_MAP else [A['msa_on'], A['msa_off'], A['fpu_on'], A['fpu_off']]):   # MSA enable/disable: cfcmsa/ctcmsa do not exist on the emulated CPU
     struct.pack_into('<II', img, a - BASE, 0x03e00008, 0)
 print('# patched', patched, 'CP0 accesses')
 img = bytes(img)
@@ -232,7 +243,8 @@ RETVAL = {A['thread_create']: 1}; RETVAL.update(EXTRA_RET)
 for a_ in STUBS:
     if 0x86000000 <= a_ < CODE_END:
         mu_mem_write(a_, struct.pack('<III', 0x24020000 | RETVAL.get(a_, 0), 0x03e00008, 0))
-mu_mem_write(A['cpu_id'], struct.pack('<III', 0x24020001, 0x03e00008, 0))   # cpu id = 1
+if not NOCRY_MAP:
+    mu_mem_write(A['cpu_id'], struct.pack('<III', 0x24020001, 0x03e00008, 0))   # cpu id = 1
 STUBS.pop(A['cpu_id'])
 hot = collections.Counter(); count = [0]
 lastpc = [0, 0]
@@ -289,7 +301,7 @@ def h_wait_frame(uc):
 armed = [False]
 STUBS[A['wait_event']] = h_wait_frame
 STUBS[A['wake_up']] = lambda uc: out('# wake_up(%#x)' % uc.reg_read(UC_MIPS_REG_A0))
-for a_, v_ in ((A['wait_event'], 1), (A['wake_up'], 0)):
+for a_, v_ in (() if NOCRY_MAP else ((A['wait_event'], 1), (A['wake_up'], 0))):
     mu_mem_write(a_, struct.pack('<III', 0x24020000 | v_, 0x03e00008, 0))
 for a_ in (A['msleep'], A['sleep2']):
     STUBS[a_] = h_sleep('msleep' if a_ == A['msleep'] else 'sleep_e5c0')
@@ -337,6 +349,14 @@ def run_pending():
             out('\n##### (console thread skipped: it only serves the serial console)'); continue
         run('thread ' + n, fn, arg, sp=stacks[0])
 
+if NOCRY_MAP:
+    def _ms(uc):
+        spi_flush(); out('# msleep(%d)' % uc.reg_read(UC_MIPS_REG_A0))
+    STUBS[OWN['mdelay']] = _ms
+    STUBS[OWN['udelay']] = lambda uc: None
+    for a_ in OWN.values():
+        mu_mem_write(a_, struct.pack('<III', 0x24020000, 0x03e00008, 0))
+    MODEL[0xb3052010] = lambda v: 0x20000          # "frame done" is there whenever it is polled
 mu_mem_write(STOP, b'\0' * 16)
 run('entry', BASE, ARGS)
 run_pending()

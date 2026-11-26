@@ -55,8 +55,19 @@
 #define PWM_LVL		(PWM + 0x30)
 #define PWM_DCR0	(PWM + 0x110)
 
-#define XRES		480
-#define YRES		272
+/* board: where the screen connector's reset line and (K1 family) the panel's serial link are */
+#ifdef NOCRY_BOARD_K1
+#define RESET_PIN	29		/* PB29 */
+#define LINK_CS		(1u << 2)	/* PA2 */
+#define LINK_SCL	(1u << 27)	/* PC27 */
+#define LINK_SDA	(1u << 28)	/* PC28 */
+#define LINK_SDO	(1u << 16)	/* PB16 */
+#else
+#define RESET_PIN	16		/* PB16 */
+#endif
+#define PA		0
+
+const struct panel *nocry_panel;
 
 /*
  * Descriptors and frame buffer at the physical addresses the stock image uses (its heap,
@@ -131,12 +142,313 @@ static void set_divider(u32 reg, u32 value)
 		log_hex("divider busy ", reg);
 }
 
+__attribute__((unused)) static void gpio_in(int port, u32 pins)
+{
+	gpio_apply(port, pins, 0, 1, 1, 0);
+}
+
+__attribute__((unused)) static int gpio_get(int port, u32 pin)
+{
+	return (REG(GPIO(port)) & pin) != 0;
+}
+
+/* ---- panels -------------------------------------------------------------------------------- */
+
+/* set-up script words (struct panel.script) */
+#define C(x)	(x)			/* serial command byte */
+#define D(x)	(0x100 | (x))		/* serial data byte */
+#define MS(n)	(0x8000 | (n))		/* wait n milliseconds */
+#define PWR(v)	(0x4000 | (v))		/* panel power pin PC21 (0 = on) */
+#define RST(v)	(0x4002 | (v))		/* panel reset pin */
+#define END	0xffff
+
+/* the Nebula Pad's panel: no serial link, power and reset only */
+static const unsigned short script_nebula[] = {
+	PWR(1), RST(0), PWR(0), MS(30), RST(1), MS(5), RST(0), MS(5), RST(1), MS(25), END
+};
+
+__attribute__((unused)) static const struct panel panel_nebula = {
+	"general_480x272", NEBULA_LCM_ID, 480, 272, 0x4400008b,	/* MPLL / 140, about 10.7 MHz, inverted */
+	{ 0x0014021c, 0x0014014c, 0x00280208, 0x00280138, 0x00000102 }, script_nebula, 0, 0
+};
+
+#if defined(NOCRY_BOARD_K1) && !defined(NOCRY_PANEL_NEBULA)
+/*
+ * K1 family: four 480x800 panels behind a bit-banged 3-wire serial link (9-bit words: a
+ * command/data bit, then 8 bits, most significant first). Routines and detection follow the
+ * stock K1 image (docs/rtos-partition.md); the scripts in panels_k1.h are taken from its traces.
+ */
+static void link_idle(void)
+{
+	gpio_out(PA, LINK_CS, 1);
+	gpio_out(PC, LINK_SCL, 0);
+	gpio_out(PC, LINK_SDA, 0);
+}
+
+static void link_write(u32 word)
+{
+	int i;
+
+	gpio_out(PA, LINK_CS, 0);
+	for (i = 8; i >= 0; i--) {
+		gpio_out(PC, LINK_SDA, (word >> i) & 1);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 1);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 0);
+	}
+	gpio_out(PA, LINK_CS, 1);
+}
+
+/* ST7701: read n bytes of a register; the panel answers on its own data-out line */
+static void st7701_read(u32 reg, u8 *buf, int n)
+{
+	int i, k;
+
+	gpio_out(PA, LINK_CS, 1);
+	gpio_out(PC, LINK_SCL, 0);
+	gpio_out(PC, LINK_SDA, 0);
+	gpio_out(PA, LINK_CS, 0);
+	gpio_in(PB, LINK_SDO);
+	for (i = 8; i >= 0; i--) {
+		gpio_out(PC, LINK_SDA, (reg >> i) & 1);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 1);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 0);
+	}
+	gpio_in(PC, LINK_SDA);
+	if (n > 1) {			/* one extra clock before a multi-byte answer */
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 1);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 0);
+	}
+	for (k = 0; k < n; k++) {
+		u32 v = 0;
+
+		for (i = 0; i < 8; i++) {
+			udelay(2);
+			v = v << 1 | gpio_get(PB, LINK_SDO);
+			gpio_out(PC, LINK_SCL, 1);
+			udelay(2);
+			gpio_out(PC, LINK_SCL, 0);
+		}
+		buf[k] = v;
+	}
+	gpio_out(PB, LINK_SDO, 0);
+	gpio_out(PC, LINK_SDA, 0);
+	gpio_out(PC, LINK_SCL, 1);
+	udelay(2);
+	gpio_out(PC, LINK_SCL, 0);
+	gpio_out(PA, LINK_CS, 1);
+}
+
+/* GC9503: its own framing for commands, and answers on the shared data line */
+static void gc9503_cmd(u32 cmd)
+{
+	int i;
+
+	gpio_out(PC, LINK_SCL, 0);
+	gpio_out(PC, LINK_SDA, 0);
+	udelay(2);
+	gpio_out(PA, LINK_CS, 1);
+	udelay(2);
+	gpio_out(PA, LINK_CS, 0);
+	udelay(2);
+	gpio_out(PC, LINK_SCL, 0);
+	udelay(2);
+	gpio_out(PC, LINK_SDA, 0);	/* command */
+	udelay(2);
+	gpio_out(PC, LINK_SCL, 1);
+	udelay(2);
+	for (i = 7; i >= 0; i--) {
+		gpio_out(PC, LINK_SCL, 0);
+		udelay(2);
+		gpio_out(PC, LINK_SDA, (cmd >> i) & 1);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 1);
+		udelay(2);
+	}
+	gpio_out(PC, LINK_SCL, 0);
+	udelay(2);
+}
+
+static void gc9503_data(u32 v)
+{
+	int i;
+
+	gpio_out(PC, LINK_SCL, 0);
+	gpio_out(PC, LINK_SDA, 0);
+	udelay(2);
+	gpio_out(PC, LINK_SCL, 0);
+	udelay(2);
+	gpio_out(PC, LINK_SDA, 1);	/* data */
+	udelay(2);
+	gpio_out(PC, LINK_SCL, 1);
+	udelay(2);
+	for (i = 7; i >= 0; i--) {
+		gpio_out(PC, LINK_SCL, 0);
+		udelay(2);
+		gpio_out(PC, LINK_SDA, (v >> i) & 1);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 1);
+	}
+	gpio_out(PC, LINK_SCL, 0);
+	udelay(2);
+}
+
+static void gc9503_write(u32 word)
+{
+	if (word & 0x100)
+		gc9503_data(word & 0xff);
+	else
+		gc9503_cmd(word);
+}
+
+static u32 gc9503_read(void)
+{
+	u32 v = 0;
+	int i;
+
+	gpio_out(PC, LINK_SCL, 0);
+	gpio_in(PC, LINK_SDA);
+	udelay(2);
+	for (i = 0; i < 8; i++) {
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 0);
+		udelay(2);
+		gpio_out(PC, LINK_SCL, 1);
+		udelay(2);
+		v = v << 1 | gpio_get(PC, LINK_SDA);
+	}
+	gpio_out(PC, LINK_SCL, 0);
+	gpio_out(PC, LINK_SDA, 0);
+	udelay(2);
+	return v;
+}
+
+static void panel_power_cycle(int ms_on, int ms_reset, int ms_after)
+{
+	gpio_out(PC, 1u << 21, 1);
+	gpio_out(PB, 1u << RESET_PIN, 0);
+	gpio_out(PC, 1u << 21, 0);
+	mdelay(ms_on);
+	gpio_out(PB, 1u << RESET_PIN, 1);
+	mdelay(ms_reset);
+	gpio_out(PB, 1u << RESET_PIN, 0);
+	mdelay(ms_reset);
+	gpio_out(PB, 1u << RESET_PIN, 1);
+	mdelay(ms_reset);
+	mdelay(ms_after);
+}
+
+static int detect_gc9503(void)
+{
+	u32 a, b;
+
+	panel_power_cycle(20, 150, 10);
+	gc9503_cmd(0xb2);
+	gc9503_data(0x00);
+	gc9503_cmd(0xdb);
+	a = gc9503_read();
+	gc9503_cmd(0xdc);
+	b = gc9503_read();
+	log_hex("gc9503 id ", b << 8 | a);
+	return a == 0x95 && b == 0x04;
+}
+
+static int detect_tjc(void)
+{
+	u8 id[5] = { 0 }, v[3] = { 0 };
+	u32 w;
+
+	panel_power_cycle(20, 5, 10);
+	st7701_read(0xa1, id, 5);
+	w = id[1] << 8 | id[0];
+	log_hex("st7701 a1 ", w);
+	if (w != 0x177 && w != 0x288 && w != 0x399)
+		return 0;
+	st7701_read(0x04, v, 3);
+	log_hex("st7701 04 ", v[0] << 16 | v[1] << 8 | v[2]);
+	return v[0] == 0x54 && v[1] == 0x01 && v[2] == 0x01;
+}
+
+static int detect_st7701_04(u32 b0, u32 b1, u32 b2)
+{
+	u8 id[5], v[3] = { 0 };
+
+	panel_power_cycle(20, 5, 10);
+	st7701_read(0xa1, id, 5);
+	st7701_read(0x04, v, 3);
+	log_hex("st7701 04 ", v[0] << 16 | v[1] << 8 | v[2]);
+	return v[0] == b0 && v[1] == b1 && v[2] == b2;
+}
+
+static int detect_pj(void)
+{
+	return detect_st7701_04(0x43, 0x02, 0x04);
+}
+
+static int detect_dc(void)
+{
+	return detect_st7701_04(0xdc, 0x43, 0x48);
+}
+
+#include "panels_k1.h"
+
+#define K1_DEFAULT_PANEL	1	/* st7701_tjc: what the stock image uses when none answers */
+
+static const struct panel *choose_panel(void)
+{
+	u32 i;
+
+	link_idle();
+	for (i = 0; i < sizeof(panels_k1) / sizeof(panels_k1[0]); i++)
+		if (panels_k1[i].detect()) {
+			log_str("found lcd ");
+			log_str(panels_k1[i].name);
+			log_str("\n");
+			return &panels_k1[i];
+		}
+	log_str("default lcd ");
+	log_str(panels_k1[K1_DEFAULT_PANEL].name);
+	log_str("\n");
+	return &panels_k1[K1_DEFAULT_PANEL];
+}
+#else
+static const struct panel *choose_panel(void)
+{
+	return &panel_nebula;
+}
+
+#endif
+
+static void run_script(const struct panel *pn)
+{
+	const unsigned short *p;
+
+	for (p = pn->script; *p != END; p++) {
+		u32 w = *p;
+
+		if (w & 0x8000)
+			mdelay(w & 0x7fff);
+		else if ((w & 0xfffe) == 0x4000)
+			gpio_out(PC, 1u << 21, w & 1);
+		else if ((w & 0xfffe) == 0x4002)
+			gpio_out(PB, 1u << RESET_PIN, w & 1);
+		else if (pn->write)
+			pn->write(w);
+	}
+}
+
 /*
  * Everything below follows the order of the stock image's hardware accesses (recorded by
  * running that image in an emulator, see docs/rtos-partition.md).
  */
 u32 *nocry_display_init(void)
 {
+	const struct panel *pn;
 	struct frame_desc *f;
 	struct layer_desc *l;
 	int i;
@@ -146,6 +458,7 @@ u32 *nocry_display_init(void)
 	REG(CPM_CLKGR0) &= ~((1u << 20) | (1u << 18));
 	set_divider(CPM_PWMCDR, 0x40000004);
 	REG(CPM_CLKGR1) &= ~(1u << 5);
+	nocry_panel = pn = choose_panel();
 	gpio_func(PB, 0x0f00ffff, 1);		/* PB0-15 data, PB24-27 clock, enable, syncs */
 	gpio_out(PC, 1u << 22, 0);		/* backlight supply off */
 	REG(PWM_CCFG0) = 0;
@@ -159,7 +472,7 @@ u32 *nocry_display_init(void)
 	 * without it never completes (second hardware test, 2026-11-26). The stock image sets
 	 * the rate here and only the "inverted" bit after the TFT registers.
 	 */
-	set_divider(CPM_LPCDR, 0x4400008b);	/* MPLL / 140, about 10.7 MHz, clock inverted */
+	set_divider(CPM_LPCDR, pn->lpcdr);
 	REG(DC_INT_EN) = 0x00028142;
 	REG(DC_CLR_ST) = 0;
 	/*
@@ -169,25 +482,16 @@ u32 *nocry_display_init(void)
 	 */
 	REG(DC_COM_CONFIG) = 0x00cf003c;
 	REG(DISP_COM) = 0x002600f1;		/* TFT, RGB565 out with dithering */
-	REG(TFT_HSYNC) = 0x0014021c;
-	REG(TFT_VSYNC) = 0x0014014c;
-	REG(TFT_HDE) = 0x00280208;
-	REG(TFT_VDE) = 0x00280138;
-	REG(TFT_CFG) = 0x00000102;
+	REG(TFT_HSYNC) = pn->tft[0];
+	REG(TFT_VSYNC) = pn->tft[1];
+	REG(TFT_HDE) = pn->tft[2];
+	REG(TFT_VDE) = pn->tft[3];
+	REG(TFT_CFG) = pn->tft[4];
 
-	gpio_out(PC, 1u << 21, 1);		/* panel power off (active low) */
-	gpio_out(PB, 1u << 16, 0);		/* reset asserted */
-	gpio_out(PC, 1u << 21, 0);
-	mdelay(30);
-	gpio_out(PB, 1u << 16, 1);
-	mdelay(5);
-	gpio_out(PB, 1u << 16, 0);
-	mdelay(5);
-	gpio_out(PB, 1u << 16, 1);
-	mdelay(25);
+	run_script(pn);		/* panel power, reset, and its commands if it takes any */
 	REG(DC_COM_CONFIG) |= 2;
 
-	/* one visible layer, 480x272 xRGB; two frame descriptors as the stock image leaves them */
+	/* one visible layer, 32-bit xRGB; two frame descriptors as the stock image leaves them */
 	for (i = 0; i < 4; i++) {
 		static const u32 cfg[4] = { 0x001500ff, 0x00000641, 0x000005e1, 0x00000581 };
 		int k;
@@ -198,20 +502,20 @@ u32 *nocry_display_init(void)
 		l->cfg = cfg[i];
 	}
 	l = (struct layer_desc *)KSEG1(LAYER_PHYS(0));
-	l->size = YRES << 16 | XRES;
+	l->size = pn->yres << 16 | pn->xres;
 	l->buf = FB_PHYS;
 	l->resize_x = 0x200;
 	l->resize_y = 0x200;
-	l->stride = XRES;
+	l->stride = pn->xres;
 	for (i = 0; i < 2; i++) {
 		int k;
 
 		f = (struct frame_desc *)KSEG1(i ? FRAME1_PHYS : FRAME0_PHYS);
 		f->next = FRAME1_PHYS;
-		f->size = YRES << 16 | XRES;
+		f->size = pn->yres << 16 | pn->xres;
 		f->ctrl = 4;
 		f->wback_addr = 0;
-		f->wback_stride = XRES;
+		f->wback_stride = pn->xres;
 		for (k = 0; k < 4; k++)
 			f->layer[k] = LAYER_PHYS(k);
 		f->lay_cfg_en = 0x0000e410;

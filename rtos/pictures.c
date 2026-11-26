@@ -5,16 +5,14 @@
  * Pictures are not compiled in. tools/rtos-build/mkpictures.py packs them into a store that
  * the build appends to the image; each has a model name, and the one whose name equals the
  * model field of the board's sn_mac record ("serial;mac;model;...") is shown, like the stock
- * image chooses its logo. A picture with an empty name is the fallback.
+ * image chooses its logo. Pictures with an empty name are fallbacks; the one matching the
+ * panel's size is preferred.
  *
  * Store: "NCPX", count, then per picture { char model[32]; u32 width, height, offset, length }
  * with offset from the start of the store. Pixel data: 16-bit pairs (run length, RGB565),
  * rows top to bottom.
  */
 #include "nocry_rtos.h"
-
-#define XRES	480
-#define YRES	272
 
 struct pic_entry {
 	char model[32];
@@ -67,7 +65,7 @@ static u32 rgb(u32 p)
 }
 
 /* Returns 1 if a picture was drawn. `snmac` may be 0. */
-int nocry_show_picture(u32 *fb, const char *snmac, u32 snmac_len)
+int nocry_show_picture(u32 *fb, u32 XRES, u32 YRES, const char *snmac, u32 snmac_len)
 {
 	const struct pic_store *s = (const struct pic_store *)__code_end;
 	const struct pic_entry *pick = 0;
@@ -85,7 +83,8 @@ int nocry_show_picture(u32 *fb, const char *snmac, u32 snmac_len)
 			pick = &s->e[i];
 			break;
 		}
-		if (!s->e[i].model[0] && !pick)
+		/* fallback: a picture without a name, preferably one made for this panel's size */
+		if (!s->e[i].model[0] && (!pick || (s->e[i].width == XRES && s->e[i].height == YRES)))
 			pick = &s->e[i];
 	}
 	if (!pick || !pick->width || !pick->height || pick->width > 2048 || pick->height > 2048)
@@ -118,7 +117,7 @@ int nocry_show_picture(u32 *fb, const char *snmac, u32 snmac_len)
 					return 1;
 			}
 			run--;
-			if (px >= 0 && px < XRES && py >= 0 && py < YRES)
+			if (px >= 0 && px < (int)XRES && py >= 0 && py < (int)YRES)
 				fb[py * XRES + px] = color;
 		}
 	return 1;
