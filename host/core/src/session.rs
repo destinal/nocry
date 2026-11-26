@@ -479,8 +479,9 @@ pub struct DeviceInfo {
     pub slots: Option<Slots>,
 }
 
-pub fn device_info(soc: &SocProfile, via: Via) -> Result<DeviceInfo> {
-    let t = open_target(soc, None, Want::PreferRw, false, false, None, None, via)?;
+/// `target` overrides the device (an image file, for tests and screenshots).
+pub fn device_info(soc: &SocProfile, via: Via, target: Option<&PathBuf>) -> Result<DeviceInfo> {
+    let t = open_target(soc, target, Want::PreferRw, false, false, None, None, via)?;
     let mut d = DeviceInfo { access: t.path.display().to_string(), emmc_bytes: t.size, ..Default::default() };
     let Ok(g) = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?) else {
         say!("no valid partition table: this looks like a blank or erased board");

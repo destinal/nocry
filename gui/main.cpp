@@ -133,6 +133,7 @@ public:
         hv->addLayout(grid);
         hv->addStretch(1);
         tabs->addTab(home, tr("Home"));
+        tabWidget = tabs;
 
         // --- Partitions (reference)
         parts = new QTableWidget(0, 3);
@@ -429,6 +430,7 @@ public:
     QString autoSlot;               // self-tests only: slot to pick without a dialog
     bool autoConfirm = false;       // self-tests only
 
+    QTabWidget *tabWidget = nullptr;
     std::function<void()> onIdle;   // used by the self-tests
     QJsonObject lastResult;
     bool quiet = false;             // self-tests: no modal dialogs
@@ -844,7 +846,11 @@ int main(int argc, char **argv)
     const int st = args.indexOf("--selftest");   // --selftest out.png: read the device, save a screenshot, quit
     if (st > 0 && st + 1 < args.size()) {
         const QString out = args[st + 1];
-        w.onIdle = [&w, out] { QTimer::singleShot(500, [&w, out] { w.grab().save(out); QApplication::quit(); }); };
+        const int tab = st + 2 < args.size() ? args[st + 2].toInt() : 0;   // optional: tab to show
+        w.onIdle = [&w, out, tab] {
+            w.tabWidget->setCurrentIndex(tab);
+            QTimer::singleShot(500, [&w, out] { w.grab().save(out); QApplication::quit(); });
+        };
         QTimer::singleShot(1500, [&w] { w.readDevice(); });
         QTimer::singleShot(120000, [] { QApplication::exit(2); });
     }

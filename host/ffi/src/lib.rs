@@ -87,7 +87,7 @@ pub extern "C" fn nocry_board_state_json() -> *mut c_char {
 pub extern "C" fn nocry_device_info_json() -> *mut c_char {
     let r = std::panic::catch_unwind(|| {
         let soc = &nocry_core::bootrom::SOCS[0];
-        session::device_info(soc, Via::Auto)
+        session::device_info(soc, Via::Auto, test_target().as_ref())
     });
     out(match r {
         Ok(Ok(d)) => {

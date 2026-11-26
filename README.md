@@ -4,6 +4,10 @@ A recovery, backup and firmware-installation tool for Ingenic X2000E-based Creal
 
 **Status: early, tested on one board family.** Everything below has been run on a retail Creality Nebula Pad (and the same board converted to Ender-3 V3 KE firmware and back). K1 and K1 Max support is planned and untested. The GUI builds and runs on Linux only so far. Use it at your own risk and take a backup first.
 
+![The nocry window: board details and the main actions](docs/screenshots/home.png)
+
+<sub>The serial number and MAC address in the screenshots are made up. More: [partition view](docs/screenshots/partitions.png).</sub>
+
 ## What it does
 
 - Loads its own SPL and second stage through the SoC's USB boot mode (hold BOOT, tap RESET). No blobs: both are built from GPL U-Boot source with the patches in `tools/burner-build`.
