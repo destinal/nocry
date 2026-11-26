@@ -23,6 +23,7 @@ fn map_err(e: rusb::Error, what: &str) -> anyhow::Error {
             "{what}: permission denied. On Linux install host/contrib/60-nocry.rules into \
              /etc/udev/rules.d/ (then `udevadm control --reload` and replug), or run as root"
         ),
+        rusb::Error::Busy => anyhow!("another program is using the board. Close other nocry windows and stop running nocry, adb or fastboot commands, then try again"),
         rusb::Error::NoDevice => anyhow!("{what}: device disconnected"),
         rusb::Error::Timeout => anyhow!("{what}: timeout"),
         e => anyhow!("{what}: {e}"),

@@ -8,6 +8,10 @@
  *   nocry-write:<name>:<off>:<size>           -> DATA, host sends <size> bytes, OKAY
  *   nocry-hash:<sha256|xxh64>:<name>:<off>:<size>:<chunk>
  *                                             -> DATA, one digest per chunk, OKAY
+ *   nocry-secure-erase:<name>:<off>:<size>    eMMC secure discard if the card has it, else
+ *                                             discard; then every byte is verified zero (and
+ *                                             overwritten if not). OKAY<method used>
+ *   nocry-dmesg                               -> DATA, this system's kernel log, OKAY
  * Region names are the same as in the U-Boot nocry fastboot stage2:
  *   GPT names, kernel_a/_b rootfs_a/_b rtos_a/_b, bootloader, gpt, mmc0.
  * mmc0, gpt, bootloader and sn_mac need `flashing unlock_critical` first.
@@ -27,6 +31,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/klog.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <linux/fs.h>
@@ -39,7 +44,7 @@
 _Static_assert(sizeof(off_t) == 8, "64-bit file offsets required");
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
 
-#define FBD_VERSION	"nocry-fbd 0.1"
+#define FBD_VERSION	"nocry-fbd 0.2"
 #define MIB		(1u << 20)
 #define BUFCAP		(4 * MIB)		/* queue buffer size = largest block */
 #define NQ		8
@@ -411,7 +416,7 @@ static void getvar_one(const char *v, char *out)
 	else if (!strcmp(v, "secure")) strcpy(out, "no");
 	else if (!strcmp(v, "unlocked")) strcpy(out, "yes");
 	else if (!strcmp(v, "critical-unlocked")) strcpy(out, critical_unlocked ? "yes" : "no");
-	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64");
+	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg");
 	else if (!strcmp(v, "slot-count")) strcpy(out, "2");
 	else if (!strcmp(v, "current-slot")) { int s = current_slot(); if (s >= 0) strcpy(out, s ? "b" : "a"); }
 	else if (!strncmp(v, "has-slot:", 9))
@@ -636,6 +641,42 @@ static void cmd_nocry_hash(char *arg)
 	if (qerr) FAIL("read error"); else OKAY("");
 }
 
+/* Range must be 512-aligned. Old data is made unrecoverable where the card supports it. */
+static void cmd_nocry_secure_erase(char *arg)
+{
+	struct region r; u64 off, size, range[2], o, end; const char *method = "overwrite";
+	if (parse_span(arg, &r, &off, &size, 1)) return;
+	if (need_critical(&r)) return;
+	if (!size || size % 512) { FAIL("size must be a non-zero multiple of 512"); return; }
+	range[0] = r.lba * 512 + off; range[1] = size;
+#ifdef BLKSECDISCARD
+	if (!ioctl(disk, BLKSECDISCARD, range)) method = "secure-discard";
+	else
+#endif
+	if (!ioctl(disk, BLKDISCARD, range)) method = "discard";
+	/* whatever the card did: afterwards every byte must read as zero */
+	memset(zbuf, 0, MIB);
+	for (o = range[0], end = range[0] + size; o < end; o += MIB) {
+		size_t k = end - o > MIB ? MIB : end - o;
+		if (dread(o, vbuf, k)) { FAIL("read error"); return; }
+		if (memcmp(vbuf, zbuf, k) && dwrite(o, zbuf, k)) { FAIL("write error"); return; }
+	}
+	fdatasync(disk);
+	OKAY("%s", method);
+}
+
+static void cmd_nocry_dmesg(void)
+{
+	int n = klogctl(10 /* SYSLOG_ACTION_SIZE_BUFFER */, NULL, 0);
+	char *b;
+	if (n <= 0) n = 1 << 17;
+	if (!(b = malloc(n))) { FAIL("out of memory"); return; }
+	n = klogctl(3 /* SYSLOG_ACTION_READ_ALL */, b, n);
+	if (n <= 0) { free(b); FAIL("cannot read the kernel log"); return; }
+	if (!resp("DATA", "%08x", (u32)n) && !data_write((u8 *)b, n)) OKAY("");
+	free(b);
+}
+
 static void cmd_set_active(const char *slot)
 {
 	struct region r; char why[80];
@@ -655,6 +696,8 @@ static void dispatch(char *c)
 	else if (!strncmp(c, "fetch:", 6)) cmd_fetch(c + 6);
 	else if (!strncmp(c, "nocry-write:", 12)) cmd_nocry_write(c + 12);
 	else if (!strncmp(c, "nocry-hash:", 11)) cmd_nocry_hash(c + 11);
+	else if (!strncmp(c, "nocry-secure-erase:", 19)) cmd_nocry_secure_erase(c + 19);
+	else if (!strcmp(c, "nocry-dmesg")) cmd_nocry_dmesg();
 	else if (!strncmp(c, "set_active:", 11)) cmd_set_active(c + 11);
 	else if (!strcmp(c, "flashing unlock_critical")) { critical_unlocked = 1; INFO("critical regions (mmc0, gpt, bootloader, sn_mac) writable until reboot"); OKAY(""); }
 	else if (!strcmp(c, "flashing lock_critical")) { critical_unlocked = 0; OKAY(""); }

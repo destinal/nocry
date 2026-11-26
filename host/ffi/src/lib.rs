@@ -75,6 +75,7 @@ pub extern "C" fn nocry_board_state_json() -> *mut c_char {
                 BoardKind::Fastboot => "fastboot",
                 BoardKind::Recovery => "recovery",
                 BoardKind::UbootDisk => "uboot-disk",
+                BoardKind::Unsupported => "unsupported",
             };
             format!("{{\"state\":\"{k}\",\"port\":\"{}\"}}", esc(&s.port))
         }
@@ -168,6 +169,10 @@ pub unsafe extern "C" fn nocry_install_json(os_path: *const c_char, keep_data: c
     let r = std::panic::catch_unwind(|| {
         session::install(&nocry_core::bootrom::SOCS[0], Via::Auto, &os, keep_data != 0, execute != 0, safety.as_deref(), target.as_ref())
     });
+    install_json(r)
+}
+
+fn install_json(r: std::thread::Result<anyhow::Result<session::InstallReport>>) -> *mut c_char {
     out(match r {
         Ok(Ok(i)) => {
             let notes: Vec<String> = i.notes.iter().map(|n| format!("\"{}\"", esc(n))).collect();
@@ -175,11 +180,11 @@ pub unsafe extern "C" fn nocry_install_json(os_path: *const c_char, keep_data: c
                 "{{\"ok\":true,\"firmware_board\":\"{}\",\"firmware_version\":\"{}\",\"has_boot_area\":{},\
                  \"device_firmware\":\"{}\",\"model_before\":\"{}\",\"model_after\":\"{}\",\"identity_generated\":{},\
                  \"notes\":[{}],\"details\":\"{}\",\"bytes_to_write\":{},\"executed\":{},\"safety_copy\":\"{}\",\
-                 \"model_before_name\":\"{}\",\"model_after_name\":\"{}\",\"firmware_name\":\"{}\",\"device_firmware_name\":\"{}\",\"blank_board\":{}}}",
+                 \"model_before_name\":\"{}\",\"model_after_name\":\"{}\",\"firmware_name\":\"{}\",\"device_firmware_name\":\"{}\",\"blank_board\":{},\"target_slot\":\"{}\"}}",
                 esc(&i.firmware_board), esc(&i.firmware_version), i.has_boot_area, esc(&i.device_firmware),
                 esc(&i.model_before), esc(&i.model_after), i.identity_generated, notes.join(","), esc(&i.details),
                 i.bytes_to_write, i.executed, esc(&i.safety_copy), esc(&i.model_before_name),
-                esc(&i.model_after_name), esc(&i.firmware_name), esc(&i.device_firmware_name), i.blank_board
+                esc(&i.model_after_name), esc(&i.firmware_name), esc(&i.device_firmware_name), i.blank_board, esc(&i.target_slot)
             )
         }
         Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
@@ -438,6 +443,49 @@ pub extern "C" fn nocry_generate_identity_json() -> *mut c_char {
     out(match r {
         Ok((sn, mac)) => format!("{{\"ok\":true,\"sn\":\"{sn}\",\"mac\":\"{mac}\"}}"),
         Err(e) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+    })
+}
+
+/// Plan (execute=0) or carry out an installation into the inactive slot only. Same JSON as
+/// nocry_install_json, with "target_slot":"a|b".
+/// # Safety
+/// `os_path` must be a valid NUL-terminated path; `safety_dir` NULL or likewise.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_install_slot_json(os_path: *const c_char, execute: c_int, safety_dir: *const c_char) -> *mut c_char {
+    let (os, safety) = (opt_path(os_path).unwrap_or_default(), opt_path(safety_dir));
+    events::reset_cancel();
+    install_json(std::panic::catch_unwind(|| {
+        session::install_other_slot(&nocry_core::bootrom::SOCS[0], Via::Auto, &os, execute != 0, safety.as_deref(), test_target().as_ref())
+    }))
+}
+
+/// Erase settings and files so they cannot be recovered (both data partitions, completely).
+/// {"ok":true,"bytes":N,"partitions":[{"name","method"}]}
+/// # Safety
+/// `safety_dir` must be NULL or a valid NUL-terminated path.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_secure_wipe_json(safety_dir: *const c_char) -> *mut c_char {
+    let safety = opt_path(safety_dir);
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| session::secure_wipe_data(&nocry_core::bootrom::SOCS[0], Via::Auto, safety.as_deref(), test_target().as_ref()));
+    out(match r {
+        Ok(Ok(w)) => {
+            let p: Vec<String> = w.partitions.iter().map(|(n, m)| format!("{{\"name\":\"{}\",\"method\":\"{}\"}}", esc(n), esc(m))).collect();
+            format!("{{\"ok\":true,\"bytes\":{},\"partitions\":[{}]}}", w.bytes, p.join(","))
+        }
+        Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
+/// The board's log: {"ok":true,"kind":"recovery|previous","text":"..."}
+#[no_mangle]
+pub extern "C" fn nocry_boot_log_json() -> *mut c_char {
+    let r = std::panic::catch_unwind(session::boot_log);
+    out(match r {
+        Ok(Ok((kind, text))) => format!("{{\"ok\":true,\"kind\":\"{kind}\",\"text\":\"{}\"}}", esc(&text)),
+        Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
     })
 }
 

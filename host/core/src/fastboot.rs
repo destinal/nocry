@@ -73,7 +73,10 @@ impl Fastboot {
                 let (Some(ep_in), Some(ep_out)) = (ep_in, ep_out) else { continue };
                 let h = dev.open().context("opening fastboot device (udev rule installed?)")?;
                 let _ = h.set_auto_detach_kernel_driver(true);
-                h.claim_interface(alt.interface_number()).context("claiming fastboot interface")?;
+                h.claim_interface(alt.interface_number()).map_err(|e| match e {
+                    rusb::Error::Busy => anyhow!("another program is using the board. Close other nocry windows and stop running nocry, adb or fastboot commands, then try again"),
+                    e => anyhow!("claiming the board's fastboot interface: {e}"),
+                })?;
                 return Ok(Fastboot { h, ep_in, ep_out, info: Box::new(|m| crate::say!("(bootloader) {m}")) });
             }
         }
@@ -108,8 +111,13 @@ impl Fastboot {
     }
 
     pub fn command(&mut self, cmd: &str) -> Result<String> {
+        self.command_timeout(cmd, TIMEOUT)
+    }
+
+    /// For commands that take long before they answer (erasing).
+    pub fn command_timeout(&mut self, cmd: &str, timeout: Duration) -> Result<String> {
         self.send(cmd.as_bytes())?;
-        let (kind, rest) = self.response(TIMEOUT)?;
+        let (kind, rest) = self.response(timeout)?;
         if kind != "OKAY" {
             bail!("{cmd}: expected OKAY, got {kind}{rest}");
         }
@@ -206,6 +214,34 @@ impl Fastboot {
             Ok(())
         })?;
         Ok(all.chunks(algo.len()).map(|c| c.to_vec()).collect())
+    }
+
+    /// nocry-secure-erase (nocry-fbd 0.2+): returns the method the card allowed.
+    pub fn secure_erase(&mut self, name: &str, off: u64, size: u64) -> Result<String> {
+        self.command_timeout(&format!("nocry-secure-erase:{name}:{off:x}:{size:x}"), Duration::from_secs(600))
+    }
+
+    /// nocry-dmesg (nocry-fbd 0.2+): the recovery system's kernel log.
+    pub fn dmesg(&mut self) -> Result<String> {
+        let n = self.expect_data("nocry-dmesg")?;
+        let mut all = Vec::with_capacity(n);
+        self.read_data(n, |b| {
+            all.extend_from_slice(b);
+            Ok(())
+        })?;
+        Ok(String::from_utf8_lossy(&all).to_string())
+    }
+
+    /// Runs a command whose answer comes as INFO lines (e.g. the U-Boot stage's "oem dmesg").
+    pub fn info_lines(&mut self, cmd: &str) -> Result<Vec<String>> {
+        let lines = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = lines.clone();
+        let old = std::mem::replace(&mut self.info, Box::new(move |m| sink.borrow_mut().push(m.to_string())));
+        let r = self.command_timeout(cmd, Duration::from_secs(30));
+        self.info = old;
+        r?;
+        let v = lines.borrow().clone();
+        Ok(v)
     }
 
     /// Boots the downloaded image. The device drops off USB right after OKAY.

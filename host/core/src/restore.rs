@@ -390,6 +390,43 @@ impl Target {
         }
     }
 
+    /// Erase a range so the old data cannot be read back: eMMC secure discard where the board
+    /// service and card support it, otherwise overwriting with zeros. Always ends all-zero.
+    /// Returns the method used ("secure-discard", "discard" or "overwrite").
+    pub fn secure_erase(&self, off: u64, len: u64, what: &str) -> Result<String> {
+        if !self.writable {
+            bail!("{} was opened read-only", self.path.display());
+        }
+        if let Backend::Fb(fb) = &self.b {
+            let has = fb.borrow_mut().getvar("nocry-ext").unwrap_or_default().contains("secure-erase");
+            if has && off % 512 == 0 && len % 512 == 0 {
+                // per 512 MiB, so progress is visible and no single command runs very long
+                let (mut done, mut method) = (0u64, String::new());
+                while done < len {
+                    let n = (512 * MIB).min(len - done);
+                    method = fb.borrow_mut().secure_erase("mmc0", off + done, n).with_context(|| format!("erasing {what}"))?;
+                    done += n;
+                    events::progress(what, done, len, "");
+                }
+                events::progress_end();
+                return Ok(method);
+            }
+        }
+        let zeros = vec![0u8; (32 * MIB) as usize];
+        let mut done = 0;
+        while done < len {
+            let n = (32 * MIB).min(len - done) as usize;
+            if !self.matches(off + done, &zeros[..n])? {
+                self.write_raw(off + done, &zeros[..n], what)?;
+            }
+            done += n as u64;
+            events::progress(what, done, len, "");
+        }
+        events::progress_end();
+        self.sync()?;
+        Ok("overwrite".into())
+    }
+
     pub fn sync(&self) -> Result<()> {
         if let Backend::File(f) = &self.b {
             f.sync_all()?;

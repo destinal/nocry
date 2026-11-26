@@ -83,6 +83,16 @@ pub fn boot_board(soc: &SocProfile, s1: &[u8], s2: &[u8], device: Option<&str>, 
     b.log = Box::new(move |m| say!("{m}"));
     let info = b.cpu_info().context("bootrom did not answer GET_CPU_INFO")?;
     say!("bootrom cpu info: {info:?}");
+    // nocry's SPL and stage2 are built for the X2000 family only. Other Ingenic chips (the
+    // 2025 K1C's X2600E among them) would not run them, and boards with secure boot only
+    // run code signed by the manufacturer.
+    if !info.to_ascii_uppercase().starts_with("X2000") && !force {
+        bail!(
+            "this board reports the processor {info:?}, not the X2000 family nocry supports. Boards with a \
+             different Ingenic chip, such as the 2025 K1C (X2600E, with secure boot), cannot be loaded: \
+             they only run software signed by Creality. Nothing was sent to the board"
+        );
+    }
     let opts = BootOptions { spl_timeout: Duration::from_secs_f32(spl_timeout), ..Default::default() };
     b.boot(soc, s1, s2, &opts)?;
     drop(b); // release the interface before the device re-enumerates
@@ -429,6 +439,8 @@ pub enum BoardKind {
     Recovery,
     /// nocry U-Boot USB-disk stage2
     UbootDisk,
+    /// an Ingenic device in USB boot mode that nocry has no support for (other chip family)
+    Unsupported,
 }
 
 #[derive(Debug, Clone)]
@@ -449,6 +461,8 @@ pub fn board_state() -> Result<BoardState> {
             (2, BoardKind::UbootDisk)
         } else if SOCS.iter().any(|s| s.vid == f.vid && s.pid == f.pid) {
             (3, BoardKind::UsbBoot)
+        } else if f.vid == 0xa108 {
+            (4, BoardKind::Unsupported)
         } else {
             (9, BoardKind::None)
         }
@@ -541,6 +555,8 @@ pub struct InstallReport {
     pub details: String,
     pub bytes_to_write: u64,
     pub executed: bool,
+    /// "a"/"b" when this installs into the inactive slot only; "" for a normal install
+    pub target_slot: String,
     /// the board had no partition table: this is a rebuild from scratch
     pub blank_board: bool,
     /// where the pre-write copy of the first 3 MiB went, if one was taken
@@ -1154,4 +1170,139 @@ pub fn set_identity(
     t.write_verified(off, &area, "sn_mac")?;
     say!("identity written and verified: model {:?}, serial number and MAC address updated", rec.model());
     Ok(rec)
+}
+
+/// Install firmware into the slot that is NOT active, leaving the running firmware, the slot
+/// choice, the settings and the identity alone. Use `set_active_slot` afterwards to start it.
+/// Only for firmware of the board's current model: both slots share one identity record and
+/// one settings partition, so a different printer type in the other slot would not work.
+pub fn install_other_slot(
+    soc: &SocProfile, via: Via, os: &std::path::Path, execute: bool, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>,
+) -> Result<InstallReport> {
+    let pkg = restore::Package::load(os)?;
+    let mut r = InstallReport {
+        firmware_board: pkg.ota_board.clone().unwrap_or_default(),
+        firmware_version: pkg.ota_version.clone().unwrap_or_default(),
+        ..Default::default()
+    };
+    r.firmware_name = crate::snmac::product_name_for_ota_board(&r.firmware_board);
+    let want = if execute { Want::Rw } else { Want::PreferRw };
+    let t = open_target(soc, target, want, execute, false, None, None, via)?;
+    let (g, slots) = read_slots(&t).context("installing to the other slot needs a board that already has firmware; use a normal install")?;
+    let snp = g.find("sn_mac").context("no sn_mac partition")?;
+    let cur = crate::snmac::SnMac::parse(&t.read(snp.offset(), crate::snmac::RECORD_AREA)?)
+        .context("this board has no identity record; use a normal install")?;
+    let pkg_model = pkg.ota_board.as_deref().and_then(crate::snmac::model_for_ota_board);
+    match pkg_model {
+        None => bail!("this firmware is not for a Nebula-family board ({})", crate::snmac::foreign_board_name(&r.firmware_board)),
+        Some(m) if m != cur.model() => bail!(
+            "the other slot can only hold firmware for the same printer type. This board is set up as {} and the \
+             firmware is for {}. To change printer type, use a clean install",
+            crate::snmac::product_name(cur.model()),
+            crate::snmac::product_name(m)
+        ),
+        _ => {}
+    }
+    r.model_before = cur.model().into();
+    r.model_after = cur.model().into();
+    r.model_before_name = crate::snmac::product_name(cur.model());
+    r.model_after_name = r.model_before_name.clone();
+    let slot = if slots.active == "a" { "b" } else { "a" };
+    r.target_slot = slot.into();
+    let active = if slots.active == "a" { &slots.a } else { &slots.b };
+    r.device_firmware_name = active.firmware_name.clone();
+    r.device_firmware = format!("{} {}", r.firmware_board, active.firmware_version);
+    let sfx = if slot == "b" { "2" } else { "" };
+    // (partition, image, zero the rest of the partition)
+    let jobs = [(format!("rtos{sfx}"), &pkg.rtos, true), (format!("kernel{sfx}"), &pkg.kernel, true), (format!("rootfs{sfx}"), &pkg.rootfs, false)];
+    let mut plan: Vec<(u64, Vec<u8>, String)> = vec![];
+    for (name, img, pad) in &jobs {
+        let p = g.find(name).with_context(|| format!("no {name} partition"))?;
+        if img.len() as u64 > p.size() {
+            bail!("{name}: the image ({} bytes) does not fit the partition ({} bytes)", img.len(), p.size());
+        }
+        let mut data = (*img).clone();
+        if *pad {
+            data.resize(p.size() as usize, 0);
+        }
+        plan.push((p.offset(), data, name.clone()));
+    }
+    for (off, data, name) in &plan {
+        let mut differ = 0u64;
+        for (i, c) in data.chunks(1 << 20).enumerate() {
+            if !t.matches(off + ((i as u64) << 20), c)? {
+                differ += c.len() as u64;
+            }
+        }
+        r.details += &format!("  {name}: {} of {} bytes differ\n", differ, data.len());
+        r.bytes_to_write += differ;
+    }
+    if !execute || r.bytes_to_write == 0 {
+        return Ok(r);
+    }
+    safety_copy(&t, safety_dir, "slot-install")?;
+    for (off, data, name) in &plan {
+        write_range(&t, *off, data.len() as u64, name, |o, n| Ok(data[o as usize..o as usize + n].to_vec()))?;
+    }
+    r.executed = true;
+    say!("firmware {} installed into slot {} and verified; the active slot was not changed", r.firmware_version, slot.to_uppercase());
+    Ok(r)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WipeReport {
+    /// (partition, method the board used: secure-discard, discard or overwrite)
+    pub partitions: Vec<(String, String)>,
+    pub bytes: u64,
+}
+
+/// Factory reset that also makes the old settings and files unrecoverable: both data
+/// partitions are erased completely (eMMC secure discard where the card supports it,
+/// otherwise overwritten), then checked to be all zeros. Firmware and identity stay.
+pub fn secure_wipe_data(soc: &SocProfile, via: Via, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>) -> Result<WipeReport> {
+    let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
+    let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)
+        .context("this board has no valid partition table (blank board?)")?;
+    safety_copy(&t, safety_dir, "secure-erase")?;
+    let mut r = WipeReport::default();
+    for name in ["rootfs_data", "userdata"] {
+        let p = g.find(name).with_context(|| format!("no {name} partition"))?;
+        let method = t.secure_erase(p.offset(), p.size(), "erasing")?;
+        // independent check: every byte must now be zero
+        let zeros = vec![0u8; PIECE as usize];
+        let mut done = 0;
+        while done < p.size() {
+            let n = PIECE.min(p.size() - done) as usize;
+            if !t.matches(p.offset() + done, &zeros[..n])? {
+                bail!("{name} is not fully erased at {:#x}", p.offset() + done);
+            }
+            done += n as u64;
+            crate::events::progress("verifying", done, p.size(), "");
+        }
+        crate::events::progress_end();
+        say!("{name}: erased ({method}) and verified, {} bytes", p.size());
+        r.partitions.push((name.to_string(), method));
+        r.bytes += p.size();
+    }
+    Ok(r)
+}
+
+/// The board's own log of its current or last start, for diagnosis:
+/// - recovery running: its live kernel log;
+/// - loader (fastboot stage) running: the log the last recovery start left in memory, if any.
+pub fn boot_log() -> Result<(String, String)> {
+    if let Some(f) = usb::running_recovery(SOCS)?.into_iter().next() {
+        let mut fb = fastboot::Fastboot::open(&f)?;
+        fb.info = Box::new(|_| {});
+        if !fb.getvar("nocry-ext").unwrap_or_default().contains("dmesg") {
+            bail!("the recovery system running on the board is too old to give its log; restart the board in USB boot mode and try again");
+        }
+        return Ok(("recovery".into(), fb.dmesg()?));
+    }
+    if let Some(f) = usb::running_fastboot(SOCS)?.into_iter().next() {
+        let mut fb = fastboot::Fastboot::open(&f)?;
+        let lines = fb.info_lines("oem dmesg").context("the loader has no log of a previous recovery start")?;
+        return Ok(("previous".into(), lines.join("\n")));
+    }
+    bail!("the log is only available while the board runs nocry's recovery system or loader")
 }

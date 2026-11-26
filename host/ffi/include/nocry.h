@@ -84,6 +84,17 @@ char *nocry_erase_disk_json(const char *safety_dir);                         /* 
 char *nocry_set_identity_json(const char *sn, const char *mac, const char *model, const char *board, const char *safety_dir);
 char *nocry_generate_identity_json(void);   /* {"ok":true,"sn":"...","mac":"..."}: random, valid pair */
 
+/* Install into the inactive firmware slot only (same printer type as the board); nothing else
+ * is touched. Same JSON as nocry_install_json plus "target_slot":"a|b". */
+char *nocry_install_slot_json(const char *os_path, int execute, const char *safety_dir);
+
+/* Factory reset that also makes old settings and files unrecoverable.
+ * {"ok":true,"bytes":N,"partitions":[{"name":"userdata","method":"secure-discard|discard|overwrite"}]} */
+char *nocry_secure_wipe_json(const char *safety_dir);
+
+/* The board's log of its current (recovery) or previous start: {"ok":true,"kind":"recovery|previous","text":"..."} */
+char *nocry_boot_log_json(void);
+
 /* Ask the running operation to stop at its next safe point (callable from any thread). */
 void nocry_cancel(void);
 

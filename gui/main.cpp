@@ -32,6 +32,9 @@
 #include <QLocale>
 #include <QMainWindow>
 #include <QPlainTextEdit>
+#include <QProcess>
+#include <QGridLayout>
+#include <QFile>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTableWidget>
@@ -95,8 +98,29 @@ public:
         stateTitle->setFont(f);
         stateHint = new QLabel;
         stateHint->setWordWrap(true);
+#ifdef Q_OS_LINUX
+        // first run on Linux: a normal user cannot open the board's USB devices without a udev rule
+        udevBanner = new QWidget;
+        {
+            auto *h = new QHBoxLayout(udevBanner);
+            h->setContentsMargins(0, 0, 0, 0);
+            auto *l = new QLabel(tr("<b>One-time setup needed.</b> Linux does not let programs talk to the board until a small system rule is installed."));
+            l->setWordWrap(true);
+            auto *b = new QPushButton(tr("Install rule…"));
+            h->addWidget(l, 1);
+            h->addWidget(b);
+            connect(b, &QPushButton::clicked, this, [this] { installUdevRule(); });
+        }
+        v->addWidget(udevBanner);
+        udevBanner->setVisible(!udevRuleInstalled());
+#endif
         v->addWidget(stateTitle);
-        v->addWidget(stateHint);
+        auto *hintRow = new QHBoxLayout;
+        hintRow->addWidget(stateHint, 1);
+        bootHelpButton = new QPushButton(tr("How to enter USB boot mode…"));
+        hintRow->addWidget(bootHelpButton, 0, Qt::AlignTop);
+        v->addLayout(hintRow);
+        connect(bootHelpButton, &QPushButton::clicked, this, [this] { showBootHelp(); });
         // shell access to the running recovery: what works right now, and how to use it
         shellLine = new QLabel;
         shellLine->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -194,7 +218,14 @@ public:
         log = new QPlainTextEdit;
         log->setReadOnly(true);
         log->setMaximumBlockCount(2000);
-        tabs->addTab(log, tr("Activity log"));
+        auto *logTab = new QWidget;
+        auto *lv = new QVBoxLayout(logTab);
+        lv->addWidget(log, 1);
+        boardLogButton = new QPushButton(tr("Show the board's own log…"));
+        boardLogButton->setToolTip(tr("The kernel log of the recovery system running on the board, for diagnosing problems"));
+        lv->addWidget(boardLogButton, 0, Qt::AlignLeft);
+        tabs->addTab(logTab, tr("Activity log"));
+        connect(boardLogButton, &QPushButton::clicked, this, [this] { showBoardLog(); });
 
         // --- progress, always visible below the tabs
         progressLabel = new QLabel;
@@ -293,7 +324,7 @@ public:
 
     // Download a firmware from the list (verified, reused if already there), then go on to
     // the install check.
-    void startDownload(const QJsonObject &fw, bool keepData)
+    void startDownload(const QJsonObject &fw, int keepData)   // keepData: 0 clean, 1 keep data, 2 other slot
     {
         if (busy)
             return;
@@ -333,7 +364,7 @@ public:
 
     // Step 1: work out what installing `os` would change. Step 2 (after the user confirms, or
     // autoConfirm in self-tests): write it.
-    void startInstall(const QString &os, bool keepData, bool execute)
+    void startInstall(const QString &os, int keepData, bool execute)
     {
         if (busy)
             return;
@@ -361,10 +392,19 @@ public:
                 if (!quiet)
                     QMessageBox::critical(this, execute ? tr("Installation failed") : tr("Cannot install this firmware"), o.value("error").toString());
             } else if (o.value("bytes_to_write").toDouble() == 0) {
-                const QString msg = tr("The board already has %1 installed and intact. Nothing needs to be written.").arg(fw);
+                const QString msg = keepData == 2
+                    ? tr("Slot %1 already holds %2, intact. Nothing needs to be written.").arg(o.value("target_slot").toString().toUpper(), fw)
+                    : tr("The board already has %1 installed and intact. Nothing needs to be written.").arg(fw);
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, tr("Nothing to do"), msg);
+            } else if (execute && keepData == 2) {
+                infoStale = true;
+                const QString msg = tr("%1 is installed in slot %2 and verified.\n\nThe board still starts the firmware it started before. To start the new one, use Switch Active Slot.")
+                    .arg(fw, o.value("target_slot").toString().toUpper());
+                log->appendPlainText(msg);
+                if (!quiet)
+                    QMessageBox::information(this, tr("Installation complete"), msg);
             } else if (execute) {
                 infoStale = true;
                 QString msg = tr("%1 is installed and verified.\n\nUnplug the board, then power it on normally. The first start can take a few minutes.").arg(fw);
@@ -381,6 +421,8 @@ public:
                 onIdle();
         });
         w->setFuture(QtConcurrent::run([p, keepData, execute, safety] {
+            if (keepData == 2)
+                return takeJson(nocry_install_slot_json(p.constData(), execute, safety.constData()));
             return takeJson(nocry_install_json(p.constData(), keepData, execute, safety.constData()));
         }));
     }
@@ -547,6 +589,21 @@ public:
                 return tr("The board's storage is completely erased. The board is blank and will only start in USB boot mode.\n\nUse Install firmware to rebuild it.");
             });
     }
+    void startSecureWipe()
+    {
+        const QByteArray sd = safetyDir();
+        runAdvanced(tr("Secure erase"), [sd] { return takeJson(nocry_secure_wipe_json(sd.constData())); },
+            [](const QJsonObject &o) {
+                QStringList how;
+                for (const auto &p : o.value("partitions").toArray()) {
+                    const QString m = p.toObject().value("method").toString();
+                    how << (m == "secure-discard" ? tr("the storage chip's secure erase") : m == "discard" ? tr("the storage chip's erase command") : tr("overwriting with zeros"));
+                }
+                how.removeDuplicates();
+                return tr("Settings and files are erased (%1, using %2) and every part was checked to be empty.\n\nUnplug the board, then power it on normally. The first start takes longer while the printer sets itself up again.")
+                    .arg(QLocale().formattedDataSize(qint64(o.value("bytes").toDouble())), how.join(tr(" and ")));
+            });
+    }
     void startIdentity(const QString &sn, const QString &mac, const QString &model, const QString &board)
     {
         const QByteArray a = sn.toUtf8(), b = mac.toUtf8(), c = model.toUtf8(), e = board.toUtf8(), sd = safetyDir();
@@ -600,6 +657,9 @@ public:
     QTabWidget *tabWidget = nullptr;
     void openInstallDialog() { chooseInstall(); }
     void openShellHelp() { showShellHelp(); }
+    void openBootHelp() { showBootHelp(); }
+    void fetchBoardLog() { showBoardLog(); }
+    void testSecureWipe() { startSecureWipe(); }
     // self-test entry points (no dialogs)
     void testAdvanced(const QStringList &a)
     {
@@ -609,6 +669,8 @@ public:
         else if (op == "perase") startPartErase(a.value(1));
         else if (op == "erase") startEraseAll();
         else if (op == "identity") startIdentity(a.value(1), a.value(2), a.value(3), a.value(4));
+        else if (op == "securewipe") startSecureWipe();
+        else if (op == "boardlog") showBoardLog();
         else QApplication::exit(3);
     }
     std::function<void()> onIdle;   // used by the self-tests
@@ -627,7 +689,7 @@ protected:
     }
 
 private:
-    bool confirmInstall(const QJsonObject &o, const QString &fw, bool keepData)
+    bool confirmInstall(const QJsonObject &o, const QString &fw, int keepData)
     {
         const QString before = o.value("model_before").toString(), after = o.value("model_after").toString();
         const QString beforeName = o.value("model_before_name").toString(), afterName = o.value("model_after_name").toString();
@@ -650,7 +712,10 @@ private:
                  QLocale().formattedDataSize(qint64(o.value("bytes_to_write").toDouble())));
         if (o.value("blank_board").toBool())
             info = tr("This board is blank. nocry will rebuild it from scratch: partition table, bootloader, firmware and identity.\n\n") + info;
-        if (keepData && !o.value("blank_board").toBool())
+        if (keepData == 2)
+            info += tr("\n\nIt goes into slot %1, the one that is not in use. The firmware that runs now stays where it is and keeps starting until you choose the other slot with Switch Active Slot. Settings and files are shared by both slots and are not changed.")
+                        .arg(o.value("target_slot").toString().toUpper());
+        else if (keepData && !o.value("blank_board").toBool())
             info += tr("\n\nYour settings, files, serial number and the other firmware slot are kept.");
         else
             info += tr("\n\nClean install: all settings and files on the printer will be erased. The serial number and MAC address are kept.");
@@ -668,7 +733,8 @@ private:
         QMessageBox box(QMessageBox::Warning, tr("Install firmware"), tr("Install %1 on this board?").arg(fw), QMessageBox::Cancel, this);
         box.setInformativeText(info);
         box.setDetailedText(det.join('\n'));
-        auto *go = box.addButton(keepData ? tr("Install") : tr("Erase and install"), QMessageBox::DestructiveRole);
+        auto *go = box.addButton(keepData == 2 ? tr("Install to slot %1").arg(o.value("target_slot").toString().toUpper())
+                                 : keepData ? tr("Install") : tr("Erase and install"), QMessageBox::DestructiveRole);
         box.setDefaultButton(QMessageBox::Cancel);
         box.exec();
         return box.clickedButton() == go;
@@ -929,12 +995,21 @@ private:
         QMessageBox box(QMessageBox::Warning, tr("Factory reset"), tr("Reset this board to factory settings?"), QMessageBox::Cancel, this);
         box.setInformativeText(tr("All settings, calibration, Wi-Fi details and files on the printer will be erased. The printer sets itself up again the next time it starts.\n\n"
                                   "The installed firmware, both firmware slots, the serial number and the MAC address are kept."));
+        // two options in one message box: a small widget holding both check boxes
         auto *keep = new QCheckBox(tr("Keep the user storage partition (advanced)"));
-        box.setCheckBox(keep);
+        auto *secure = new QCheckBox(tr("Secure erase: also destroy the old data so it cannot be recovered (takes longer)"));
+        connect(secure, &QCheckBox::toggled, keep, [keep](bool on) { keep->setEnabled(!on); if (on) keep->setChecked(false); });
+        box.setCheckBox(secure);
+        if (auto *grid = qobject_cast<QGridLayout *>(box.layout()))
+            grid->addWidget(keep, grid->rowCount(), 0, 1, grid->columnCount());
         auto *go = box.addButton(tr("Erase and reset"), QMessageBox::DestructiveRole);
         box.setDefaultButton(QMessageBox::Cancel);
         box.exec();
-        if (box.clickedButton() == go)
+        if (box.clickedButton() != go)
+            return;
+        if (secure->isChecked())
+            startSecureWipe();
+        else
             startReset(keep->isChecked());
     }
 
@@ -1000,11 +1075,14 @@ private:
         auto *keep = new QRadioButton(tr("Keep my data — repair or update the system; settings and files stay"));
         auto *modeGroup = new QButtonGroup(&d);
         modeGroup->addButton(clean);
+        auto *other = new QRadioButton(tr("Install to the other slot — keep the current firmware as it is, add this one beside it"));
         modeGroup->addButton(keep);
+        modeGroup->addButton(other);
         clean->setChecked(true);
         v->addSpacing(8);
         v->addWidget(clean);
         v->addWidget(keep);
+        v->addWidget(other);
         v->addWidget(new QLabel(tr("Nothing is written until you confirm on the next screen.")));
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         bb->button(QDialogButtonBox::Ok)->setText(tr("Continue"));
@@ -1101,10 +1179,10 @@ private:
         if (d.exec() != QDialog::Accepted)
             return;
         if (fromFile->isChecked()) {
-            startInstall(path->text().trimmed(), keep->isChecked(), false);
+            startInstall(path->text().trimmed(), other->isChecked() ? 2 : keep->isChecked() ? 1 : 0, false);
         } else {
             const QJsonObject f = models.at(modelBox->currentIndex()).toObject().value("firmwares").toArray().at(versionBox->currentIndex()).toObject();
-            startDownload(f, keep->isChecked());
+            startDownload(f, other->isChecked() ? 2 : keep->isChecked() ? 1 : 0);
         }
     }
 
@@ -1219,6 +1297,7 @@ private:
         }
         if (s == "none")
             autoBlocked = false;
+        bootHelpButton->setVisible(s == "none");
         recoveryRunning = s == "recovery";
         if (!recoveryRunning && !busy) {
             shellLine->setVisible(false);
@@ -1241,6 +1320,10 @@ private:
         } else if (s == "recovery") {
             stateTitle->setText(tr("Board connected"));
             stateHint->setText(tr("The recovery system is running from memory."));
+        } else if (s == "unsupported") {
+            stateTitle->setText(tr("This board is not supported"));
+            stateHint->setText(tr("An Ingenic board in USB boot mode is connected, but it uses a different processor than the X2000 family nocry works with. "
+                                  "Newer boards such as the 2025 K1C (X2600E) also use secure boot and only run software signed by Creality, so nocry cannot load onto them. Nothing was sent to the board."));
         } else if (s == "uboot-disk") {
             stateTitle->setText(tr("Board in USB disk mode"));
             stateHint->setText(tr("Started by the command-line tool. To use this window, hold BOOT, tap RESET and release BOOT."));
@@ -1281,6 +1364,64 @@ private:
             shellButton->setVisible(recoveryRunning);
         });
         w->setFuture(QtConcurrent::run([serialNo] { return takeJson(nocry_shell_status_json(serialNo.constData())); }));
+    }
+
+    void showBoardLog()
+    {
+        if (busy)
+            return;
+        setBusy(true);
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w] {
+            const QJsonObject o = w->result();
+            w->deleteLater();
+            setBusy(false);
+            pollState();
+            lastResult = o;
+            if (!o.value("ok").toBool()) {
+                log->appendPlainText(tr("Board log: %1").arg(o.value("error").toString()));
+                if (!quiet)
+                    QMessageBox::information(this, tr("Board log"), o.value("error").toString());
+            } else if (!quiet) {
+                QDialog d(this);
+                d.setWindowTitle(tr("Board log"));
+                auto *v = new QVBoxLayout(&d);
+                v->addWidget(new QLabel(o.value("kind").toString() == "previous"
+                    ? tr("Log left in memory by the previous start of the recovery system (the board was reset since):")
+                    : tr("Kernel log of the recovery system running on the board now:")));
+                auto *t = new QPlainTextEdit(o.value("text").toString());
+                t->setReadOnly(true);
+                t->setLineWrapMode(QPlainTextEdit::NoWrap);
+                QFont f = t->font();
+                f.setFamily(QStringLiteral("monospace"));
+                f.setStyleHint(QFont::Monospace);
+                t->setFont(f);
+                v->addWidget(t, 1);
+                auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+                auto *save = bb->addButton(tr("Save…"), QDialogButtonBox::ActionRole);
+                auto *copy = bb->addButton(tr("Copy"), QDialogButtonBox::ActionRole);
+                connect(copy, &QPushButton::clicked, &d, [t] { QApplication::clipboard()->setText(t->toPlainText()); });
+                connect(save, &QPushButton::clicked, &d, [&d, t, this] {
+                    const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+                    const QString p = QFileDialog::getSaveFileName(&d, tr("Save board log"), QDir(dir).filePath(QStringLiteral("nocry-board-log.txt")), tr("Text files (*.txt)"));
+                    if (p.isEmpty())
+                        return;
+                    QFile f(p);
+                    if (f.open(QIODevice::WriteOnly | QIODevice::Text))
+                        f.write(t->toPlainText().toUtf8());
+                    else
+                        QMessageBox::warning(&d, tr("Board log"), tr("Could not write %1").arg(p));
+                    Q_UNUSED(this);
+                });
+                connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+                v->addWidget(bb);
+                d.resize(820, 560);
+                d.exec();
+            }
+            if (onIdle)
+                onIdle();
+        });
+        w->setFuture(QtConcurrent::run([] { return takeJson(nocry_boot_log_json()); }));
     }
 
     void showShellHelp()
@@ -1353,6 +1494,103 @@ private:
         d.exec();
     }
 
+    static bool udevRuleInstalled()
+    {
+        for (const char *d : {"/etc/udev/rules.d", "/usr/lib/udev/rules.d", "/lib/udev/rules.d", "/usr/local/lib/udev/rules.d"})
+            if (QFile::exists(QStringLiteral("%1/60-nocry.rules").arg(d)))
+                return true;
+        return false;
+    }
+
+    // Installs the udev rule with one password prompt (polkit). Falls back to showing the commands.
+    void installUdevRule()
+    {
+        QFile res(QStringLiteral(":/60-nocry.rules"));
+        if (!res.open(QIODevice::ReadOnly))
+            return;
+        const QString tmp = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QStringLiteral("60-nocry.rules"));
+        QFile out(tmp);
+        if (!out.open(QIODevice::WriteOnly) || out.write(res.readAll()) <= 0) {
+            QMessageBox::warning(this, tr("Install rule"), tr("Could not write a temporary file."));
+            return;
+        }
+        out.close();
+        const QString script = QStringLiteral("install -m 644 '%1' /etc/udev/rules.d/60-nocry.rules && udevadm control --reload && udevadm trigger --action=add --subsystem-match=usb").arg(tmp);
+        const QString manual = QStringLiteral("sudo sh -c \"%1\"").arg(script);
+        const QString pkexec = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
+        auto showManual = [this, manual](const QString &why) {
+            QMessageBox box(QMessageBox::Information, tr("Install rule"), why, QMessageBox::Close, this);
+            box.setInformativeText(tr("Run this in a terminal, then unplug and reconnect the board:\n\n%1").arg(manual));
+            auto *copy = box.addButton(tr("Copy command"), QMessageBox::ActionRole);
+            box.exec();
+            if (box.clickedButton() == copy)
+                QApplication::clipboard()->setText(manual);
+            if (udevBanner)
+                udevBanner->setVisible(!udevRuleInstalled());
+        };
+        if (pkexec.isEmpty()) {
+            showManual(tr("This system has no graphical password prompt (pkexec)."));
+            return;
+        }
+        if (QMessageBox::question(this, tr("Install rule"),
+                tr("nocry will install the file /etc/udev/rules.d/60-nocry.rules. It lets the logged-in user open the board's USB devices and stops the desktop from mounting the board's storage.\n\nYou will be asked for your password once."),
+                QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
+            return;
+        auto *proc = new QProcess(this);
+        connect(proc, &QProcess::finished, this, [this, proc, showManual](int code, QProcess::ExitStatus) {
+            proc->deleteLater();
+            if (code == 0 && udevRuleInstalled()) {
+                udevBanner->setVisible(false);
+                QMessageBox::information(this, tr("Install rule"), tr("The rule is installed. If the board is connected, unplug it and plug it in again."));
+            } else {
+                showManual(tr("The rule was not installed (the password prompt was cancelled or failed)."));
+            }
+        });
+        proc->start(pkexec, {QStringLiteral("sh"), QStringLiteral("-c"), script});
+    }
+
+    // Step-by-step help for getting a board into USB boot mode, with a picture where we have one.
+    void showBootHelp()
+    {
+        QDialog d(this);
+        d.setWindowTitle(tr("Entering USB boot mode"));
+        auto *v = new QVBoxLayout(&d);
+        auto *which = new QComboBox;
+        which->addItem(tr("Nebula Pad (retail, Ender-3 V3 KE, CR-10 SE, Ender-5 Max)"), QStringLiteral("nebula"));
+        which->addItem(tr("K1 series mainboard (not supported yet)"), QStringLiteral("k1"));
+        v->addWidget(which);
+        auto *pic = new QLabel;
+        pic->setAlignment(Qt::AlignCenter);
+        v->addWidget(pic);
+        auto *steps = new QLabel;
+        steps->setWordWrap(true);
+        steps->setMinimumWidth(520);
+        steps->setTextFormat(Qt::RichText);
+        v->addWidget(steps);
+        auto fill = [=] {
+            const QString k = which->currentData().toString();
+            const QPixmap p(QStringLiteral(":/boards/%1.png").arg(k));
+            pic->setPixmap(p);
+            pic->setVisible(!p.isNull());
+            const QString common = tr("<ol><li>Connect the board to this computer with a USB cable that carries data, not a charge-only one.</li>"
+                                      "<li>Press and hold <b>BOOT</b>.</li><li>While holding it, press and release <b>RESET</b>.</li>"
+                                      "<li>Release <b>BOOT</b>.</li></ol>"
+                                      "This window then shows \"Board in USB boot mode\". Nothing on the board changes by doing this; "
+                                      "unplugging the board or pressing RESET alone returns it to normal.");
+            if (k == "k1")
+                steps->setText(tr("<p>The two buttons sit together near one corner of the mainboard: with the Micro-USB port facing down, they are at the top left. "
+                                  "The upper one is BOOT (marked \"mode\" on some boards), the lower one is RESET.</p>") + common);
+            else
+                steps->setText(tr("<p>Open the pad's back cover. BOOT and RESET are two small push buttons on the circuit board.</p>") + common);
+        };
+        connect(which, &QComboBox::currentIndexChanged, &d, fill);
+        fill();
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        v->addWidget(bb);
+        d.exec();
+    }
+
     void showInfo(const QJsonObject &o)
     {
         if (!o.value("ok").toBool()) {
@@ -1403,6 +1641,8 @@ private:
     bool infoLoaded = false, infoStale = false, autoBlocked = false, recoveryRunning = false;
     QLabel *shellLine;
     QPushButton *shellButton;
+    QPushButton *boardLogButton, *bootHelpButton;
+    QWidget *udevBanner = nullptr;
     QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton;
     QJsonObject shell;
     QPushButton *readButton, *backupButton, *installButton, *switchButton, *resetButton, *restoreButton, *cancelButton;
@@ -1490,7 +1730,7 @@ int main(int argc, char **argv)
     const int sa = args.indexOf("--selftest-adv");
     if (sa > 0 && sa + 1 < args.size()) {
         const QStringList a = args.mid(sa + 1);
-        if (a.value(0) != "pbackup" && !qEnvironmentVariableIsSet("NOCRY_TEST_TARGET"))
+        if (a.value(0) != "pbackup" && a.value(0) != "boardlog" && !qEnvironmentVariableIsSet("NOCRY_TEST_TARGET"))
             return 4;
         w.quiet = true;
         w.onIdle = [&w] {
@@ -1543,7 +1783,7 @@ int main(int argc, char **argv)
     const int sl = args.indexOf("--selftest-install-list");
     if (sl > 0 && sl + 4 < args.size()) {
         const QString key = args[sl + 1], ver = args[sl + 2], shot = args[sl + 4];
-        const bool keep = args[sl + 3] == "1";
+        const int keep = args[sl + 3].toInt();
         w.quiet = true;
         w.autoConfirm = qEnvironmentVariableIsSet("NOCRY_TEST_TARGET");
         w.onIdle = [&w, shot] {
@@ -1607,7 +1847,7 @@ int main(int argc, char **argv)
     const int si = args.indexOf("--selftest-install");
     if (si > 0 && si + 3 < args.size()) {
         const QString os = args[si + 1], shot = args[si + 3];
-        const bool keep = args[si + 2] == "1";
+        const int keep = args[si + 2].toInt();
         w.quiet = true;
         w.autoConfirm = qEnvironmentVariableIsSet("NOCRY_TEST_TARGET");
         w.onIdle = [&w, shot] {
