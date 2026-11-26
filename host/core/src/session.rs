@@ -115,6 +115,7 @@ pub fn images_dir(opt: Option<&PathBuf>) -> Result<PathBuf> {
     if let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize()) {
         if let Some(d) = exe.parent() {
             cands.push(d.join("images"));
+            cands.push(d.join("../Resources/images")); // macOS app bundle
             // host/target/{release,debug}/nocry -> project/tools/burner-build/out
             if let Some(proj) = d.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
                 cands.push(proj.join("tools/burner-build/out"));
@@ -294,6 +295,7 @@ pub fn recovery_image(opt: Option<&PathBuf>) -> Result<PathBuf> {
     if let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize()) {
         if let Some(d) = exe.parent() {
             cands.push(d.join("images/nocry-recovery.uImage"));
+            cands.push(d.join("../Resources/images/nocry-recovery.uImage")); // macOS app bundle
             if let Some(proj) = d.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
                 cands.push(proj.join("tools/recovery-build/out/nocry-recovery.uImage"));
             }

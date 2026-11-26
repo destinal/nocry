@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=nocry
+Comment=Back up, restore and reinstall Creality Nebula and K1 boards
+Exec=nocry-gui
+Icon=nocry
+Categories=Utility;System;
+Terminal=false

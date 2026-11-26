@@ -11,7 +11,47 @@ use crate::snmac::{self, SnMac, NEBULA_BOARD};
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::{FileExt, FileTypeExt};
+
+// positional file I/O and block-device detection, per platform
+#[cfg(unix)]
+fn read_exact_at(f: &File, buf: &mut [u8], off: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::read_exact_at(f, buf, off)
+}
+#[cfg(unix)]
+fn write_all_at(f: &File, buf: &[u8], off: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::write_all_at(f, buf, off)
+}
+#[cfg(unix)]
+fn is_block_device(md: &std::fs::Metadata) -> bool {
+    std::os::unix::fs::FileTypeExt::is_block_device(&md.file_type())
+}
+#[cfg(windows)]
+fn read_exact_at(f: &File, mut buf: &mut [u8], mut off: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        let n = f.seek_read(buf, off)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        buf = &mut buf[n..];
+        off += n as u64;
+    }
+    Ok(())
+}
+#[cfg(windows)]
+fn write_all_at(f: &File, mut buf: &[u8], mut off: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        let n = f.seek_write(buf, off)?;
+        buf = &buf[n..];
+        off += n as u64;
+    }
+    Ok(())
+}
+#[cfg(windows)]
+fn is_block_device(_md: &std::fs::Metadata) -> bool {
+    false // raw disks are not used on Windows; the fastboot service is
+}
 use std::path::{Path, PathBuf};
 
 const MIB: u64 = 1 << 20;
@@ -59,15 +99,22 @@ fn read_opt(p: &Path) -> Result<Option<Vec<u8>>> {
 }
 
 /// `unsquashfs -cat rootfs etc/ota_info` -> (board, version)
+/// Reads etc/ota_info out of the rootfs squashfs (no external tools).
 fn ota_info(rootfs: &[u8]) -> (Option<String>, Option<String>) {
-    let tmp = std::env::temp_dir().join(format!("nocry-rootfs-{}.sqfs", std::process::id()));
-    if std::fs::write(&tmp, rootfs).is_err() {
-        return (None, None);
-    }
-    let out = std::process::Command::new("unsquashfs").args(["-cat"]).arg(&tmp).arg("etc/ota_info").output();
-    let _ = std::fs::remove_file(&tmp);
-    let Ok(out) = out else { return (None, None) };
-    let s = String::from_utf8_lossy(&out.stdout);
+    let read = || -> Option<String> {
+        let fs = backhand::FilesystemReader::from_reader(std::io::Cursor::new(rootfs)).ok()?;
+        for node in fs.files() {
+            if node.fullpath == Path::new("/etc/ota_info") {
+                if let backhand::InnerNode::File(f) = &node.inner {
+                    let mut out = Vec::new();
+                    fs.file(&f.basic).reader().read_to_end(&mut out).ok()?;
+                    return Some(String::from_utf8_lossy(&out).to_string());
+                }
+            }
+        }
+        None
+    };
+    let s = read().unwrap_or_default();
     let get = |k: &str| s.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());
     (get("ota_board_name="), get("ota_version="))
 }
@@ -207,7 +254,7 @@ const FB_STEP: u64 = 256 * MIB;
 impl Target {
     pub fn open(path: &Path, write: bool, allow_any: bool) -> Result<Target> {
         let md = std::fs::metadata(path).with_context(|| format!("{}", path.display()))?;
-        let is_dev = md.file_type().is_block_device();
+        let is_dev = is_block_device(&md);
         if is_dev && write {
             check_blockdev(path, allow_any)?;
         }
@@ -249,7 +296,7 @@ impl Target {
         match &self.b {
             Backend::File(f) => {
                 let mut v = vec![0u8; len];
-                f.read_exact_at(&mut v, off).with_context(|| format!("read {len} @ {off:#x}"))?;
+                read_exact_at(f, &mut v, off).with_context(|| format!("read {len} @ {off:#x}"))?;
                 Ok(v)
             }
             Backend::Fb(fb) => {
@@ -316,7 +363,7 @@ impl Target {
             bail!("{} was opened read-only", self.path.display());
         }
         match &self.b {
-            Backend::File(f) => f.write_all_at(data, off).with_context(|| format!("writing {what}")),
+            Backend::File(f) => write_all_at(f, data, off).with_context(|| format!("writing {what}")),
             Backend::Fb(fb) => {
                 // the service writes whole sectors: merge unaligned edges with what is there
                 let start = off & !511;

@@ -19,6 +19,7 @@
 #include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -834,6 +835,8 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName("nocry");
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/nocry.png")));
+    QApplication::setDesktopFileName(QStringLiteral("nocry"));
     setDevPaths();
     Window w;
     w.show();

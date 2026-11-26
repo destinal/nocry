@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f8fd8"/>
+      <stop offset="1" stop-color="#1b4f9c"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <!-- circuit board chip -->
+  <rect x="352" y="352" width="320" height="320" rx="44" fill="#ffffff"/>
+  <g stroke="#ffffff" stroke-width="36" stroke-linecap="round">
+    <path d="M432 352V268M512 352V268M592 352V268M432 756V672M512 756V672M592 756V672"/>
+    <path d="M352 432H268M352 512H268M352 592H268M756 432H672M756 512H672M756 592H672"/>
+  </g>
+  <!-- restore arrow inside the chip -->
+  <g fill="none" stroke="#1b4f9c" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M598 512a86 86 0 1 1-28-64"/>
+    <path d="M604 408v64h-64"/>
+  </g>
+</svg>

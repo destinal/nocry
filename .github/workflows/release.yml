@@ -1,0 +1,199 @@
+# Builds the board images and the Linux, Windows and macOS packages.
+# A tag "v*" also publishes them as a GitHub pre-release.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  QT_VERSION: "6.7.3"
+
+jobs:
+  images:
+    name: Board images (SPL, U-Boot stages, recovery Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: dist-images
+          key: images-${{ hashFiles('tools/burner-build/**', 'tools/recovery-build/**', 'tools/splhdr/**') }}
+      - name: Build SPL and U-Boot stages
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: tools/burner-build/build.sh "$PWD/out-burner"
+      - name: Build recovery Linux
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: tools/recovery-build/build.sh "$RUNNER_TEMP/recovery-work" "$PWD/out-recovery" || { tail -60 "$RUNNER_TEMP"/recovery-work/*.log; exit 1; }
+      - name: Collect
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p dist-images/spl-x2000e
+          cp out-burner/spl-x2000e/spl-x2000e.bin dist-images/spl-x2000e/
+          for t in nocry_fb_x2000_v12 nocry_ums_x2000_v12 nocry_ums_ro_x2000_v12; do
+            mkdir -p dist-images/$t && cp out-burner/$t/u-boot.bin dist-images/$t/
+          done
+          cp out-recovery/nocry-recovery.uImage dist-images/
+          (cd dist-images && find . -type f | sort | xargs sha256sum | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images
+          path: dist-images
+
+  linux:
+    name: Linux AppImage
+    needs: images
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: images, path: images }
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev libgl1-mesa-dev libusb-1.0-0-dev libudev-dev cmake ninja-build libfuse2 file
+      - name: Build
+        run: |
+          (cd host && cargo build --release)
+          cmake -S gui -B gui/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build gui/build
+      - name: Package
+        run: |
+          V=${GITHUB_REF_NAME#v}; [[ "$GITHUB_REF" == refs/tags/* ]] || V=dev
+          A=AppDir
+          mkdir -p $A/usr/bin $A/usr/share/applications $A/usr/share/icons/hicolor/256x256/apps $A/usr/share/nocry
+          cp gui/build/nocry-gui host/target/release/nocry $A/usr/bin/
+          cp -r images $A/usr/bin/images
+          cp gui/packaging/nocry.desktop $A/usr/share/applications/
+          cp gui/packaging/nocry.png $A/usr/share/icons/hicolor/256x256/apps/
+          cp host/contrib/60-nocry.rules LICENSE $A/usr/share/nocry/
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+          export QMAKE=/usr/bin/qmake6 APPIMAGE_EXTRACT_AND_RUN=1 LDAI_OUTPUT=nocry-$V-x86_64.AppImage
+          ./linuxdeploy-x86_64.AppImage --appdir $A --plugin qt --output appimage \
+            --desktop-file $A/usr/share/applications/nocry.desktop --icon-file $A/usr/share/icons/hicolor/256x256/apps/nocry.png
+          ls -l nocry-*.AppImage
+      - name: Smoke test
+        run: |
+          APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen timeout 60 ./nocry-*.AppImage --selftest "$PWD/shot.png" || true
+          ls -l shot.png
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: "nocry-*.AppImage" }
+
+  windows:
+    name: Windows installer
+    needs: images
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: images, path: images }
+      - uses: jurplel/install-qt-action@v4
+        with: { version: "${{ env.QT_VERSION }}", arch: win64_msvc2019_64, cache: true }
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build
+        shell: pwsh
+        run: |
+          cd host; cargo build --release; if ($LASTEXITCODE) { exit 1 }; cd ..
+          cmake -S gui -B gui/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build gui/build; if ($LASTEXITCODE) { exit 1 }
+      - name: Stage
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory stage | Out-Null
+          Copy-Item gui/build/nocry-gui.exe, host/target/release/nocry.exe, LICENSE stage/
+          Copy-Item -Recurse images stage/images
+          windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw stage/nocry-gui.exe
+          # app-local C++ runtime: no separate (administrator) redistributable install
+          Get-ChildItem "$env:VCToolsRedistDir\x64\Microsoft.VC*.CRT\*.dll" | Copy-Item -Destination stage/
+          Get-ChildItem stage | Select-Object Name, Length
+      - name: Installer
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME.TrimStart('v') } else { 'dev' }
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) { choco install nsis -y --no-progress; $env:PATH += ';C:\Program Files (x86)\NSIS' }
+          makensis /DVERSION=$v "/DSTAGE=$PWD\stage" "/DOUT=$PWD\nocry-$v-windows-x64-setup.exe" gui\packaging\installer.nsi
+          if ($LASTEXITCODE) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: "nocry-*-setup.exe" }
+
+  macos:
+    name: macOS dmg (Apple silicon)
+    needs: images
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: images, path: images }
+      - uses: jurplel/install-qt-action@v4
+        with: { version: "${{ env.QT_VERSION }}", cache: true }
+      - name: Icon
+        run: |
+          I=nocry.iconset; mkdir $I
+          for s in 16 32 128 256 512; do
+            sips -z $s $s gui/packaging/nocry-1024.png --out $I/icon_${s}x${s}.png >/dev/null
+            sips -z $((s*2)) $((s*2)) gui/packaging/nocry-1024.png --out $I/icon_${s}x${s}@2x.png >/dev/null
+          done
+          iconutil -c icns $I -o gui/packaging/nocry.icns
+      - name: Build
+        run: |
+          (cd host && cargo build --release)
+          cmake -S gui -B gui/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build gui/build
+      - name: Bundle
+        run: |
+          APP=gui/build/nocry.app
+          mkdir -p $APP/Contents/Resources
+          cp -R images $APP/Contents/Resources/images
+          cp host/target/release/nocry $APP/Contents/MacOS/nocry-cli
+          macdeployqt $APP
+          codesign --force --deep -s - $APP     # ad-hoc: no Apple developer certificate
+          codesign --verify --deep $APP
+      - name: Disk image
+        run: |
+          V=${GITHUB_REF_NAME#v}; [[ "$GITHUB_REF" == refs/tags/* ]] || V=dev
+          brew install create-dmg
+          mkdir dmgroot && cp -R gui/build/nocry.app dmgroot/
+          for i in 1 2 3; do
+            create-dmg --volname "nocry" --volicon gui/packaging/nocry.icns \
+              --window-size 560 360 --icon-size 112 --icon "nocry.app" 150 170 \
+              --app-drop-link 410 170 --hide-extension "nocry.app" --no-internet-enable \
+              "nocry-$V-macos-arm64.dmg" dmgroot && break
+            rm -f nocry-*.dmg; sleep 5
+          done
+          ls -l nocry-*.dmg
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: "nocry-*.dmg" }
+
+  publish:
+    name: Publish pre-release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [images, linux, windows, macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dl }
+      - run: |
+          mkdir out
+          cp dl/linux/* dl/windows/* dl/macos/* out/
+          (cd dl/images && tar czf ../../out/nocry-board-images-${GITHUB_REF_NAME#v}.tar.gz .)
+          (cd out && sha256sum * > SHA256SUMS)
+          ls -l out
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          files: out/*
+          body: |
+            **Early pre-release.** Tested only on Linux with a Creality Nebula Pad. The Windows and macOS packages are built automatically and have **not been run on real hardware**; on Windows the board in USB boot mode probably needs a WinUSB driver that this installer does not provide yet.
+
+            - Linux: `nocry-*-x86_64.AppImage` (make it executable; install `60-nocry.rules` once, see the README)
+            - Windows: `nocry-*-windows-x64-setup.exe` (installs for the current user, no administrator rights)
+            - macOS (Apple silicon): `nocry-*-macos-arm64.dmg` (unsigned: right-click the app and choose Open the first time)
+            - `nocry-board-images-*.tar.gz`: the SPL, U-Boot stages and recovery Linux loaded onto the board, built from the sources and patches in this repository
+
+            Take a backup before changing anything on a board.

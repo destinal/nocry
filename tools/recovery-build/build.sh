@@ -11,6 +11,7 @@ WORK=$(realpath -m "${1:-$HOME/nocry-work}")
 OUT=$(realpath -m "${2:-$HERE/out}")
 LINUX_REPO=https://github.com/k1-debian/linux
 LINUX_BRANCH=master-k1
+LINUX_SHA=043f9fc7090512e504386a3866aa5a9d0b6af737
 LINUX_REV=043f9fc70        # 2026-09-28 "implement support for Creality K1 contol board" (Linux 6.6.18)
 BR_REPO=https://gitlab.com/buildroot.org/buildroot.git
 BR_TAG=2025.02.20
@@ -22,7 +23,8 @@ run() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/w" -v
 # --- sources
 if [ ! -d "$WORK/linux" ]; then
   git init -q "$WORK/linux" && git -C "$WORK/linux" remote add origin "$LINUX_REPO"
-  git -C "$WORK/linux" fetch -q --depth 1 origin "$LINUX_BRANCH" && git -C "$WORK/linux" checkout -q FETCH_HEAD
+  # fetch the pinned commit itself, so the build does not break when the branch moves
+  git -C "$WORK/linux" fetch -q --depth 1 origin "$LINUX_SHA" && git -C "$WORK/linux" checkout -q FETCH_HEAD
 fi
 [ "$(git -C "$WORK/linux" rev-parse --short=9 HEAD)" = "$LINUX_REV" ] || { echo "linux is not at $LINUX_REV" >&2; exit 1; }
 # Never discard work: a clean tree gets the patch; a tree that already matches it is used as is;

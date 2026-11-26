@@ -219,6 +219,7 @@ pub fn block_device_for(_f: &Found, _timeout: Duration) -> Option<UmsDisk> {
     None
 }
 
+#[cfg(unix)]
 /// udev sets the node's group/ACL a moment after the kernel creates it; opening
 /// it in that window fails with EACCES. Wait until we may open it (read, and
 /// write unless the disk is read-only).
@@ -242,6 +243,11 @@ pub fn wait_accessible(d: &UmsDisk, timeout: Duration) -> Result<()> {
         }
         sleep(Duration::from_millis(100));
     }
+}
+
+#[cfg(not(unix))]
+pub fn wait_accessible(_d: &UmsDisk, _timeout: Duration) -> Result<()> {
+    Ok(())
 }
 
 /// Any nocry fastboot stage2 already running on this host.
