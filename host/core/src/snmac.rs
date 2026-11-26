@@ -46,6 +46,17 @@ pub fn product_name(model: &str) -> String {
     }
 }
 
+/// Describes an ota_board_name that is not a Nebula-family one, for refusal messages.
+pub fn foreign_board_name(board: &str) -> String {
+    let what = match board {
+        "F001" => "Ender-3 V3, which uses the K1 mainboard",
+        "F002" => "Ender-3 V3 Plus, which uses the K1 mainboard",
+        b if b.starts_with("CR4CU220812S1") => "K1 series",
+        _ => "unknown printer",
+    };
+    format!("{what}; firmware id {board}")
+}
+
 /// The same, from a firmware's ota_board_name.
 pub fn product_name_for_ota_board(board: &str) -> String {
     model_for_ota_board(board).map(product_name).unwrap_or_else(|| board.to_string())

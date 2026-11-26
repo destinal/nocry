@@ -17,6 +17,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 flate2 = "1"
+sevenz-rust2 = { version = "0.20", default-features = false, features = ["aes256"] }
+md-5 = "0.10"
 
 # no system libusb on Windows/macOS: build it in
 [target.'cfg(not(target_os = "linux"))'.dependencies]

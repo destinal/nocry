@@ -99,3 +99,15 @@ To enter USB boot mode: hold BOOT, tap RESET, release BOOT. The board then appea
 ## Tests
 
 `cargo test` runs the protocol sequence against a mock transport. The expected sequence is the same order ballaswag's `usbboot` uses successfully on K1 boards. The tests also cover partial bulk writes, an SPL that never returns, lost stage2 status, image checks and the allow-list.
+
+## Firmware inputs
+
+`--os` (and the GUI's Install firmware) accept:
+
+| Input | Contains | Notes |
+|---|---|---|
+| Creality OTA update file (`*_ota_img_V*.img`) for an Ingenic-based printer | kernel, rootfs, rtos | Encrypted 7z; the password is derived from the product code or board id in the file name, with known ids tried as a fallback. Every image is md5-checked against the file's manifest. No bootloader inside, so it cannot bring up a blank board by itself. |
+| `.ingenic` factory package | bootloader + partition table, kernel, rootfs, rtos | Can rebuild a blank board. |
+| A folder with `xImage`, `rootfs.squashfs`, `zero.bin` | kernel, rootfs, rtos | E.g. from `extract_creality_ota.py`. |
+
+Firmware for another mainboard is refused: the printer it is for is read from `etc/ota_info` inside the root filesystem, and only Nebula-family ids (NEBULA, F003, F004, F005) are accepted. K1-series and Ender-3 V3 (F001/F002, K1 mainboard) files open correctly but are rejected. Update files for Allwinner-based printers (K2, Ender-3 V4, Creality Hi) use a different container and are not read.

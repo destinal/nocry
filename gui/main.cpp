@@ -585,7 +585,7 @@ private:
         QDialog d(this);
         d.setWindowTitle(tr("Install firmware"));
         auto *v = new QVBoxLayout(&d);
-        v->addWidget(new QLabel(tr("Firmware (.ingenic file, or a folder with an unpacked update):")));
+        v->addWidget(new QLabel(tr("Firmware: a Creality update file (.img), an .ingenic package, or a folder with an unpacked update")));
         auto *path = new QLineEdit;
         path->setMinimumWidth(420);
         auto *file = new QPushButton(tr("Choose file…"));
@@ -607,7 +607,7 @@ private:
         v->addWidget(bb);
         connect(path, &QLineEdit::textChanged, &d, [bb](const QString &t) { bb->button(QDialogButtonBox::Ok)->setEnabled(QFileInfo::exists(t.trimmed())); });
         connect(file, &QPushButton::clicked, &d, [&] {
-            const QString f = QFileDialog::getOpenFileName(&d, tr("Choose firmware"), QString(), tr("Ingenic firmware (*.ingenic);;All files (*)"));
+            const QString f = QFileDialog::getOpenFileName(&d, tr("Choose firmware"), QString(), tr("Creality firmware (*.img *.ingenic);;All files (*)"));
             if (!f.isEmpty())
                 path->setText(f);
         });

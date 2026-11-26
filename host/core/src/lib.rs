@@ -13,6 +13,7 @@ pub mod events;
 pub mod fastboot;
 pub mod gpt;
 pub mod image;
+pub mod ota;
 pub mod restore;
 pub mod session;
 pub mod snmac;

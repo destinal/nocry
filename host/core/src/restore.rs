@@ -132,8 +132,15 @@ impl Package {
                 zip_entry(p, "images/xImage")?,
                 zip_entry(p, "images/rootfs.squashfs")?,
             )
+        } else if crate::ota::is_ota(p) {
+            let o = crate::ota::load(p)?;
+            (None, o.rtos, o.kernel, o.rootfs)
         } else {
-            bail!("{}: expected a .ingenic package or an extracted OTA directory", p.display());
+            bail!(
+                "{}: not a firmware nocry can read. Expected a Creality .ingenic package, an OTA update \
+                 file (.img) for an Ingenic-based printer, or a folder with an unpacked update",
+                p.display()
+            );
         };
         let need = |v: Option<Vec<u8>>, n: &str| v.ok_or_else(|| anyhow!("{}: missing {n}", p.display()));
         let (rtos, kernel, rootfs) = (need(rtos, "zero.bin (rtos)")?, need(kernel, "xImage")?, need(rootfs, "rootfs.squashfs")?);
@@ -607,8 +614,9 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
             eg.clone()
         }
         _ => bail!(
-            "target has no valid boot loader and none was given (OTA images carry none). \
-             Pass --boot <some Nebula-family .ingenic or u-boot-with-spl-mbr-gpt.bin>"
+            "this board has no working bootloader or partition table (a blank or erased board), and an update \
+             file (.img) or unpacked update does not contain them. Install a Creality .ingenic package for any \
+             Nebula-family printer first: it includes both (command line: --boot <.ingenic>)"
         ),
     };
     if t.size < layout.required_size() {
@@ -704,6 +712,21 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
     let current = SnMac::parse(&t.read(snp.offset(), snmac::RECORD_AREA)?);
     let pkg_model = pkg.ota_board.as_deref().and_then(snmac::model_for_ota_board);
     let cur_model = current.as_ref().map(|c| c.model().to_string()).filter(|m| !m.is_empty());
+    // Firmware for another mainboard would leave this board unable to start. Only the Nebula
+    // family is known so far; anything else is refused unless explicitly forced.
+    if pkg_model.is_none() && !o.force_model {
+        match pkg.ota_board.as_deref() {
+            Some(b) => bail!(
+                "this firmware is for a different mainboard ({}), not for a Nebula-family board. Installing it \
+                 would leave this board unable to start",
+                snmac::foreign_board_name(b)
+            ),
+            None => bail!(
+                "cannot tell which printer this firmware is for (no readable etc/ota_info in its root filesystem); \
+                 refusing to install it"
+            ),
+        }
+    }
     if o.repair && o.model.is_none() {
         if let (Some(cm), Some(pm)) = (&cur_model, pkg_model) {
             if cm != pm && !o.force_model {
