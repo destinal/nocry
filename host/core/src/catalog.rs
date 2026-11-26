@@ -265,29 +265,23 @@ pub fn refresh(data_dir: &Path) -> Result<Catalog> {
     Ok(cat)
 }
 
-/// The bootloader and partition table for Nebula-family boards. Update files do not contain
-/// them, so a blank board needs this. It is taken from Creality's own factory package for the
-/// Ender-3 V3 KE (the boot area is the same across the family), downloaded once from
-/// Creality's GitHub releases and checked against a known sha256.
-const BOOT_SOURCE_URL: &str =
-    "https://github.com/CrealityOfficial/Ender-3_V3_KE_Klipper/releases/download/V1.1.0.12/Ender-3_V3_KE_1.1.0.12.ingenic";
-const BOOT_SOURCE_FILE: &str = "Ender-3_V3_KE_1.1.0.12.ingenic";
-const BOOT_SOURCE_SIZE: u64 = 130364076;
-const BOOT_SHA256: &str = "8dc843d276694e0996062ac599a0c57134f0db065728536a03ac276aadc0af9a";
-
-pub fn boot_area(data_dir: &Path) -> Result<Vec<u8>> {
+/// The bootloader and partition table for a blank board of `family`. Update files do not contain
+/// them, so they are taken from one of Creality's own factory packages for that family
+/// (`boards::BootSource`), downloaded once and checked against a known sha256.
+pub fn boot_area(data_dir: &Path, family: crate::boards::FamilyId) -> Result<Vec<u8>> {
     use sha2::Digest as _;
+    let src = &crate::boards::family(family).boot;
     let sha = |b: &[u8]| format!("{:x}", sha2::Sha256::digest(b));
-    let cache = data_dir.join("boot").join("nebula-boot-area.bin");
+    let cache = data_dir.join("boot").join(src.cache_name);
     if let Ok(b) = std::fs::read(&cache) {
-        if sha(&b) == BOOT_SHA256 {
+        if sha(&b) == src.boot_sha256 {
             return Ok(b);
         }
     }
     crate::say!("this board needs a bootloader and partition table; fetching them from Creality's factory package");
-    let pkg = download(BOOT_SOURCE_URL, BOOT_SOURCE_FILE, BOOT_SOURCE_SIZE, &data_dir.join("firmware"))?;
+    let pkg = download(src.url, src.file, src.size, &data_dir.join("firmware"))?;
     let b = crate::restore::load_boot(&pkg)?;
-    if sha(&b) != BOOT_SHA256 {
+    if sha(&b) != src.boot_sha256 {
         let _ = std::fs::remove_file(&pkg);
         bail!("the downloaded factory package does not contain the expected bootloader (checksum mismatch); nothing was installed");
     }

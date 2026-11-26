@@ -93,6 +93,53 @@ impl Gpt {
         self.parts.iter().map(|p| (p.last_lba + 1) * SECTOR).max().unwrap_or(0)
     }
 
+    /// Adapt the partition table in a boot area to the storage it goes onto, the way Creality's
+    /// factory tool does: the usable size is the storage size rounded down to whole MiB, the
+    /// last partition (userdata) reaches to its end, and the header and the protective MBR
+    /// say so. The other partitions stay where the loader expects them. Returns the new table.
+    pub fn fit_to_disk(b: &mut [u8], disk_bytes: u64) -> Result<Gpt> {
+        let g = Gpt::parse(b)?;
+        let usable = (disk_bytes >> 20) << 11; // sectors
+        let (eoff, esize) = ((g.entries_lba * SECTOR) as usize, g.esize as usize);
+        // the entry that starts last
+        let mut last: Option<(usize, u64)> = None;
+        for i in 0..g.nentries as usize {
+            let e = &b[eoff + i * esize..eoff + (i + 1) * esize];
+            if e[..16].iter().all(|&x| x == 0) {
+                continue;
+            }
+            let first = u64le(e, 32);
+            if last.is_none_or(|(_, f)| first > f) {
+                last = Some((i, first));
+            }
+        }
+        let (idx, first) = last.ok_or_else(|| anyhow::anyhow!("partition table has no partitions"))?;
+        const MIN_LAST: u64 = 64 << 11; // at least 64 MiB for the last partition
+        if usable < first + MIN_LAST {
+            bail!(
+                "the storage ({} MiB) is too small for this partition layout: its last partition starts at {} MiB",
+                disk_bytes >> 20,
+                first >> 11
+            );
+        }
+        let end = usable - 1;
+        let e = eoff + idx * esize;
+        b[e + 40..e + 48].copy_from_slice(&end.to_le_bytes());
+        b[512 + 32..512 + 40].copy_from_slice(&end.to_le_bytes()); // "alternate" LBA, as the factory tool sets it
+        b[512 + 48..512 + 56].copy_from_slice(&end.to_le_bytes()); // last usable LBA
+        // protective MBR: number of sectors after LBA 0
+        let n = end.min(0xffff_ffff) as u32;
+        b[0x1ca..0x1ce].copy_from_slice(&n.to_le_bytes());
+        let elen = (g.nentries * g.esize) as usize;
+        let ecrc = crc32fast::hash(&b[eoff..eoff + elen]);
+        b[512 + 88..512 + 92].copy_from_slice(&ecrc.to_le_bytes());
+        b[512 + 16..512 + 20].fill(0);
+        let hsize = u32le(&b[512..], 12) as usize;
+        let hcrc = crc32fast::hash(&b[512..512 + hsize]);
+        b[512 + 16..512 + 20].copy_from_slice(&hcrc.to_le_bytes());
+        Gpt::parse(b)
+    }
+
     /// Give the disk and every partition a fresh random unique GUID and fix both CRCs.
     pub fn randomize_guids(&self, b: &mut [u8]) -> Result<()> {
         let mut rnd = vec![0u8; 16 * (1 + self.nentries as usize)];
@@ -120,5 +167,59 @@ impl Gpt {
         let hcrc = crc32fast::hash(&b[512..512 + hsize]);
         b[512 + 16..512 + 20].copy_from_slice(&hcrc.to_le_bytes());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A small table: three partitions, the last one open-ended, laid out like the boards'.
+    fn sample(disk_sectors: u64) -> Vec<u8> {
+        let mut b = vec![0u8; GPT_AREA];
+        b[0x1fe] = 0x55;
+        b[0x1ff] = 0xaa;
+        b[0x1c2] = 0xee;
+        let parts: [(&str, u64, u64); 3] = [("ota", 0x800, 0xfff), ("rootfs", 0x1000, 0x4fff), ("userdata", 0x5000, disk_sectors - 1)];
+        for (i, (name, first, last)) in parts.iter().enumerate() {
+            let e = 1024 + i * 128;
+            b[e] = 1; // any non-zero type GUID
+            b[e + 32..e + 40].copy_from_slice(&first.to_le_bytes());
+            b[e + 40..e + 48].copy_from_slice(&last.to_le_bytes());
+            for (k, c) in name.encode_utf16().enumerate() {
+                b[e + 56 + 2 * k..e + 58 + 2 * k].copy_from_slice(&c.to_le_bytes());
+            }
+        }
+        let h = 512;
+        b[h..h + 8].copy_from_slice(b"EFI PART");
+        b[h + 12..h + 16].copy_from_slice(&92u32.to_le_bytes());
+        b[h + 24..h + 32].copy_from_slice(&1u64.to_le_bytes());
+        b[h + 72..h + 80].copy_from_slice(&2u64.to_le_bytes());
+        b[h + 80..h + 84].copy_from_slice(&11u32.to_le_bytes());
+        b[h + 84..h + 88].copy_from_slice(&128u32.to_le_bytes());
+        let ecrc = crc32fast::hash(&b[1024..1024 + 11 * 128]);
+        b[h + 88..h + 92].copy_from_slice(&ecrc.to_le_bytes());
+        let hcrc = crc32fast::hash(&b[h..h + 92]);
+        b[h + 16..h + 20].copy_from_slice(&hcrc.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn fits_to_larger_and_smaller_storage() {
+        let mut b = sample(15269888);
+        // 7457.8 MiB of storage: usable is 7457 MiB
+        let g = Gpt::fit_to_disk(&mut b, 15273600 * 512).unwrap();
+        assert_eq!(g.find("userdata").unwrap().last_lba, 15271935);
+        assert_eq!(g.alt_lba, 15271935);
+        assert_eq!(g.find("rootfs").unwrap().last_lba, 0x4fff);
+        assert_eq!(u32le(&b, 0x1ca), 15271935);
+        // a 32 GiB part
+        let g = Gpt::fit_to_disk(&mut b, 31 << 30).unwrap();
+        assert_eq!(g.find("userdata").unwrap().size(), (31u64 << 30) - 0x5000 * 512);
+        // and back down
+        let g = Gpt::fit_to_disk(&mut b, 4 << 30).unwrap();
+        assert_eq!(g.required_size(), 4 << 30);
+        // too small for the fixed part
+        assert!(Gpt::fit_to_disk(&mut b, 16 << 20).is_err());
     }
 }

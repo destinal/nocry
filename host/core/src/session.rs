@@ -561,6 +561,17 @@ pub struct InstallReport {
     pub blank_board: bool,
     /// where the pre-write copy of the first 3 MiB went, if one was taken
     pub safety_copy: String,
+    /// mainboard field before and after
+    pub mainboard_before: String,
+    pub mainboard_after: String,
+    /// "Nebula Pad family" / "K1 family"
+    pub family: String,
+    /// Not planned yet: the user has to say which printer type ("model") or mainboard revision
+    /// ("mainboard") the board is; `choices` are (value, name to show). Call again with it.
+    pub need_choice: String,
+    pub choices: Vec<(String, String)>,
+    /// what the firmware itself says it supports, for the dialogs: (model, name, mainboards)
+    pub firmware_supports: Vec<(String, String, Vec<String>)>,
 }
 
 /// Plan an installation of `os` (.ingenic, or a directory with xImage/rootfs.squashfs/zero.bin)
@@ -576,12 +587,17 @@ pub fn install(
     execute: bool,
     safety_dir: Option<&std::path::Path>,
     target: Option<&PathBuf>,
+    model: Option<&str>,
+    mainboard: Option<&str>,
 ) -> Result<InstallReport> {
     let pkg = restore::Package::load(os)?;
+    let line = pkg.ota_board.as_deref().and_then(crate::boards::line);
     let mut r = InstallReport {
         firmware_board: pkg.ota_board.clone().unwrap_or_default(),
         firmware_version: pkg.ota_version.clone().unwrap_or_default(),
         has_boot_area: pkg.boot.is_some(),
+        family: line.map(|l| crate::boards::family(l.family).name.to_string()).unwrap_or_default(),
+        firmware_supports: pkg.support.iter().map(|s| (s.model.clone(), crate::boards::product_name(&s.model), s.mainboards.clone())).collect(),
         ..Default::default()
     };
     say!("firmware: {} {} from {}", r.firmware_board, r.firmware_version, pkg.source);
@@ -593,6 +609,7 @@ pub fn install(
         if let Some(p) = g.find("sn_mac") {
             if let Some(cur) = crate::snmac::SnMac::parse(&t.read(p.offset(), crate::snmac::RECORD_AREA)?) {
                 r.model_before = cur.model().into();
+                r.mainboard_before = cur.board().into();
             }
         }
     }
@@ -602,15 +619,18 @@ pub fn install(
     if blank {
         say!("the board is blank: it will be rebuilt from scratch (partition table, bootloader, firmware, identity)");
         if pkg.boot.is_none() {
+            let fam = line.map(|l| l.family).with_context(|| {
+                format!("nocry does not know this firmware ({}) and has no bootloader for it", crate::boards::unknown_firmware(&r.firmware_board))
+            })?;
             let dir = safety_dir.and_then(|d| d.parent()).map(|d| d.to_path_buf()).unwrap_or_else(crate::catalog::default_data_dir);
-            boot = Some(crate::catalog::boot_area(&dir)?);
+            boot = Some(crate::catalog::boot_area(&dir, fam)?);
         }
     }
     r.blank_board = blank;
     let keep_data = keep_data && !blank; // nothing to keep
     let opts = restore::Options {
-        model: None,
-        board: None,
+        model: model.filter(|m| !m.is_empty()).map(String::from),
+        board: mainboard.filter(|m| !m.is_empty()).map(String::from),
         sn: None,
         mac: None,
         sn_prefix: None,
@@ -625,7 +645,20 @@ pub fn install(
         wipe_overlay: false,
         rewrite: false,
     };
-    let plan = restore::plan(&t, &pkg, boot, &opts)?;
+    let plan = match restore::plan(&t, &pkg, boot, &opts) {
+        Ok(p) => p,
+        Err(e) => match e.downcast_ref::<restore::NeedChoice>() {
+            // not an error for a front end: it asks the user and calls again
+            Some(c) => {
+                r.need_choice = c.what.into();
+                r.choices = c.choices.clone();
+                r.notes.push(c.to_string());
+                return Ok(r);
+            }
+            None => return Err(e),
+        },
+    };
+    r.mainboard_after = plan.snmac_new.board().into();
     r.device_firmware = plan.device_firmware.as_ref().map(|(b, v)| format!("{b} {v}")).unwrap_or_default();
     r.model_after = plan.snmac_new.model().into();
     r.model_after_name = crate::snmac::product_name(&r.model_after);
@@ -1177,6 +1210,10 @@ pub fn set_identity(
     if !board.trim().is_empty() {
         rec.fields[3] = board.trim().to_string();
     } else if rec.fields[3].is_empty() {
+        // only the Nebula family has a single mainboard name; anything else has to be given
+        if rec.fields[2] != "Nebula Pad" && crate::boards::LINES.iter().all(|l| l.model != Some(rec.fields[2].as_str()) || l.family != crate::boards::FamilyId::Nebula) {
+            bail!("give the mainboard type as well (for a K1-family board: CR4CU220812S10, S11 or S12, as printed on the board)");
+        }
         rec.fields[3] = crate::snmac::NEBULA_BOARD.into();
     }
     rec.validate_for_write()?;
@@ -1208,16 +1245,29 @@ pub fn install_other_slot(
     let snp = g.find("sn_mac").context("no sn_mac partition")?;
     let cur = crate::snmac::SnMac::parse(&t.read(snp.offset(), crate::snmac::RECORD_AREA)?)
         .context("this board has no identity record; use a normal install")?;
-    let pkg_model = pkg.ota_board.as_deref().and_then(crate::snmac::model_for_ota_board);
-    match pkg_model {
-        None => bail!("this firmware is not for a Nebula-family board ({})", crate::snmac::foreign_board_name(&r.firmware_board)),
-        Some(m) if m != cur.model() => bail!(
-            "the other slot can only hold firmware for the same printer type. This board is set up as {} and the \
-             firmware is for {}. To change printer type, use a clean install",
+    // Both slots share one identity record, so the firmware has to suit the printer type and
+    // mainboard this board is set up as.
+    let line = pkg.ota_board.as_deref().and_then(crate::boards::line);
+    let Some(line) = line else {
+        bail!("nocry does not know this firmware ({})", crate::boards::unknown_firmware(&r.firmware_board));
+    };
+    if let Some(f) = crate::boards::family_of_mainboard(cur.board()) {
+        if f.id != line.family {
+            bail!("this firmware ({}) is for the {}, but this board belongs to the {}", line.name, crate::boards::family(line.family).name, f.name);
+        }
+    }
+    let fits = match line.model {
+        Some(m) => m == cur.model(),
+        None => pkg.support.is_empty() || crate::boards::supports(&pkg.support, cur.model(), cur.board()),
+    };
+    if !fits {
+        bail!(
+            "the other slot can only hold firmware for the printer type this board is set up as ({}), and this \
+             firmware ({} {}) is not for it. To change printer type, use a clean install",
             crate::snmac::product_name(cur.model()),
-            crate::snmac::product_name(m)
-        ),
-        _ => {}
+            line.name,
+            r.firmware_version
+        );
     }
     r.model_before = cur.model().into();
     r.model_after = cur.model().into();

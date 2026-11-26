@@ -16,50 +16,33 @@ pub struct SnMac {
     pub fields: [String; NFIELDS],
 }
 
-/// Model/board pairs verified from each firmware's S13mcu_update / S55klipper_service.
+/// Mainboard field of the Nebula family. Which boards and printers exist, and what their
+/// firmware expects, is in `boards.rs`; these are short-hands kept for the callers here.
 pub const NEBULA_BOARD: &str = "NEBULA V1.0.0.1";
-pub const KNOWN_MODELS: &[(&str, &str, &str)] = &[
-    // (ota_board_name, model field, description)
-    ("NEBULA", "Nebula Pad", "retail Nebula Pad / Nebula Smart Kit"),
-    ("F003", "F003", "CR-10 SE"),
-    ("F004", "F004", "Ender-5 Max"),
-    ("F005", "F005", "Ender-3 V3 KE"),
-];
 
+/// The model field a firmware is for, when it is for exactly one (Nebula family).
 pub fn model_for_ota_board(ota_board: &str) -> Option<&'static str> {
-    KNOWN_MODELS.iter().find(|(b, _, _)| *b == ota_board).map(|(_, m, _)| *m)
+    crate::boards::line(ota_board).and_then(|l| l.model)
 }
 
-pub fn describe_model(model: &str) -> &'static str {
-    KNOWN_MODELS.iter().find(|(_, m, _)| *m == model).map(|(_, _, d)| *d).unwrap_or("unknown model")
+pub fn describe_model(model: &str) -> String {
+    crate::boards::product_name(model)
 }
 
-/// Name a person would recognise, for dialogs: "Retail Nebula Pad", "Ender-3 V3 KE"...
+/// Name a person would recognise, for dialogs: "Retail Nebula Pad", "K1 Max"...
 /// Falls back to the raw value for models nocry does not know.
 pub fn product_name(model: &str) -> String {
-    match model {
-        "Nebula Pad" => "Retail Nebula Pad".into(),
-        m => match KNOWN_MODELS.iter().find(|(_, k, _)| *k == m) {
-            Some((_, _, d)) => d.to_string(),
-            None => m.to_string(),
-        },
-    }
+    crate::boards::product_name(model)
 }
 
-/// Describes an ota_board_name that is not a Nebula-family one, for refusal messages.
+/// Describes firmware nocry has no entry for, for refusal messages.
 pub fn foreign_board_name(board: &str) -> String {
-    let what = match board {
-        "F001" => "Ender-3 V3, which uses the K1 mainboard",
-        "F002" => "Ender-3 V3 Plus, which uses the K1 mainboard",
-        b if b.starts_with("CR4CU220812S1") => "K1 series",
-        _ => "unknown printer",
-    };
-    format!("{what}; firmware id {board}")
+    crate::boards::unknown_firmware(board)
 }
 
-/// The same, from a firmware's ota_board_name.
+/// Name of a firmware from its ota_board_name.
 pub fn product_name_for_ota_board(board: &str) -> String {
-    model_for_ota_board(board).map(product_name).unwrap_or_else(|| board.to_string())
+    crate::boards::firmware_name(board)
 }
 
 fn is_hex(s: &str, n: usize) -> bool {

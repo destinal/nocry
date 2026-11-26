@@ -7,7 +7,8 @@
 
 use crate::events;
 use crate::gpt::{Gpt, GPT_AREA};
-use crate::snmac::{self, SnMac, NEBULA_BOARD};
+use crate::boards;
+use crate::snmac::{self, SnMac};
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
@@ -68,6 +69,8 @@ pub struct Package {
     pub kernel: Vec<u8>,
     pub rootfs: Vec<u8>,
     pub ota_board: Option<String>,
+    /// printer types (and mainboards) the firmware itself says it supports
+    pub support: Vec<crate::boards::Support>,
     pub ota_version: Option<String>,
 }
 
@@ -158,7 +161,8 @@ impl Package {
             check_boot(b)?;
         }
         let (ota_board, ota_version) = ota_info(&rootfs);
-        Ok(Package { source: p.display().to_string(), boot, rtos, kernel, rootfs, ota_board, ota_version })
+        let support = crate::boards::firmware_support(&rootfs);
+        Ok(Package { source: p.display().to_string(), boot, rtos, kernel, rootfs, ota_board, ota_version, support })
     }
 }
 
@@ -172,7 +176,7 @@ pub fn check_boot(b: &[u8]) -> Result<Gpt> {
     }
     for n in ["ota", "sn_mac", "rtos", "kernel", "rootfs", "rootfs_data", "userdata"] {
         if g.find(n).is_none() {
-            bail!("boot area GPT lacks partition {n:?}; not a Nebula-family layout");
+            bail!("boot area GPT lacks partition {n:?}; not a layout nocry knows");
         }
     }
     Ok(g)
@@ -496,6 +500,27 @@ pub struct Options {
     pub rewrite: bool,
 }
 
+/// The plan cannot be made until the user decides something the board and the firmware leave open:
+/// which printer type the board is ("model"), or which mainboard revision it has ("mainboard").
+#[derive(Debug, Clone)]
+pub struct NeedChoice {
+    pub what: &'static str,
+    /// (value for the sn_mac field, name to show)
+    pub choices: Vec<(String, String)>,
+}
+
+impl std::fmt::Display for NeedChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let list: Vec<String> = self.choices.iter().map(|(v, n)| if v == n { v.clone() } else { format!("{n} ({v:?})") }).collect();
+        match self.what {
+            "model" => write!(f, "this firmware serves several printer types and the board does not say which it is. Choose one with --model: {}", list.join(", ")),
+            _ => write!(f, "the board does not say which mainboard revision it has (printed on the board). Choose one with --board: {}", list.join(", ")),
+        }
+    }
+}
+
+impl std::error::Error for NeedChoice {}
+
 const CH: u64 = MIB; // comparison / write granularity
 
 /// Expected content of an extent.
@@ -609,7 +634,21 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
     // --- boot area / layout
     let existing = t.read(0, GPT_AREA).ok().and_then(|b| Gpt::parse(&b).ok());
     let boot_valid = boot_looks_valid(t);
-    let boot = boot_override.or_else(|| pkg.boot.clone());
+    // A factory boot area carries a partition table for one storage size; fit it to this one
+    // (the last partition, userdata, takes the rest), as the factory tool does.
+    let boot = match boot_override.or_else(|| pkg.boot.clone()) {
+        Some(mut b) => {
+            let before = check_boot(&b)?;
+            let after = Gpt::fit_to_disk(&mut b, t.size)?;
+            if !before.same_layout(&after) {
+                if let Some(p) = after.parts.iter().max_by_key(|p| p.first_lba) {
+                    notes.push(format!("partition table fitted to this storage: {} is {} MiB", p.name, p.size() >> 20));
+                }
+            }
+            Some(b)
+        }
+        None => None,
+    };
     let keep_boot = o.repair && boot_valid && !o.force_boot;
     let layout = match (&boot, &existing) {
         (Some(b), ex) if !keep_boot => {
@@ -651,8 +690,8 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
         }
         _ => bail!(
             "this board has no working bootloader or partition table (a blank or erased board), and an update \
-             file (.img) or unpacked update does not contain them. Install a Creality .ingenic package for any \
-             Nebula-family printer first: it includes both (command line: --boot <.ingenic>)"
+             file (.img) or unpacked update does not contain them. Install a Creality .ingenic package for a \
+             printer of the same family first: it includes both (command line: --boot <.ingenic>)"
         ),
     };
     if t.size < layout.required_size() {
@@ -746,16 +785,17 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
     // --- identity
     let snp = part("sn_mac")?;
     let current = SnMac::parse(&t.read(snp.offset(), snmac::RECORD_AREA)?);
-    let pkg_model = pkg.ota_board.as_deref().and_then(snmac::model_for_ota_board);
     let cur_model = current.as_ref().map(|c| c.model().to_string()).filter(|m| !m.is_empty());
-    // Firmware for another mainboard would leave this board unable to start. Only the Nebula
-    // family is known so far; anything else is refused unless explicitly forced.
-    if pkg_model.is_none() && !o.force_model {
+    let cur_board = current.as_ref().map(|c| c.board().to_string()).filter(|b| !b.is_empty());
+    // Firmware for another mainboard would leave this board unable to start: it must be a
+    // firmware line nocry knows, and of the board's own family.
+    let line = pkg.ota_board.as_deref().and_then(boards::line);
+    if line.is_none() && !o.force_model {
         match pkg.ota_board.as_deref() {
             Some(b) => bail!(
-                "this firmware is for a different mainboard ({}), not for a Nebula-family board. Installing it \
-                 would leave this board unable to start",
-                snmac::foreign_board_name(b)
+                "nocry does not know this firmware ({}) and cannot tell whether it suits this board. Installing \
+                 firmware for another mainboard would leave the board unable to start",
+                boards::unknown_firmware(b)
             ),
             None => bail!(
                 "cannot tell which printer this firmware is for (no readable etc/ota_info in its root filesystem); \
@@ -763,25 +803,38 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
             ),
         }
     }
-    if o.repair && o.model.is_none() {
-        if let (Some(cm), Some(pm)) = (&cur_model, pkg_model) {
-            if cm != pm && !o.force_model {
-                bail!(
-                    "device is a {cm:?} ({}) but the firmware is for {pm:?} ({}): that is a conversion, not a repair. \
-                     Run without --repair (and with --model if intended)",
-                    snmac::describe_model(cm),
-                    snmac::describe_model(pm)
-                );
-            }
+    let dev_family = cur_board.as_deref().and_then(boards::family_of_mainboard);
+    if let (Some(l), Some(f), false) = (line, dev_family, o.force_model) {
+        if l.family != f.id {
+            bail!(
+                "this firmware ({}) is for the {}, but this board belongs to the {} (mainboard {}). Installing it \
+                 would leave the board unable to start",
+                l.name,
+                boards::family(l.family).name,
+                f.name,
+                cur_board.as_deref().unwrap_or("")
+            );
         }
     }
-    let model = match (&o.model, pkg_model, &cur_model) {
-        (Some(m), _, _) => m.clone(),
-        (None, Some(m), _) => m.to_string(),
-        (None, None, Some(c)) => c.clone(),
-        _ => bail!("cannot tell the model (firmware's ota_board_name unknown); pass --model"),
+    // Printer type (model field): fixed by the firmware where it is for one printer; otherwise
+    // the board's own, if this firmware supports it; otherwise it has to be chosen.
+    let model = match (&o.model, line.and_then(|l| l.model)) {
+        (Some(m), _) => m.clone(),
+        (None, Some(m)) => m.to_string(),
+        (None, None) => match &cur_model {
+            Some(c) if pkg.support.is_empty() || pkg.support.iter().any(|s| &s.model == c) => c.clone(),
+            _ if pkg.support.len() == 1 => pkg.support[0].model.clone(),
+            _ if pkg.support.is_empty() => bail!("cannot tell the printer type for this firmware; pass --model"),
+            _ => {
+                return Err(NeedChoice {
+                    what: "model",
+                    choices: pkg.support.iter().map(|s| (s.model.clone(), boards::product_name(&s.model))).collect(),
+                }
+                .into())
+            }
+        },
     };
-    if let (Some(pm), false) = (pkg_model, o.force_model) {
+    if let (Some(pm), false) = (line.and_then(|l| l.model), o.force_model) {
         if pm != model {
             bail!(
                 "firmware is for model {pm:?} ({}) but model {model:?} was requested; the printer would get \
@@ -789,6 +842,47 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
                 snmac::describe_model(pm)
             );
         }
+    }
+    if o.repair && o.model.is_none() && !o.force_model {
+        if let Some(cm) = &cur_model {
+            if cm != &model {
+                bail!(
+                    "device is a {cm:?} ({}) but the firmware is for {model:?} ({}): that is a conversion, not a repair. \
+                     Run without --repair (and with --model if intended)",
+                    snmac::describe_model(cm),
+                    snmac::describe_model(&model)
+                );
+            }
+        }
+    }
+    // Mainboard field: the board's own; on a board without one, the family's (Nebula), or the
+    // only one the firmware accepts for this printer type; otherwise it has to be chosen.
+    let fw_boards: Vec<String> =
+        pkg.support.iter().filter(|s| s.model == model).flat_map(|s| s.mainboards.iter().cloned()).collect();
+    let mainboard = match (&o.board, &cur_board) {
+        (Some(b), _) => b.clone(),
+        (None, Some(b)) => b.clone(),
+        (None, None) => match line.and_then(|l| boards::family(l.family).default_mainboard) {
+            Some(b) => b.to_string(),
+            None if fw_boards.len() == 1 => fw_boards[0].clone(),
+            None if fw_boards.is_empty() => bail!("cannot tell the mainboard type for this firmware; pass --board"),
+            None => {
+                return Err(NeedChoice { what: "mainboard", choices: fw_boards.iter().map(|b| (b.clone(), b.clone())).collect() }.into())
+            }
+        },
+    };
+    if !pkg.support.is_empty() && !boards::supports(&pkg.support, &model, &mainboard) && !o.force_model {
+        let list: Vec<String> = pkg
+            .support
+            .iter()
+            .map(|s| if s.mainboards.is_empty() { boards::product_name(&s.model) } else { format!("{} on {}", boards::product_name(&s.model), s.mainboards.join("/")) })
+            .collect();
+        bail!(
+            "this firmware has no configuration for a {} on mainboard {mainboard}; the printer would not start \
+             printing software. It supports: {}",
+            boards::product_name(&model),
+            list.join("; ")
+        );
     }
     let mut rec = current.clone().unwrap_or_default();
     let mut generated = false;
@@ -808,9 +902,7 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
         }
     }
     rec.fields[2] = model;
-    rec.fields[3] = o.board.clone().unwrap_or_else(|| {
-        current.as_ref().map(|c| c.board().to_string()).filter(|b| !b.is_empty()).unwrap_or_else(|| NEBULA_BOARD.into())
-    });
+    rec.fields[3] = mainboard;
     if rec.fields[4] == "1" {
         notes.push("PCBA factory-test flag was set; clearing it".into());
         rec.fields[4].clear();

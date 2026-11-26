@@ -161,13 +161,30 @@ unsafe fn opt_path(p: *const c_char) -> Option<std::path::PathBuf> {
 /// `os_path` must be a valid NUL-terminated UTF-8 path; `safety_dir` NULL or likewise.
 #[no_mangle]
 pub unsafe extern "C" fn nocry_install_json(os_path: *const c_char, keep_data: c_int, execute: c_int, safety_dir: *const c_char) -> *mut c_char {
+    nocry_install2_json(os_path, keep_data, execute, safety_dir, std::ptr::null(), std::ptr::null())
+}
+
+/// As nocry_install_json, with the printer type (`model`) and mainboard revision (`mainboard`)
+/// to write into the identity record. Pass NULL or "" to let nocry decide; when it cannot, the
+/// result has "need_choice":"model"|"mainboard" and "choices":[{"value","name"}] instead of a plan.
+/// # Safety
+/// All pointers must be NULL or valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_install2_json(
+    os_path: *const c_char, keep_data: c_int, execute: c_int, safety_dir: *const c_char, model: *const c_char, mainboard: *const c_char,
+) -> *mut c_char {
     let os = opt_path(os_path).unwrap_or_default();
     let safety = opt_path(safety_dir);
+    let text = |p: *const c_char| if p.is_null() { None } else { Some(CStr::from_ptr(p).to_string_lossy().to_string()) };
+    let (model, mainboard) = (text(model), text(mainboard));
     // development/self-test hook: operate on an image file instead of a board
     let target = std::env::var("NOCRY_TEST_TARGET").ok().map(std::path::PathBuf::from);
     events::reset_cancel();
     let r = std::panic::catch_unwind(|| {
-        session::install(&nocry_core::bootrom::SOCS[0], Via::Auto, &os, keep_data != 0, execute != 0, safety.as_deref(), target.as_ref())
+        session::install(
+            &nocry_core::bootrom::SOCS[0], Via::Auto, &os, keep_data != 0, execute != 0, safety.as_deref(), target.as_ref(),
+            model.as_deref(), mainboard.as_deref(),
+        )
     });
     install_json(r)
 }
@@ -176,7 +193,20 @@ fn install_json(r: std::thread::Result<anyhow::Result<session::InstallReport>>) 
     out(match r {
         Ok(Ok(i)) => {
             let notes: Vec<String> = i.notes.iter().map(|n| format!("\"{}\"", esc(n))).collect();
-            format!(
+            let choices: Vec<String> = i.choices.iter().map(|(v, n)| format!("{{\"value\":\"{}\",\"name\":\"{}\"}}", esc(v), esc(n))).collect();
+            let supports: Vec<String> = i
+                .firmware_supports
+                .iter()
+                .map(|(m, n, b)| {
+                    let bs: Vec<String> = b.iter().map(|x| format!("\"{}\"", esc(x))).collect();
+                    format!("{{\"model\":\"{}\",\"name\":\"{}\",\"mainboards\":[{}]}}", esc(m), esc(n), bs.join(","))
+                })
+                .collect();
+            let extra = format!(
+                ",\"family\":\"{}\",\"mainboard_before\":\"{}\",\"mainboard_after\":\"{}\",\"need_choice\":\"{}\",\"choices\":[{}],\"firmware_supports\":[{}]}}",
+                esc(&i.family), esc(&i.mainboard_before), esc(&i.mainboard_after), esc(&i.need_choice), choices.join(","), supports.join(",")
+            );
+            let base = format!(
                 "{{\"ok\":true,\"firmware_board\":\"{}\",\"firmware_version\":\"{}\",\"has_boot_area\":{},\
                  \"device_firmware\":\"{}\",\"model_before\":\"{}\",\"model_after\":\"{}\",\"identity_generated\":{},\
                  \"notes\":[{}],\"details\":\"{}\",\"bytes_to_write\":{},\"executed\":{},\"safety_copy\":\"{}\",\
@@ -185,7 +215,8 @@ fn install_json(r: std::thread::Result<anyhow::Result<session::InstallReport>>) 
                 esc(&i.model_before), esc(&i.model_after), i.identity_generated, notes.join(","), esc(&i.details),
                 i.bytes_to_write, i.executed, esc(&i.safety_copy), esc(&i.model_before_name),
                 esc(&i.model_after_name), esc(&i.firmware_name), esc(&i.device_firmware_name), i.blank_board, esc(&i.target_slot)
-            )
+            );
+            format!("{}{}", base.trim_end_matches('}'), extra)
         }
         Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
         Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),

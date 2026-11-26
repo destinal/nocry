@@ -90,6 +90,15 @@ char *nocry_generate_identity_json(void);   /* {"ok":true,"sn":"...","mac":"..."
 
 /* Install into the inactive firmware slot only (same printer type as the board); nothing else
  * is touched. Same JSON as nocry_install_json plus "target_slot":"a|b". */
+/* As nocry_install_json, with the printer type (model) and mainboard revision to write into the
+ * identity record; NULL or "" lets nocry decide. When it cannot (firmware for several printer
+ * types on a board that does not say which it is), the result has no plan but
+ * "need_choice":"model"|"mainboard" and "choices":[{"value":"CR-K1","name":"K1"},...]: ask the
+ * user and call again. Both results also carry "family", "mainboard_before", "mainboard_after"
+ * and "firmware_supports":[{"model","name","mainboards":[...]}]. */
+char *nocry_install2_json(const char *os_path, int keep_data, int execute, const char *safety_dir,
+                          const char *model, const char *mainboard);
+
 char *nocry_install_slot_json(const char *os_path, int execute, const char *safety_dir);
 
 /* Factory reset that also makes old settings and files unrecoverable.

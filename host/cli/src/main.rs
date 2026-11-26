@@ -457,6 +457,10 @@ fn main() -> Result<()> {
                 println!("{n}: {} bytes", d.len());
             }
             println!("board {}, version {}", p.ota_board.as_deref().unwrap_or("?"), p.ota_version.as_deref().unwrap_or("?"));
+            for s in &p.support {
+                println!("supports {:?} ({}){}", s.model, nocry_core::boards::product_name(&s.model),
+                    if s.mainboards.is_empty() { String::new() } else { format!(" on {}", s.mainboards.join(", ")) });
+            }
         }
         Cmd::Slots { set } => {
             let s = match set {
