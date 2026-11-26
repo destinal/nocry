@@ -162,6 +162,8 @@ starts in place of the kernel).
 | Panel power | PC21 high, PB16 low, PC21 low (power on, active low), 30 ms, PB16 high / low / high 5 ms apart, 20 ms |
 | Picture | layer-composer path: a frame descriptor (480x272, direct output, layer 0 enabled) and a layer descriptor pointing at a 32-bit xRGB frame buffer; `DC_FRM_CFG_ADDR`, then `DC_FRM_CFG_CTRL` = 1; wait for "display end" |
 | Backlight | PC0 driven high as a plain output, then PC22 (its supply) high |
+| Scheduler start | FPU and MSA switched off again (tasks get them on demand) |
+| Before reporting back | core 1's interrupt lines off, `Status` and `EBase` restored to the loader's values, data and second-level caches written back, instruction cache emptied |
 | Hand-over | panel id to the shared word, first word of the image set to 1, core 1's interrupt lines off, cache flushed, `wait` |
 
 "Display end" (status bit 17) is raised at the end of every frame. The stock image's

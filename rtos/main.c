@@ -74,6 +74,13 @@ static void draw(u32 *fb)
 		}
 }
 
+u32 nocry_read_fcsr(void);
+u32 nocry_read_msacsr(void);
+
+#define ST_CU1		0x20000000u
+#define ST_CU2		0x40000000u	/* set together with Config5.MSAEn by the stock image */
+#define CONFIG5_MSAEN	0x08000000u
+
 /* write back and invalidate the whole data cache of this core */
 static void flush_dcache(void)
 {
@@ -88,13 +95,41 @@ static void flush_dcache(void)
 	__asm__ volatile("sync");
 }
 
+/* the same for the second-level cache (geometry from Config2) */
+static void flush_scache(void)
+{
+	u32 c2 = mfc0(16, 2);
+	u32 sl = (c2 >> 4) & 15, sets = 64u << ((c2 >> 8) & 15), ways = 1 + (c2 & 15);
+	u32 line = sl ? 2u << sl : 0, a;
+
+	if (!line || ((c2 >> 8) & 15) > 7)
+		return;
+	for (a = 0x80000000u; a < 0x80000000u + sets * ways * line; a += line)
+		__asm__ volatile("cache 0x03, 0(%0)" : : "r"(a));
+	__asm__ volatile("sync");
+}
+
+static void invalidate_icache(void)
+{
+	u32 c1 = mfc0(16, 1);
+	u32 sets = 64u << ((c1 >> 22) & 7), il = (c1 >> 19) & 7, ways = 1 + ((c1 >> 16) & 7);
+	u32 line = il ? 2u << il : 0, a;
+
+	if (!line)
+		return;
+	for (a = 0x80000000u; a < 0x80000000u + sets * ways * line; a += line)
+		__asm__ volatile("cache 0x00, 0(%0)" : : "r"(a));
+	mtc0(16, 7, mfc0(16, 7) | 2);
+}
+
 void nocry_rtos_main(void *spl_args)
 {
-	u32 cpu = mfc0(15, 1) & 0x3ff;	/* EBase.CPUNum: 1 */
+	u32 ebase0 = mfc0(15, 1), status0 = mfc0(12, 0);	/* as the SPL left them; put back at the end */
+	u32 cpu = ebase0 & 0x3ff;	/* EBase.CPUNum: 1 */
 	u32 bit = 1u << (cpu & 31);
 
 	logp = (char *)LOG_ADDR;
-	log_str("NCRTLOG1\nnocry-rtos stage 1\n");
+	log_str("NCRTLOG1\nnocry-rtos\n");
 	log_hex("cpu ", cpu);
 	log_hex("status ", mfc0(12, 0));
 	log_hex("config ", mfc0(16, 0));
@@ -116,10 +151,37 @@ void nocry_rtos_main(void *spl_args)
 	log_hex("config7 now ", mfc0(16, 7));
 	log_hex("sn_mac size from spl, after setup ", nocry_spl_word);
 
+	/*
+	 * FPU and MSA, as the stock image: switched on and their control registers read during
+	 * start-up, switched off again when its scheduler starts (its tasks get them on demand).
+	 * Nothing here uses floating point; this is only to treat the core the same way.
+	 */
+	mtc0(12, 0, mfc0(12, 0) | ST_CU1);
+	log_hex("fcsr ", nocry_read_fcsr());
+	mtc0(16, 5, mfc0(16, 5) | CONFIG5_MSAEN);
+	mtc0(12, 0, mfc0(12, 0) | ST_CU2);
+	log_hex("msacsr ", nocry_read_msacsr());
+	mtc0(12, 0, mfc0(12, 0) & ~ST_CU1);
+	mtc0(16, 5, mfc0(16, 5) & ~CONFIG5_MSAEN);
+	mtc0(12, 0, mfc0(12, 0) & ~ST_CU2);
+
 	draw(nocry_display_init());
 	nocry_display_start();
 
 	nocry_display_quiesce();
+
+	/*
+	 * Leave the core as it was found, as the stock image does before it reports back:
+	 * interrupt lines off, Status and EBase restored, caches written back and emptied.
+	 */
+	REG(CCU_PIMR) &= ~bit;
+	REG(CCU_MIMR) &= ~bit;
+	REG(CCU_OIMR) &= ~bit;
+	mtc0(12, 0, status0);
+	mtc0(15, 1, ebase0);
+	flush_dcache();
+	flush_scache();
+	invalidate_icache();
 	nocry_spl_word = 0;		/* panel id for the kernel command line: lcm_id=0 */
 	_start[0] = 1;			/* "done": the SPL watches this word */
 	log_str("handing back to the SPL\n");

@@ -19,8 +19,12 @@ by register (1048 registers); what still differs is listed and explained in
 `docs/rtos-partition.md`.
 
 Not done yet: a real boot picture and the model-dependent choice the stock image makes;
-other panels (480x800 boards); FPU/MSA set-up on core 1, which the stock image does and this
-one leaves out (core 1 is reset before Linux starts).
+other panels (480x800 boards).
+
+The CPU core is treated as the stock image treats it: FPU and MSA are switched on, their
+control registers read (FCSR 0x000c0000, MSACSR 0 on this board) and switched off again;
+before reporting back, Status and EBase are restored and the first-level, second-level and
+instruction caches are written back and emptied.
 
 Build: `tools/rtos-build/build.sh` (needs Docker) gives `tools/rtos-build/out/nocry-rtos.bin`.
 
