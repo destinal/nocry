@@ -81,11 +81,20 @@ void nocry_rtos_main(void *spl_args)
 	log_hex("spl args ", (u32)spl_args);
 	log_hex("sn_mac size from spl ", nocry_spl_word);
 
-	/* as the stock image: this core's interrupt lines on, kseg0 cached */
+	/*
+	 * CPU setup as the stock image does it first thing. Until kseg0 is switched to cached
+	 * (Config.K0 = 3) this core reads RAM directly and misses what core 0 still holds in its
+	 * cache, e.g. the sn_mac size the SPL has just stored.
+	 */
 	REG(CCU_PIMR) |= bit;
 	REG(CCU_MIMR) |= bit;
 	REG(CCU_OIMR) |= bit;
-	mtc0(16, 0, (mfc0(16, 0) & ~7u) | 3);
+	log_hex("config7 ", mfc0(16, 7));
+	mtc0(16, 7, mfc0(16, 7) | 0x38);
+	mtc0(16, 0, (mfc0(16, 0) & ~7u) | 3);	/* kseg0 cached */
+	mtc0(13, 0, mfc0(13, 0) & ~0x08000000u);	/* Cause.DC: count register runs */
+	log_hex("config7 now ", mfc0(16, 7));
+	log_hex("sn_mac size from spl, after setup ", nocry_spl_word);
 
 	/* (the picture will be drawn here) */
 

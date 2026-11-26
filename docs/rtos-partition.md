@@ -50,6 +50,12 @@ console=ttyS4,115200n8 mem=<min(RAM,256)>M@0x0 [mem=<rest>M@0x30000000] lcm_id=<
 `root=/dev/mmcblk0p8` for slot B. `lcm_id` is the value the rtos reported. No memory stays
 reserved for the rtos; it is finished before Linux starts.
 
+Checked on hardware (2026-11-26): slot B starts when `ota` says `ota:kernel2`. With a
+minimal replacement image that only does the hand-over (`rtos/`), Linux starts normally but
+the screen stays dark: the stock Linux display driver is loaded with `lcd_is_inited` and
+leaves panel power, reset, pixel clock, controller setup and backlight to the rtos image.
+Linux also logs `CPU1 RESET ERROR PC:...` with the address where core 1 was sleeping.
+
 The boot area also holds a U-Boot proper (2013.07, "halley5" board, at disk offset 0xa400).
 The normal path above never enters it.
 

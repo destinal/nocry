@@ -81,6 +81,11 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Show the two firmware slots, or with --set a|b choose the one that starts
+    Slots {
+        #[arg(long)]
+        set: Option<String>,
+    },
     /// Copy the firmware of one slot (a or b) into the other, verified. The active slot,
     /// settings and identity are not changed.
     CopySlot {
@@ -440,6 +445,16 @@ fn main() -> Result<()> {
                 println!("{n}: {m}");
             }
             println!("erased and verified {} bytes", w.bytes);
+        }
+        Cmd::Slots { set } => {
+            let s = match set {
+                Some(x) => set_active_slot(soc, Via::Auto, &x.to_ascii_lowercase(), None, None)?,
+                None => slots(soc, Via::Auto, None)?,
+            };
+            for (n, i) in [("A", &s.a), ("B", &s.b)] {
+                println!("{n}: {} {}  rtos {}  kernel {}  startable {}", i.firmware_name, i.firmware_version, i.has_rtos, i.has_kernel, i.bootable());
+            }
+            println!("active: {}", s.active.to_uppercase());
         }
         Cmd::CopySlot { from, yes } => {
             let from = from.to_ascii_lowercase();
