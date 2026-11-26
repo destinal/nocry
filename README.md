@@ -11,7 +11,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 | Platform | Package | State |
 |---|---|---|
 | Linux (x86-64) | `.AppImage` | Tested. Install `60-nocry.rules` once so a normal user can open the board (see Building). |
-| macOS (Apple silicon) | `.dmg`, drag to Applications | Tested and working. Unsigned: right-click the app and choose Open the first time. |
+| macOS (Apple silicon) | `.dmg`, drag to Applications | Tested: a full backup and a firmware install on a Nebula Pad both worked. No driver or setup needed. Unsigned: right-click the app and choose Open the first time. |
 | Windows (x64) | `-setup.exe`, installs for the current user without administrator rights | Builds, **not yet tested**. The board in USB boot mode probably needs a WinUSB driver that the installer does not provide yet. |
 
 ![The nocry window: board details and the main actions](docs/screenshots/home.png)
