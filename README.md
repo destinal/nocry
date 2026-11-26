@@ -12,7 +12,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 |---|---|---|
 | Linux (x86-64) | `.AppImage` | Tested: backup, firmware install from Creality's list, slot copy, secure erase. On first run the window offers to install the udev rule a normal user needs (one password prompt). |
 | macOS (Apple silicon) | `.dmg`, drag to Applications | Tested: a full backup and a firmware install on a Nebula Pad both worked. No driver or setup needed. Unsigned: right-click the app and choose Open the first time. |
-| Windows (x64) | `-setup.exe`, installs for the current user without administrator rights; or `-portable.zip` (after 0.1.0-alpha.2): unzip anywhere, run `nocry-gui.exe` | The app starts, but Windows needs a one-time USB driver setup before it can talk to the board. Builds after 0.1.0-alpha.2 offer it in the window ("Set up driver…", one administrator prompt); talking to a board on Windows is **not yet tested**. See "Windows driver" below. |
+| Windows (x64) | `-setup.exe`, installs for the current user without administrator rights; or `-portable.zip`: unzip anywhere, run `nocry-gui.exe` | The app starts, but Windows needs a one-time USB driver setup before it can talk to the board. The window offers it ("Set up driver…", one administrator prompt); talking to a board on Windows is **not yet tested**. See "Windows driver" below. |
 
 ![The nocry window: board details and the main actions](docs/screenshots/home.png)
 
