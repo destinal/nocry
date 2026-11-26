@@ -17,7 +17,7 @@ pub const SEVENZ_MAGIC: &[u8] = b"7z\xbc\xaf\x27\x1c";
 const SUFFIX: &str = "C3_7e_bz";
 const SALT: &[u8] = b"cxswfile";
 /// Seeds tried when the file name gives none that works.
-const KNOWN_SEEDS: &[&str] = &["F001", "F002", "F003", "F004", "F005", "CR4CU220812S10", "CR4CU220812S11", "CR4CU220812S12"];
+const KNOWN_SEEDS: &[&str] = &["NEBULA", "F001", "F002", "F003", "F004", "F005", "CR4CU220812S10", "CR4CU220812S11", "CR4CU220812S12"];
 
 pub fn is_ota(path: &Path) -> bool {
     let mut b = [0u8; 6];
@@ -104,6 +104,14 @@ pub fn seed_candidates(path: &Path) -> Vec<String> {
         let id: String = name[i..].chars().take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect();
         if id.len() >= 8 {
             v.push(id);
+        }
+    }
+    // "<SEED>_ota_img_V..." (e.g. NEBULA_ota_img_V1.1.0.30.img), also behind a "<md5>_" cache prefix
+    if let Some(i) = name.find("_ota") {
+        let head = &name[..i];
+        let seed = head.rsplit('_').next().unwrap_or(head);
+        if seed.len() >= 4 && seed.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+            v.push(seed.to_string());
         }
     }
     if let Some(d) = path.parent().and_then(|p| p.file_name()) {
@@ -225,6 +233,8 @@ mod tests {
         let s = seed_candidates(Path::new("/x/CR4CU220812S12K1/CR4CU220812S11_ota_img_V1.3.3.46.img"));
         assert_eq!(s[0], "CR4CU220812S11");
         assert!(s.contains(&"F001".to_string()));
+        let s = seed_candidates(Path::new("/dl/NEBULA_ota_img_V1.1.0.30.img"));
+        assert_eq!(s[0], "NEBULA");
         let s = seed_candidates(Path::new("update.img"));
         assert!(s.contains(&"F005".to_string()));
     }
