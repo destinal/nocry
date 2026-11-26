@@ -56,6 +56,12 @@ the screen stays dark: the stock Linux display driver is loaded with `lcd_is_ini
 leaves panel power, reset, pixel clock, controller setup and backlight to the rtos image.
 Linux also logs `CPU1 RESET ERROR PC:...` with the address where core 1 was sleeping.
 
+With display set-up added in the stock image's own order, the replacement shows a picture at
+power-on and Linux takes the display over normally. Two things found on the way: the display
+registers can only be written once the pixel clock runs (a write without it never returns),
+and Linux expects the layer-composer path the stock image uses; after the simpler
+single-buffer path the screen went black when Linux took over.
+
 The boot area also holds a U-Boot proper (2013.07, "halley5" board, at disk offset 0xa400).
 The normal path above never enters it.
 

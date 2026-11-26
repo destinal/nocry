@@ -3,17 +3,20 @@
 An open replacement for the image in a Nebula board's `rtos` partition (Creality's is a
 closed FreeRTOS program that shows the boot logo). Background: `docs/rtos-partition.md`.
 
-Status: **stage 1 works on a Nebula Pad** (2026-11-26, slot B, firmware 1.1.0.30): the
-loader accepts the image, gets its answer (`lcm_id=0` on the kernel command line) and Linux
-starts with both CPU cores. The image shows no picture, and the **screen stays dark even
-after Linux is up**: Creality's Linux loads its display driver with `lcd_is_inited`, so it
-relies on the rtos image to have powered and configured the panel and backlight. Bringing
-up the display is therefore required, not optional.
+Status: **works on a Nebula Pad** (2026-11-26, slot B, firmware 1.1.0.30). With this image in
+the rtos partition the board shows a picture at power-on, the loader gets its answer
+(`lcm_id=0`), and Creality's Linux starts, takes over the display and reaches the normal
+interface. The picture is still a placeholder (dark screen, blue border, light bar).
 
-Planned next: display and backlight setup and a boot picture, using the X2000 drivers of
-Ingenic's GPL bare-metal library [libbare-cpu](https://gitee.com/ingenic-dev/libbare-cpu)
-with the panel settings read out of the stock image (480x272 RGB panel, 60 Hz; reset on
-GPIO PB16, power enable on PC21; PWM backlight).
+What it does, in the order the stock image does it (`display.c`): opens the clock gates,
+sets the PWM and pixel clocks, switches the panel pins, programs the display controller,
+powers the 480x272 panel up, shows one frame through the layer composer, switches the
+backlight on, then hands back to the loader (`main.c`). The sequence and values were taken
+from a trace of the stock image (`tools/rtos-analysis/`), not guessed.
+
+Not done yet: a real boot picture and the model-dependent choice the stock image makes;
+other panels (480x800 boards); comparing the hardware state we hand over with the stock
+image's, register by register.
 
 Build: `tools/rtos-build/build.sh` (needs Docker) gives `tools/rtos-build/out/nocry-rtos.bin`.
 
