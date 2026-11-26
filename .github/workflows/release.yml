@@ -55,7 +55,7 @@ jobs:
         with: { name: images, path: images }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y qt6-base-dev libgl1-mesa-dev libusb-1.0-0-dev libudev-dev cmake ninja-build libfuse2 file
+          sudo apt-get install -y qt6-base-dev qt6-wayland qt6-gtk-platformtheme libgl1-mesa-dev libusb-1.0-0-dev libudev-dev cmake ninja-build libfuse2 file
       - name: Build
         run: |
           (cd host && cargo build --release)
@@ -74,6 +74,7 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
+          export EXTRA_PLATFORM_PLUGINS="libqoffscreen.so;libqwayland-generic.so;libqwayland-egl.so"
           export QMAKE=/usr/bin/qmake6 APPIMAGE_EXTRACT_AND_RUN=1 LDAI_OUTPUT=nocry-$V-x86_64.AppImage
           ./linuxdeploy-x86_64.AppImage --appdir $A --plugin qt --output appimage \
             --desktop-file $A/usr/share/applications/nocry.desktop --icon-file $A/usr/share/icons/hicolor/256x256/apps/nocry.png
