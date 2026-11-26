@@ -16,6 +16,7 @@ pub mod gpt;
 pub mod image;
 pub mod ota;
 pub mod restore;
+pub mod rtos;
 pub mod session;
 pub mod snmac;
 pub mod squashfs;

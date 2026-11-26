@@ -144,8 +144,9 @@ impl Package {
         };
         let need = |v: Option<Vec<u8>>, n: &str| v.ok_or_else(|| anyhow!("{}: missing {n}", p.display()));
         let (rtos, kernel, rootfs) = (need(rtos, "zero.bin (rtos)")?, need(kernel, "xImage")?, need(rootfs, "rootfs.squashfs")?);
-        if rtos.get(8..12) != Some(b"RTOS") {
-            bail!("zero.bin has no RTOS magic");
+        let rh = crate::rtos::RtosHeader::parse(&rtos).context("zero.bin (rtos)")?;
+        if (rtos.len() as u64) < rh.image_len() {
+            bail!("zero.bin (rtos) is cut short: {} bytes, its header says {}", rtos.len(), rh.image_len());
         }
         if kernel.get(..4) != Some(&[0x27, 0x05, 0x19, 0x56]) {
             bail!("xImage is not a uImage");

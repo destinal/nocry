@@ -673,6 +673,8 @@ pub fn install(
 pub struct SlotInfo {
     /// a kernel image is present
     pub has_kernel: bool,
+    /// the rtos partition holds an image the board's loader accepts (it hangs otherwise)
+    pub has_rtos: bool,
     /// product name of the firmware ("Ender-3 V3 KE"), "" if no readable system
     pub firmware_name: String,
     pub firmware_version: String,
@@ -680,7 +682,7 @@ pub struct SlotInfo {
 
 impl SlotInfo {
     pub fn bootable(&self) -> bool {
-        self.has_kernel && !self.firmware_version.is_empty()
+        self.has_kernel && self.has_rtos && !self.firmware_version.is_empty()
     }
 }
 
@@ -697,8 +699,11 @@ fn read_slots(t: &restore::Target) -> Result<(crate::gpt::Gpt, Slots)> {
         .context("this board has no valid partition table (blank board?); install firmware first")?;
     let ota = g.find("ota").context("no ota partition")?;
     let active = if t.read(ota.offset(), 512)?.starts_with(b"ota:kernel2") { "b" } else { "a" };
-    let slot = |kernel: &str, rootfs: &str| -> Result<SlotInfo> {
+    let slot = |rtos: &str, kernel: &str, rootfs: &str| -> Result<SlotInfo> {
         let mut s = SlotInfo::default();
+        if let Some(r) = g.find(rtos) {
+            s.has_rtos = crate::rtos::RtosHeader::parse(&t.read(r.offset(), 512)?).is_ok_and(|h| h.loaded_len() <= r.size());
+        }
         if let Some(k) = g.find(kernel) {
             s.has_kernel = t.read(k.offset(), 512)?[..4] == fastboot::UIMAGE_MAGIC.to_be_bytes();
         }
@@ -708,7 +713,7 @@ fn read_slots(t: &restore::Target) -> Result<(crate::gpt::Gpt, Slots)> {
         }
         Ok(s)
     };
-    let slots = Slots { active: active.into(), a: slot("kernel", "rootfs")?, b: slot("kernel2", "rootfs2")? };
+    let slots = Slots { active: active.into(), a: slot("rtos", "kernel", "rootfs")?, b: slot("rtos2", "kernel2", "rootfs2")? };
     Ok((g, slots))
 }
 

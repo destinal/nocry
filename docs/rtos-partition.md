@@ -1,70 +1,114 @@
-# The `rtos` partition: an early boot + instant-logo stage
+# The `rtos` partition and the board's boot chain
 
-Findings from analysing a Nebula Pad's `rtos` partition (offset `0x300000`, size
-4 MiB; a second copy lives in `rtos2` for slot B). Everything here was read from a
-backup of a retail board; no board identity is reproduced in this document.
+What runs between power-on and Linux on a Nebula Pad, worked out from a backup of a retail
+board (firmware 1.1.0.30), Ingenic's U-Boot 2013.07 source
+([k1-debian/u-boot](https://github.com/k1-debian/u-boot), `common/spl/`) and Ghidra
+decompilation of the board's own SPL and rtos image. No board identity is reproduced here.
 
-## Why it exists
+An earlier version of this document described the first 4 MiB of the disk as if it were the
+rtos partition (a wrong `dd` offset). That was wrong: the "container" it described is the
+boot area, and the "identity copy" was simply the `sn_mac` partition.
 
-`rtos` is not application firmware. It is the stage that runs **before** Linux: it
-brings up DRAM and clocks, paints the Creality splash on the panel within
-milliseconds of power-on, and then loads and starts the main Linux kernel. The RTOS
-splash and the U-Boot that boots Linux are packed together in this one partition.
+## Summary
 
-## Container format (`INGE`)
+- There is no U-Boot prompt stage in a normal start. The **SPL** (first-stage loader, in the
+  boot area at 0x4400) loads the **rtos image** onto the second CPU core, waits for it to
+  finish, then loads the Linux kernel itself and starts it.
+- The rtos image is a small **FreeRTOS** program whose only job is the boot picture: it
+  sets up the display, reads the model from `sn_mac`, shows the matching Creality logo,
+  turns the backlight on and reports the panel type back to the SPL.
+- A slot whose rtos partition has no valid header makes the SPL **hang** before Linux.
+  nocry therefore treats a slot as startable only if its rtos header parses
+  (`host/core/src/rtos.rs`).
 
-The partition is an Ingenic `INGE` container (magic `"INGE"`, `0x45474e49` LE at
-offset 0). It holds two payloads plus a copy of the identity record:
+## Boot chain
 
-| Region | File offset | Size | Contents |
+| Step | Who | What |
+|---|---|---|
+| 1 | bootrom | loads the SPL from eMMC offset 0x4400 (`MSPL` header, DDR parameters at +0x100 with the tag `INGE`, code at +0x800) |
+| 2 | SPL | runs from 0x82401000 (data through the 0xb2401000 alias); sets up clocks, DDR, eMMC |
+| 3 | SPL | reads the first sector of `ota`; `ota:kernel2` selects `rtos2`/`kernel2`/`rootfs2`, anything else the first set |
+| 4 | SPL | reads the rtos header, checks it, loads the image to `img_start`, loads the whole `sn_mac` partition to the top of the rtos heap |
+| 5 | SPL | releases CPU core 1 into the rtos (`CCU_RER` = trampoline, `CCU_CSRR` = 0) and waits |
+| 6 | rtos, core 1 | display up, logo decoded and shown, backlight on; writes the panel id to the shared word; sets its own first word to 1 |
+| 7 | SPL | sees the first word change, takes the panel id, waits for core 1 to sleep and resets it |
+| 8 | SPL | loads the uImage from `kernel` or `kernel2` and starts Linux with the command line below |
+
+The SPL finds partitions in a **table compiled into it**, not in the GPT on the disk. On
+this board it is identical to the GPT (xboot 0, ota 0x100000, sn_mac 0x200000, rtos
+0x300000, rtos2 0x700000, kernel 0xb00000, kernel2 0x1300000, rootfs 0x1b00000, rootfs2
+0x20f00000, rootfs_data 0x40300000, userdata 0x52f00000). Changing the GPT does not move
+what the SPL loads.
+
+Kernel command line as built by the SPL (the bracketed placeholders in the binary are filled
+in at run time):
+
+```
+console=ttyS4,115200n8 mem=<min(RAM,256)>M@0x0 [mem=<rest>M@0x30000000] lcm_id=<n> init=/linuxrc root=/dev/mmcblk0p7 rootwait rootfstype=squashfs ro
+```
+
+`root=/dev/mmcblk0p8` for slot B. `lcm_id` is the value the rtos reported. No memory stays
+reserved for the rtos; it is finished before Linux starts.
+
+The boot area also holds a U-Boot proper (2013.07, "halley5" board, at disk offset 0xa400).
+The normal path above never enters it.
+
+## rtos image header
+
+`struct rtos_header` in `common/spl/spl_rtos.h`; all words little-endian.
+
+| Offset | Field | Retail 1.1.0.30 | Meaning |
 |---|---|---|---|
-| Outer `INGE` header + load map | `0x0000` | 4 KiB | entry records, each 16 bytes; load markers at `0x10000000` |
-| Payload A | `0x4000` | ~192 KiB | U-Boot (a nested `INGE` at `0x4500`) |
-| Identity record | `0x200000` | 4 KiB | `sn_mac` string, duplicated here so early boot can read identity even if `sn_mac` is damaged |
-| Payload B | `0x300000` | ~416 KiB | the FreeRTOS splash image |
+| 0x00 | `code[2]` | `0x10000008`, 0 | MIPS branch over the header, and its delay slot |
+| 0x08 | `tag` | `0x534f5452` (`"RTOS"`) | checked by the SPL; `0x52544f53` on secure-boot boards (signed image) |
+| 0x0c | `version` | 1 | bit 0: SPL waits for the image to change its first word, then parks core 1 |
+| 0x10 | `img_start` | `0x86000000` | load and entry address |
+| 0x14 | `img_end` | `0x86067948` | `img_end - img_start` bytes are loaded, rounded up to sectors |
+| 0x18 | `heap_start` | `0x86070400` | |
+| 0x1c | `heap_end` | `0x86fa1200` | `sn_mac` is loaded to `heap_end - partition size` |
+| 0x20 | `mapped_rtosdata_size` | `0x86070400` | address of a word: SPL writes the `sn_mac` size there, the rtos writes the panel id back |
 
-The outer header's 16-byte entry records are not fully decoded; the load address
-`0x10000000` and the per-entry sizes are legible, the remaining fields are not yet
-confirmed. Payload B begins with its own small header: `[entry=0x10000008][0]["RTOS"][version=1]`.
+SPL checks: `tag` must match, `img_start < img_end`. Either failure prints
+`rtos bad tag` / `rtos bad off` on the serial console and hangs. A failed `sn_mac` read is
+only reported.
 
-## Payload A — U-Boot 2013.07 (the "quasi-bootloader")
+The image is the raw program, header included, so "rebuilding" an rtos partition is writing
+the firmware's `zero.bin` at the start of the partition; there is no checksum or container.
 
-- Ingenic "halley5" board port for the XBurst2 **X2000-V12** SoC, built Oct 2023.
-- Does DRAM bring-up itself (Innophy DDR PHY calibration; DDR2/DDR3/LPDDR/LPDDR2/LPDDR3),
-  so this is the combined SPL + U-Boot, not a thin loader.
-- Full U-Boot command set and a network stack (`md`, `mw`, `crc32`, `mmc`, `dhcp`,
-  `env import/export`, `bootm`).
-- Loads and launches payload B: strings `rtos not found: rtos`, `rtos bad tag: %x`,
-  `rtos bad off: %lx %lx`, `read rtos image err`.
-- Boots Linux with per-slot bootargs:
-  `console=ttyS4,115200n8 … init=/linuxrc root=/dev/mmcblk0p7 rootwait rootfstype=squashfs ro`
-  for slot A, and `…/dev/mmcblk0p8…` for slot B, chosen from `Current Version: V1 / V2`
-  (the same A/B choice nocry writes into the `ota` partition as `ota:kernel` / `ota:kernel2`).
+## What the rtos image is made of
 
-## Payload B — the FreeRTOS splash
+MIPS32 little-endian, `mips-linux-gnu-gcc 7.2.0` (Ingenic Release 5.1.0), newlib. Source
+paths left in the binary:
 
-MIPS32 little-endian, built with `mips-linux-gnu-gcc 7.2.0` (Ingenic Release 5.1.0,
-xburst2 fp64), newlib C library. Source paths left in the image show what it is built from:
+- **FreeRTOS** kernel (`os/freertos/tasks.c`, `queue.c`, ...) with Ingenic's thread, mutex
+  and wait-queue wrappers.
+- **RT-Thread DFS** file-system layer (`filesystem/dfs*.c`), used for a RAM disk holding
+  the `sn_mac` data.
+- Ingenic's XBurst2 / X2000 drivers: clocks, GPIO, DMA, PWM, UART, display controller
+  (`lcdc.c`, DPU), MIPI-DSI, a 480x272 panel driver, PWM backlight.
+- **IJG libjpeg** for the logos.
 
-- **FreeRTOS** kernel: `os/freertos/{tasks,queue,semaphore,thread,...}.c`; the symbol
-  `eTaskConfirmSleepModeStatus` is FreeRTOS tickless-idle. A small POSIX-like wrapper
-  (`thread_cond_and_mutex.c`, `wait_queue.c`, `thread_waiter.c`) sits on top.
-- **RT-Thread DFS** virtual filesystem (`filesystem/dfs*.c`) reused on top of FreeRTOS.
-- **Ingenic XBurst2 / X2000 BSP**: `xburst2/{cache,cpu,irq}.c`,
-  `xburst2/soc-x2000/{clk,dma,gpio,lcdc,mipi_dsi,pwm,uart}.c`.
-- **IJG libjpeg** decoder, and a **DPU → MIPI-DSI → panel** display pipeline with a
-  PWM backlight driver. Panels seen: 480×272 and 480×800, portrait and landscape.
+## Logo choice depends on the model in `sn_mac`
 
-What it does at runtime: threads named `boot logo thread`, `console thread` and
-`enbale_fb_thread` (sic) bring up the framebuffer and decode one of **8 embedded JPEG
-logos** (`creality_{portrait,landscape}_rot{0,180,270}_{480x272,480x800}`, SOI markers
-from `0x3f064`) for the panel's resolution and rotation, then display it. No touch
-input, rpmsg or inter-core mailbox strings are present, so it does not talk to Linux;
-it simply runs first and hands the lit panel over for a seamless logo through to the UI.
+The rtos splits the `sn_mac` record at `;` (serial; MAC; model) and compares the model
+string with a list built into the image. Retail 1.1.0.30:
 
-## How this was found
+| Model field | Picture |
+|---|---|
+| `CR-10 H1` | Creality, 480x800 |
+| `CR-K1`, `CR-K1 Max` | Creality, 480x800, rotated |
+| `Nebula Pad` | Creality, 480x272 |
+| anything else, or unreadable `sn_mac` | a 658x411 stock photo of a mountain at night (Ingenic's sample picture) |
 
-`dd` the partition out of a full backup; `strings` for source paths, the toolchain
-banner and symbols; a Capstone coverage sweep to confirm MIPS32 little-endian (100% of
-payload B decodes as MIPS32 LE, ~3% as big-endian or microMIPS); JPEG SOI scan for the
-logos. Scripts and carved payloads are kept out of the repo (under `~/nocry-work/`).
+The Ender-3 V3 KE 1.1.0.12 image has the same list plus `F003` and `F005`. Consequence for
+nocry: the model field and the installed firmware's rtos image must agree, or the board
+shows the mountain picture during start. It still starts; only the boot picture is wrong.
+Each image carries 8 JPEGs; not all are used by a given build.
+
+## Method
+
+`dd` the partition from a full backup; `strings` for source paths and the toolchain banner;
+Ghidra 12.2 headless (SPL: first 0x6000 bytes from disk offset 0x4400, base 0x82401000 with
+a byte-mapped alias at 0xb2401000; rtos: base 0x86000000); JPEG markers for the pictures.
+The extracted files hold the board's serial number and MAC address and are kept outside the
+repository.
