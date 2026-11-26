@@ -1,0 +1,262 @@
+diff --color -ruN '--exclude=.git' a/board/ingenic/burner_x2000/board.c b/board/ingenic/burner_x2000/board.c
+--- a/board/ingenic/burner_x2000/board.c	2026-11-25 02:18:52.322713971 -0700
++++ b/board/ingenic/burner_x2000/board.c	2026-11-25 02:21:17.412146570 -0700
+@@ -29,6 +29,10 @@
+ #include <asm/arch/mmc.h>
+ #include <asm/jz_uart.h>
+ #include <asm/arch/clk.h>
++#ifdef CONFIG_CMD_USB_MASS_STORAGE
++#include <mmc.h>
++#include <usb_mass_storage.h>
++#endif
+ 
+ #ifndef CONFIG_SPL_BUILD
+ DECLARE_GLOBAL_DATA_PTR;
+@@ -36,10 +40,12 @@
+ extern struct jz_uart *uart;
+ #endif
+ 
++#ifndef CONFIG_NOCRY_UMS	/* nocry ums builds no NAND support */
+ void board_nand_init(void)
+ {
+ 	    return 0;
+ }
++#endif
+ 
+ int board_early_init_f(void)
+ {
+@@ -86,6 +92,14 @@
+ /* U-Boot common routines */
+ int checkboard(void)
+ {
++#ifdef CONFIG_NOCRY_UMS
++#ifdef CONFIG_NOCRY_UMS_RO
++	puts("Board: nocry-ums-ro (Ingenic XBurst2 X2000 SoC)\n");
++#else
++	puts("Board: nocry-ums (Ingenic XBurst2 X2000 SoC)\n");
++#endif
++	return 0;
++#endif
+ 	puts("Board: burner_x2000 (Ingenic XBurst X2000 SoC)\n");
+ 	return 0;
+ }
+@@ -97,3 +111,65 @@
+ }
+ 
+ #endif /* CONFIG_SPL_BUILD */
++
++#ifdef CONFIG_CMD_USB_MASS_STORAGE
++/* nocry: expose the whole MSC0 user area as one LUN. */
++static int ums_read_sector(struct ums_device *ums_dev,
++			   ulong start, lbaint_t blkcnt, void *buf)
++{
++	if (ums_dev->mmc->block_dev.block_read(ums_dev->dev_num,
++			start + ums_dev->offset, blkcnt, buf) != blkcnt)
++		return -1;
++	return 0;
++}
++
++static int ums_write_sector(struct ums_device *ums_dev,
++			    ulong start, lbaint_t blkcnt, const void *buf)
++{
++#ifdef CONFIG_NOCRY_UMS_RO
++	return -1;	/* belt and braces: LUN is also reported write-protected */
++#else
++	if (ums_dev->mmc->block_dev.block_write(ums_dev->dev_num,
++			start + ums_dev->offset, blkcnt, buf) != blkcnt)
++		return -1;
++	return 0;
++#endif
++}
++
++static void ums_get_capacity(struct ums_device *ums_dev,
++			     long long int *capacity)
++{
++	long long int tmp = (long long int)(ums_dev->offset + ums_dev->part_size)
++				* SECTOR_SIZE;
++	*capacity = ums_dev->mmc->capacity - tmp;
++}
++
++static struct ums_board_info ums_board = {
++	.read_sector	= ums_read_sector,
++	.write_sector	= ums_write_sector,
++	.get_capacity	= ums_get_capacity,
++	.name		= "nocry eMMC",
++};
++
++struct ums_board_info *board_ums_init(unsigned int dev_num, unsigned int offset,
++				      unsigned int part_size)
++{
++	struct mmc *mmc = find_mmc_device(dev_num);
++
++	if (!mmc || mmc_init(mmc))
++		return NULL;
++
++	printf("ums: mmc%u capacity %llu bytes%s\n", dev_num, mmc->capacity,
++#ifdef CONFIG_NOCRY_UMS_RO
++	       " (read-only)"
++#else
++	       ""
++#endif
++	       );
++	ums_board.ums_dev.mmc = mmc;
++	ums_board.ums_dev.dev_num = dev_num;
++	ums_board.ums_dev.offset = offset;
++	ums_board.ums_dev.part_size = part_size;
++	return &ums_board;
++}
++#endif /* CONFIG_CMD_USB_MASS_STORAGE */
+diff --color -ruN '--exclude=.git' a/boards.cfg b/boards.cfg
+--- a/boards.cfg	2026-11-25 02:18:52.343841794 -0700
++++ b/boards.cfg	2026-11-25 02:19:17.853609943 -0700
+@@ -612,6 +612,8 @@
+ seal_uImage_sfc_nand	          mips        xburst2     seal                ingenic	     x2000	    seal:SPL_SFC_NAND,MTD_SFCNAND
+ seal_uImage_sfc_nor	              mips        xburst2     seal                ingenic        x2000	    seal:SPL_SFC_NOR,ENV_IS_IN_SFC,MTD_SFCNOR
+ burner_x2000_lpddr2	              mips        xburst2     burner_x2000        ingenic        x2000	    burner_x2000:JZ_MMC_MSC0,CMD_BURN,CMD_SFC_NOR,MTD_SFCNAND
++nocry_ums_x2000	              mips        xburst2     burner_x2000        ingenic        x2000	    burner_x2000:JZ_MMC_MSC0,NOCRY_UMS
++nocry_ums_ro_x2000	              mips        xburst2     burner_x2000        ingenic        x2000	    burner_x2000:JZ_MMC_MSC0,NOCRY_UMS,NOCRY_UMS_RO
+ ########################################################################################################################
+ sudomaker-internal-clone-de-cle_uImage_sfc_nor       mips        xburst      sudomaker-internal-clone-de-cle	      ingenic        x1000      sudomaker-internal-clone-de-cle:SPL_SFC_NOR,ENV_IS_IN_SFC,MTD_SFCNOR
+ ########################################################################################################################
+diff --color -ruN '--exclude=.git' a/drivers/usb/gadget/f_mass_storage.c b/drivers/usb/gadget/f_mass_storage.c
+--- a/drivers/usb/gadget/f_mass_storage.c	2026-11-25 02:18:52.377572785 -0700
++++ b/drivers/usb/gadget/f_mass_storage.c	2026-11-25 02:21:50.310097104 -0700
+@@ -311,6 +311,7 @@
+ struct kref {int x; };
+ struct completion {int x; };
+ 
++#ifndef CONFIG_MIPS	/* MIPS asm/bitops.h already provides these */
+ inline void set_bit(int nr, volatile void *addr)
+ {
+ 	int	mask;
+@@ -330,6 +331,8 @@
+ 	mask = 1 << (nr & 0x1f);
+ 	*a &= ~mask;
+ }
++#endif
++
+ 
+ struct fsg_dev;
+ struct fsg_common;
+@@ -2620,6 +2623,10 @@
+  * with identifiers (for interfaces, strings, endpoints, and more)
+  * as needed by a given function instance.
+  */
++#ifdef CONFIG_MIPS	/* Ingenic config.c already provides it */
++extern struct usb_descriptor_header **
++usb_copy_descriptors(struct usb_descriptor_header **src);
++#else
+ struct usb_descriptor_header **
+ usb_copy_descriptors(struct usb_descriptor_header **src)
+ {
+@@ -2656,6 +2663,8 @@
+ 
+ 	return ret;
+ }
++#endif
++
+ 
+ 
+ 
+diff --color -ruN '--exclude=.git' a/drivers/usb/gadget/g_dnl.c b/drivers/usb/gadget/g_dnl.c
+--- a/drivers/usb/gadget/g_dnl.c	2026-11-25 02:18:52.377572785 -0700
++++ b/drivers/usb/gadget/g_dnl.c	2026-11-25 02:22:11.154103088 -0700
+@@ -103,10 +103,16 @@
+ 	      __func__, c, c->cdev);
+ 
+ 	printf("GADGET DRIVER: %s\n", s);
+-	if (!strcmp(s, "usb_dnl_dfu"))
++	if (0)
++		;
++#ifdef CONFIG_DFU_FUNCTION
++	else if (!strcmp(s, "usb_dnl_dfu"))
+ 		ret = dfu_add(c);
++#endif
++#ifdef CONFIG_USB_GADGET_MASS_STORAGE
+ 	else if (!strcmp(s, "usb_dnl_ums"))
+ 		ret = fsg_add(c);
++#endif
+ 
+ 	return ret;
+ }
+diff --color -ruN '--exclude=.git' a/drivers/usb/gadget/jz47xx_dwc2_udc.c b/drivers/usb/gadget/jz47xx_dwc2_udc.c
+--- a/drivers/usb/gadget/jz47xx_dwc2_udc.c	2026-11-25 02:18:52.377572785 -0700
++++ b/drivers/usb/gadget/jz47xx_dwc2_udc.c	2026-11-25 02:20:37.473179107 -0700
+@@ -185,7 +185,14 @@
+ 
+ static int dwc_udc_init(struct dwc2_udc *dev)
+ {
+-#ifndef CONFIG_BURNER
++/* nocry ums keeps CONFIG_BURNER for the SPL->stage2 param handover, but needs a full UDC re-init */
++#if !defined(CONFIG_BURNER) || defined(CONFIG_NOCRY_UMS)
++#ifdef CONFIG_NOCRY_UMS
++	/* The bootrom left us enumerated as a108:eaef. Drop off the bus long
++	 * enough for the host to notice, so it re-enumerates the new gadget. */
++	udc_set_reg(0, DCTL_SOFT_DISCONN, OTG_DCTL);
++	mdelay(500);
++#endif
+ 
+ 	otg_phy_init(DEVICE_ONLY_MODE,CONFIG_SYS_EXTAL);
+ 
+@@ -196,6 +203,10 @@
+ 	dwc_fifo_allocate();
+ 
+ 	dwc_otg_device_init();
++#ifdef CONFIG_NOCRY_UMS
++	/* g_dnl's bind() asked for pull-up before this core reset; redo it. */
++	udc_set_reg(DCTL_SOFT_DISCONN, 0, OTG_DCTL);
++#endif
+ #else
+ 	int i = 0;
+ 
+diff --color -ruN '--exclude=.git' a/drivers/usb/gadget/storage_common.c b/drivers/usb/gadget/storage_common.c
+--- a/drivers/usb/gadget/storage_common.c	2026-11-25 02:18:52.378456667 -0700
++++ b/drivers/usb/gadget/storage_common.c	2026-11-25 02:19:17.853937068 -0700
+@@ -592,6 +592,9 @@
+ 
+ 	/* R/W if we can, R/O if we must */
+ 	ro = curlun->initially_ro;
++#ifdef CONFIG_NOCRY_UMS_RO
++	ro = 1;
++#endif
+ 
+ 	ums_info->get_capacity(&(ums_info->ums_dev), &size);
+ 	if (size < 0) {
+diff --color -ruN '--exclude=.git' a/include/configs/burner_x2000.h b/include/configs/burner_x2000.h
+--- a/include/configs/burner_x2000.h	2026-11-25 02:18:52.397456327 -0700
++++ b/include/configs/burner_x2000.h	2026-11-25 02:20:37.473299111 -0700
+@@ -240,6 +240,34 @@
+ #define CONFIG_BURNER_PRIDUCT_INFO      "Ingenic USB BOOT DEVICE"
+ #endif  /* !CONFIG_CMD_BURN */
+ 
++/*
++ * nocry: RAM-loaded stage2 that exports eMMC (MSC0, user area) as a USB
++ * mass-storage device. Loaded by the bootrom after the SPL, exactly like
++ * the burner. NOCRY_UMS_RO additionally reports the disk write-protected
++ * and refuses writes.
++ */
++#ifdef CONFIG_NOCRY_UMS
++#ifdef CONFIG_CMD_BURN
++#error "NOCRY_UMS and CMD_BURN are mutually exclusive"
++#endif
++#undef CONFIG_BOOTCOMMAND
++#define CONFIG_BOOTCOMMAND		"ums 0"
++/* CONFIG_BURNER here means: take DDR/clock/UART params from the SPL header
++ * at runtime (param_manage.c). It does not enable the cloner protocol. */
++#define CONFIG_BURNER
++#define CONFIG_USB_GADGET
++#define CONFIG_USB_GADGET_DUALSPEED
++#define CONFIG_USB_JZ_DWC2_UDC_V1_1
++#define CONFIG_USBDOWNLOAD_GADGET
++#define CONFIG_CMD_USB_MASS_STORAGE
++#define CONFIG_USB_GADGET_MASS_STORAGE
++#define CONFIG_USB_GADGET_VBUS_DRAW	500
++/* pid.codes test VID/PID; replace with an allocated pid.codes PID before release */
++#define CONFIG_G_DNL_VENDOR_NUM		0x1209
++#define CONFIG_G_DNL_PRODUCT_NUM	0x0001
++#define CONFIG_G_DNL_MANUFACTURER	"nocry"
++#endif /* CONFIG_NOCRY_UMS */
++
+ /* GPIO */
+ #define CONFIG_JZ_GPIO
+ #define CONFIG_INGENIC_SOFT_I2C

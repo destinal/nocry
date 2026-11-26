@@ -1,0 +1,185 @@
+diff --git a/arch/mips/xburst2/soc-x2000/Kconfig.DT b/arch/mips/xburst2/soc-x2000/Kconfig.DT
+index 5f1144644..be8939f4a 100644
+--- a/arch/mips/xburst2/soc-x2000/Kconfig.DT
++++ b/arch/mips/xburst2/soc-x2000/Kconfig.DT
+@@ -11,6 +11,9 @@ config DT_HALLEY5_V30
+ config DT_CREALITY_K1
+        bool "x2000 Creality K1"
+ 
++config DT_NOCRY_NEBULA
++       bool "x2000 Creality Nebula (nocry recovery)"
++
+ config DT_ZEBRA
+        bool "x2000 zebra"
+ 
+diff --git a/drivers/tty/serial/Makefile b/drivers/tty/serial/Makefile
+index 138abbc89..84eb30311 100644
+--- a/drivers/tty/serial/Makefile
++++ b/drivers/tty/serial/Makefile
+@@ -7,6 +7,7 @@ obj-$(CONFIG_SERIAL_CORE) += serial_base.o
+ serial_base-y := serial_core.o serial_base_bus.o serial_ctrl.o serial_port.o
+ 
+ obj-$(CONFIG_SERIAL_EARLYCON) += earlycon.o
++obj-$(CONFIG_SERIAL_EARLYCON) += earlycon-nocrymem.o
+ obj-$(CONFIG_SERIAL_EARLYCON_SEMIHOST) += earlycon-semihost.o
+ obj-$(CONFIG_SERIAL_EARLYCON_RISCV_SBI) += earlycon-riscv-sbi.o
+ 
+diff --git a/drivers/tty/serial/earlycon-nocrymem.c b/drivers/tty/serial/earlycon-nocrymem.c
+new file mode 100644
+index 000000000..0841d3963
+--- /dev/null
++++ b/drivers/tty/serial/earlycon-nocrymem.c
+@@ -0,0 +1,51 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * nocry memory console: "earlycon=nocrymem[,<phys>]" (default 0x0e800000).
++ * Every kernel message goes through the uncached KSEG1 window into a 1 MiB ring,
++ * so it is already in DDR when the board is reset (boards without a UART).
++ * The nocry fastboot stage2 prints it with `fastboot oem dmesg`.
++ * Layout: u32 magic "CMEM", u32 total bytes written, u32 ring size, u32 0, ring.
++ * Keep it out of the kernel's memory: mem= must end at or below <phys>.
++ */
++#include <linux/console.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/serial_core.h>
++#include <asm/addrspace.h>
++
++#define MEMCON_DEFAULT	0x0e800000
++#define MEMCON_SIZE	(1 << 20)
++#define MEMCON_MAGIC	0x4d454d43	/* "CMEM" */
++
++static volatile u32 *memcon_hdr;
++static volatile char *memcon_ring;
++static u32 memcon_cap;
++
++static void memcon_write(struct console *con, const char *s, unsigned int n)
++{
++	u32 pos = memcon_hdr[1];
++
++	while (n--)
++		memcon_ring[pos++ % memcon_cap] = *s++;
++	memcon_hdr[1] = pos;
++}
++
++static int __init memcon_setup(struct earlycon_device *dev, const char *opt)
++{
++	phys_addr_t base = MEMCON_DEFAULT;
++
++	if (dev->port.mapbase)
++		base = dev->port.mapbase;
++	else if (opt && *opt)
++		base = simple_strtoul(opt, NULL, 0);
++	memcon_hdr = (volatile u32 *)CKSEG1ADDR(base);
++	memcon_ring = (volatile char *)(memcon_hdr + 4);
++	memcon_cap = MEMCON_SIZE - 16;
++	memcon_hdr[0] = MEMCON_MAGIC;
++	memcon_hdr[1] = 0;
++	memcon_hdr[2] = memcon_cap;
++	memcon_hdr[3] = 0;
++	dev->con->write = memcon_write;
++	return 0;
++}
++EARLYCON_DECLARE(nocrymem, memcon_setup);
+diff --git a/module_drivers/dts/Makefile b/module_drivers/dts/Makefile
+index 036492a73..5cd1f77dd 100644
+--- a/module_drivers/dts/Makefile
++++ b/module_drivers/dts/Makefile
+@@ -7,6 +7,7 @@ dtb-$(CONFIG_DT_HALLEY5_V30)		+= x2000/halley5_v30.dtb
+ dtb-$(CONFIG_DT_ZEBRA)			+= x2000/zebra.dtb
+ dtb-$(CONFIG_DT_KALE_V10)		+= x2000/kale_v10.dtb
+ dtb-$(CONFIG_DT_CREALITY_K1)		+= x2000/creality_k1.dtb
++dtb-$(CONFIG_DT_NOCRY_NEBULA)		+= x2000/nocry_nebula.dtb
+ dtb-$(CONFIG_DT_HIPPO_V12)		+= x2500/hippo_v12.dtb
+ 
+ 
+diff --git a/module_drivers/dts/x2000/nocry_nebula.dts b/module_drivers/dts/x2000/nocry_nebula.dts
+new file mode 100644
+index 000000000..571f91aa1
+--- /dev/null
++++ b/module_drivers/dts/x2000/nocry_nebula.dts
+@@ -0,0 +1,84 @@
++/dts-v1/;
++/*
++ * nocry recovery: minimal device tree for Creality "Nebula" X2000E boards
++ * (retail Nebula Pad, Ender-3 V3 KE / CR-10 SE / Ender-5 Max pads).
++ * Pins and eMMC settings come from the stock Nebula 4.4 kernel's built-in DTB.
++ * Only what recovery needs: UART2 console, eMMC (MSC0, 8-bit), USB device mode.
++ * The eFuse block and the watchdog are disabled on purpose.
++ */
++#include "x2000.dtsi"
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <generated/autoconf.h>
++
++/ {
++	model = "nocry recovery (Creality Nebula, Ingenic X2000E)";
++	compatible = "ingenic,nocry-nebula", "ingenic,x2000";
++
++	aliases {
++		serial2 = &uart2;
++	};
++
++	chosen {
++		/*
++		 * The burner U-Boot passes no mem=; extra args from `fastboot boot --cmdline` are appended.
++		 * 0x0e800000-0x0e8fffff: nocrymem log ring (outside mem=), read by `fastboot oem dmesg`.
++		 * panic=0: hang instead of rebooting (a reboot would boot the stock firmware over the log).
++		 * The XBurst2 FPU is NaN-2008 only: the userland must be built NaN-2008 (it is, see
++		 * buildroot.defconfig); a legacy-NaN userland would need ieee754=relaxed here.
++		 */
++		bootargs = "console=ttyS2,115200n8 mem=232M@0x0 earlycon=nocrymem keep_bootcon ignore_loglevel panic=0 rdinit=/init";
++	};
++
++	refclk: refclk@0 {
++		#clock-cells = <0>;
++		compatible = "fixed-clock";
++		clock-frequency = <24000000>;
++	};
++};
++
++&uart0 { status = "disabled"; };
++&uart2 {
++	compatible = "ingenic,x1000-uart";
++	status = "okay";
++	pinctrl-names = "default";
++	pinctrl-0 = <&uart2_pd>;
++	clocks = <&refclk>, <&clock CLK_GATE_UART2>;
++	clock-names = "baud", "module";
++};
++
++&pdma { status = "okay"; };
++
++&msc0 {
++	status = "okay";
++	pinctrl-names = "default";
++	pinctrl-0 = <&msc0_8bit>;
++	mmc-hs200-1_8v;
++	cap-mmc-highspeed;
++	non-removable;
++	max-frequency = <100000000>;
++	bus-width = <8>;
++	voltage-ranges = <1800 3300>;
++};
++
++&otg {
++	status = "okay";
++	dr_mode = "peripheral";
++};
++&otg_phy { status = "okay"; };
++
++/*
++ * No watchdog: if recovery fails it must stay in RAM (hung), not reset into the stock
++ * firmware, which overwrites all of DDR including the nocrymem log.
++ */
++&watchdog { status = "disabled"; };
++
++/* not needed for recovery */
++&efuse { status = "disabled"; };
++&i2c3 { status = "disabled"; };
++&i2c4 { status = "disabled"; };
++&icodec { status = "disabled"; };
++&rotate { status = "disabled"; };
++&felix { status = "disabled"; };
++&helix { status = "disabled"; };
++&mscaler0 { status = "disabled"; };
++&mscaler1 { status = "disabled"; };

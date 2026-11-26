@@ -1,0 +1,12 @@
+[workspace]
+members = ["core", "cli", "ffi"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+
+[profile.release]
+lto = true
+strip = true

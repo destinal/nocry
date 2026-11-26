@@ -1,0 +1,1347 @@
+diff --color -ruN '--exclude=.git' base01/board/ingenic/burner_x2000/board.c fb/board/ingenic/burner_x2000/board.c
+--- a/board/ingenic/burner_x2000/board.c	2026-11-25 16:16:19.494815220 -0700
++++ b/board/ingenic/burner_x2000/board.c	2026-11-25 16:14:12.707316190 -0700
+@@ -72,6 +72,9 @@
+ 
+ int checkboard(void)
+ {
++#ifdef CONFIG_NOCRY_FB
++	puts("Board: nocry-fastboot (Ingenic XBurst2 X2000-V12)\n");
++#endif
+ #ifdef CONFIG_NOCRY_UMS
+ #ifdef CONFIG_NOCRY_UMS_RO
+ 	puts("Board: nocry-ums-ro (Ingenic XBurst2 X2000-V12)\n");
+diff --color -ruN '--exclude=.git' base01/boards.cfg fb/boards.cfg
+--- a/boards.cfg	2026-11-25 16:16:19.495056691 -0700
++++ b/boards.cfg	2026-11-25 16:14:12.706663291 -0700
+@@ -1731,6 +1731,7 @@
+ nocry_spl_x2000_v12          mips        xburst2     burner_x2000        ingenic        x2000_v12   burner_x2000_v12:NOCRY_SPL
+ nocry_ums_x2000_v12          mips        xburst2     burner_x2000        ingenic        x2000_v12   burner_x2000_v12:NOCRY_UMS
+ nocry_ums_ro_x2000_v12       mips        xburst2     burner_x2000        ingenic        x2000_v12   burner_x2000_v12:NOCRY_UMS,NOCRY_UMS_RO
++nocry_fb_x2000_v12           mips        xburst2     burner_x2000        ingenic        x2000_v12   burner_x2000_v12:NOCRY_FB
+ # X2100L
+ burner_x2100                 mips        xburst2     burner_x2100        ingenic        x2100       burner_x2100
+ 
+diff --color -ruN '--exclude=.git' base01/drivers/usb/gadget/f_nocry_fb.c fb/drivers/usb/gadget/f_nocry_fb.c
+--- a/drivers/usb/gadget/f_nocry_fb.c	1969-12-31 17:00:00.000000000 -0700
++++ b/drivers/usb/gadget/f_nocry_fb.c	2026-11-25 17:01:11.075859834 -0700
+@@ -0,0 +1,1125 @@
++/*
++ * nocry fastboot: a RAM-loaded stage2 that speaks the Android fastboot
++ * protocol for the eMMC (MSC0 user area) of Ingenic X2000(E) boards.
++ *
++ * Works with the stock `fastboot` client. Partitions are looked up in the
++ * on-disk GPT on every command; extra names:
++ *   mmc0        whole user area                       (critical)
++ *   gpt         LBA 0-33: PMBR + primary GPT          (critical)
++ *   bootloader  LBA 34 .. first partition (SPL+U-Boot) (critical)
++ *   sn_mac      the identity record                   (critical)
++ *   kernel_a/_b, rootfs_a/_b, rtos_a/_b -> Creality's kernel/kernel2, ...
++ * Critical regions need `fastboot flashing unlock_critical` (RAM-only state).
++ *
++ * Every write is read back and compared. No eFuse code is linked in.
++ *
++ * SPDX-License-Identifier: GPL-2.0+
++ */
++#include <config.h>
++#include <common.h>
++#include <command.h>
++#include <malloc.h>
++#include <errno.h>
++#include <mmc.h>
++#include <u-boot/crc.h>
++#include <asm/unaligned.h>
++#include <linux/usb/ch9.h>
++#include <linux/usb/gadget.h>
++#include <linux/usb/composite.h>
++#include <usb/lin_gadget_compat.h>
++#include <g_dnl.h>
++#include "../../mmc/mmc_private.h"
++
++#define FB_VERSION		"0.4"
++#define FB_BUF			((u8 *)0x84000000)	/* download / fetch buffer */
++#define FB_BUF_SIZE		0x0a000000		/* 160 MiB (board has 256 MiB) */
++#define FB_VBUF			((u8 *)0x8e000000)	/* 1 MiB read-back buffer */
++#define FB_ZBUF			((u8 *)0x8e100000)	/* 1 MiB zero/fill buffer */
++#define FB_CHUNK		(1 << 20)
++#define FB_CHUNK_BLK		(FB_CHUNK / 512)
++#define FB_CMD_MAX		4096
++#define FB_RESP_MAX		256
++#define FB_MAX_PARTS		128
++
++extern char g_dnl_serial[];
++
++static void strlcpy(char *d, const char *s, size_t n)	/* not in this tree */
++{
++	if (!n)
++		return;
++	strncpy(d, s, n - 1);
++	d[n - 1] = 0;
++}
++
++/* ------------------------------------------------------------------ USB -- */
++
++static struct usb_interface_descriptor fb_intf = {
++	.bLength		= sizeof(fb_intf),
++	.bDescriptorType	= USB_DT_INTERFACE,
++	.bNumEndpoints		= 2,
++	.bInterfaceClass	= USB_CLASS_VENDOR_SPEC,
++	.bInterfaceSubClass	= 0x42,
++	.bInterfaceProtocol	= 0x03,
++};
++static struct usb_endpoint_descriptor fb_fs_in = {
++	.bLength = USB_DT_ENDPOINT_SIZE, .bDescriptorType = USB_DT_ENDPOINT,
++	.bEndpointAddress = USB_DIR_IN, .bmAttributes = USB_ENDPOINT_XFER_BULK,
++	.wMaxPacketSize = __constant_cpu_to_le16(64),
++};
++static struct usb_endpoint_descriptor fb_fs_out = {
++	.bLength = USB_DT_ENDPOINT_SIZE, .bDescriptorType = USB_DT_ENDPOINT,
++	.bEndpointAddress = USB_DIR_OUT, .bmAttributes = USB_ENDPOINT_XFER_BULK,
++	.wMaxPacketSize = __constant_cpu_to_le16(64),
++};
++static struct usb_endpoint_descriptor fb_hs_in = {
++	.bLength = USB_DT_ENDPOINT_SIZE, .bDescriptorType = USB_DT_ENDPOINT,
++	.bEndpointAddress = USB_DIR_IN, .bmAttributes = USB_ENDPOINT_XFER_BULK,
++	.wMaxPacketSize = __constant_cpu_to_le16(512),
++};
++static struct usb_endpoint_descriptor fb_hs_out = {
++	.bLength = USB_DT_ENDPOINT_SIZE, .bDescriptorType = USB_DT_ENDPOINT,
++	.bEndpointAddress = USB_DIR_OUT, .bmAttributes = USB_ENDPOINT_XFER_BULK,
++	.wMaxPacketSize = __constant_cpu_to_le16(512),
++};
++static struct usb_descriptor_header *fb_fs_desc[] = {
++	(struct usb_descriptor_header *)&fb_intf,
++	(struct usb_descriptor_header *)&fb_fs_in,
++	(struct usb_descriptor_header *)&fb_fs_out, NULL,
++};
++static struct usb_descriptor_header *fb_hs_desc[] = {
++	(struct usb_descriptor_header *)&fb_intf,
++	(struct usb_descriptor_header *)&fb_hs_in,
++	(struct usb_descriptor_header *)&fb_hs_out, NULL,
++};
++static struct usb_string fb_strings[] = { { 0, "fastboot" }, { } };
++static struct usb_gadget_strings fb_string_tab = { .language = 0x0409, .strings = fb_strings };
++static struct usb_gadget_strings *fb_string_tabs[] = { &fb_string_tab, NULL };
++
++static struct {
++	struct usb_function	func;
++	struct usb_gadget	*gadget;
++	struct usb_ep		*in, *out;
++	struct usb_request	*req_in, *req_out;
++	volatile int		online;
++	int			eps_on;
++	volatile unsigned	gen;		/* bumps on every (de)configuration */
++	volatile int		in_done, out_done;
++} fb;
++
++static int fb_bind(struct usb_configuration *c, struct usb_function *f)
++{
++	struct usb_gadget *g = c->cdev->gadget;
++	int id = usb_interface_id(c, f);
++
++	if (id < 0)
++		return id;
++	fb_intf.bInterfaceNumber = id;
++	fb.gadget = g;
++	fb.in = usb_ep_autoconfig(g, &fb_fs_in);
++	fb.out = usb_ep_autoconfig(g, &fb_fs_out);
++	if (!fb.in || !fb.out)
++		return -ENODEV;
++	fb.in->driver_data = fb.out->driver_data = &fb;
++	fb_hs_in.bEndpointAddress = fb_fs_in.bEndpointAddress;
++	fb_hs_out.bEndpointAddress = fb_fs_out.bEndpointAddress;
++	fb.req_in = usb_ep_alloc_request(fb.in, 0);
++	fb.req_out = usb_ep_alloc_request(fb.out, 0);
++	return (fb.req_in && fb.req_out) ? 0 : -ENOMEM;
++}
++
++static void fb_unbind(struct usb_configuration *c, struct usb_function *f)
++{
++	fb.online = 0;
++}
++
++static int fb_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
++{
++	int r;
++
++	if (fb.eps_on) {
++		usb_ep_disable(fb.in);
++		usb_ep_disable(fb.out);
++	}
++	r = usb_ep_enable(fb.in, ep_choose(fb.gadget, &fb_hs_in, &fb_fs_in));
++	if (!r)
++		r = usb_ep_enable(fb.out, ep_choose(fb.gadget, &fb_hs_out, &fb_fs_out));
++	fb.gen++;
++	fb.online = fb.eps_on = !r;
++	return r;
++}
++
++static void fb_disable(struct usb_function *f)
++{
++	fb.online = 0;
++	fb.gen++;
++	if (fb.eps_on) {
++		usb_ep_disable(fb.in);
++		usb_ep_disable(fb.out);
++		fb.eps_on = 0;
++	}
++}
++
++int nocry_fb_add(struct usb_configuration *c)
++{
++	int id = usb_string_id(c->cdev);
++
++	if (id < 0)
++		return id;
++	fb_strings[0].id = id;
++	fb_intf.iInterface = id;
++	memset(&fb.func, 0, sizeof(fb.func));
++	fb.func.name = "fastboot";
++	fb.func.strings = fb_string_tabs;
++	fb.func.descriptors = fb_fs_desc;
++	fb.func.hs_descriptors = fb_hs_desc;
++	fb.func.bind = fb_bind;
++	fb.func.unbind = fb_unbind;
++	fb.func.set_alt = fb_set_alt;
++	fb.func.disable = fb_disable;
++	return usb_add_function(c, &fb.func);
++}
++
++static void fb_in_complete(struct usb_ep *ep, struct usb_request *req) { fb.in_done = 1; }
++static void fb_out_complete(struct usb_ep *ep, struct usb_request *req) { fb.out_done = 1; }
++
++/* Synchronous transfers, polled. Return bytes transferred or <0. */
++static int fb_xfer(int in, void *buf, unsigned len)
++{
++	struct usb_request *req = in ? fb.req_in : fb.req_out;
++	volatile int *done = in ? &fb.in_done : &fb.out_done;
++	unsigned gen = fb.gen;
++
++	if (!fb.online)
++		return -EPIPE;
++	req->buf = buf;
++	req->length = len;
++	req->actual = 0;
++	req->status = 0;
++	req->zero = 0;
++	req->complete = in ? fb_in_complete : fb_out_complete;
++	*done = 0;
++	if (usb_ep_queue(in ? fb.in : fb.out, req, 0))
++		return -EIO;
++	while (!*done) {
++		usb_gadget_handle_interrupts();
++		if (fb.gen != gen || !fb.online)
++			return -EPIPE;
++		if (ctrlc())
++			return -EINTR;
++	}
++	return req->status ? req->status : (int)req->actual;
++}
++
++static char fb_resp_buf[FB_RESP_MAX + 1] __aligned(64);
++
++static int fb_send(const char *kind, const char *fmt, ...)
++{
++	va_list ap;
++	int n;
++
++	strcpy(fb_resp_buf, kind);
++	va_start(ap, fmt);
++	n = 4 + vscnprintf(fb_resp_buf + 4, FB_RESP_MAX - 4, fmt, ap);
++	va_end(ap);
++	debug("fb> %s\n", fb_resp_buf);
++	return fb_xfer(1, fb_resp_buf, n) == n ? 0 : -EIO;
++}
++#define OKAY(...) fb_send("OKAY", __VA_ARGS__)
++#define FAIL(...) fb_send("FAIL", __VA_ARGS__)
++#define INFO(...) fb_send("INFO", __VA_ARGS__)
++
++/* ----------------------------------------------------------------- eMMC -- */
++
++static struct mmc *mmc;
++static int critical_unlocked;
++
++static u64 disk_blocks(void)
++{
++	return mmc->capacity / 512;
++}
++
++static int bread(u64 lba, u32 n, void *buf)
++{
++	return mmc->block_dev.block_read(0, lba, n, buf) == n ? 0 : -EIO;
++}
++
++/* write + read back + compare, in 1 MiB pieces */
++static int bwrite_verified(u64 lba, u32 n, const u8 *buf, const char *what)
++{
++	u32 done = 0, k, next_info = 16 << 11;
++
++	while (done < n) {
++		k = min(n - done, (u32)FB_CHUNK_BLK);
++		if (mmc->block_dev.block_write(0, lba + done, k, buf + (u64)done * 512) != k) {
++			printf("fb: write error at LBA %llu\n", lba + done);
++			return -EIO;
++		}
++		if (bread(lba + done, k, FB_VBUF) || memcmp(FB_VBUF, buf + (u64)done * 512, k * 512)) {
++			printf("fb: verify mismatch at LBA %llu\n", lba + done);
++			return -EILSEQ;
++		}
++		done += k;
++		if (what && done >= next_info && done < n) {
++			INFO("%s: %u/%u MiB written+verified", what, done >> 11, (n + 2047) >> 11);
++			next_info += 16 << 11;
++		}
++	}
++	return 0;
++}
++
++static int bfill_verified(u64 lba, u64 n, u32 pattern)
++{
++	u32 *z = (u32 *)FB_ZBUF;
++	int i, r;
++
++	for (i = 0; i < FB_CHUNK / 4; i++)
++		z[i] = pattern;
++	while (n) {
++		u32 k = min(n, (u64)FB_CHUNK_BLK);
++		r = bwrite_verified(lba, k, FB_ZBUF, NULL);
++		if (r)
++			return r;
++		lba += k;
++		n -= k;
++	}
++	return 0;
++}
++
++/*
++ * Erase: plain ERASE (not Ingenic's SECURE_ERASE) on erase-group-aligned
++ * ranges only, so the card can never widen it past the region; unaligned
++ * edges are written with zeros. mmc_berase() is NOT used: it rounds
++ * unaligned ranges outwards.
++ */
++static int hw_erase(u64 start, u64 n)
++{
++	struct mmc_cmd cmd;
++	int err;
++
++	cmd.resp_type = MMC_RSP_R1;
++	cmd.cmdidx = MMC_CMD_ERASE_GROUP_START;
++	cmd.cmdarg = mmc->high_capacity ? start : start * 512;
++	if ((err = mmc_send_cmd(mmc, &cmd, NULL)))
++		return err;
++	cmd.cmdidx = MMC_CMD_ERASE_GROUP_END;
++	cmd.cmdarg = mmc->high_capacity ? start + n - 1 : (start + n - 1) * 512;
++	if ((err = mmc_send_cmd(mmc, &cmd, NULL)))
++		return err;
++	cmd.cmdidx = MMC_CMD_ERASE;
++	cmd.cmdarg = 0;
++	cmd.resp_type = MMC_RSP_R1b;
++	if ((err = mmc_send_cmd(mmc, &cmd, NULL)))
++		return err;
++	return mmc_send_status(mmc, 60000);
++}
++
++static int erase_range(u64 lba, u64 n)
++{
++	u64 g = mmc->erase_grp_size ? mmc->erase_grp_size : 1;
++	u64 a = (lba + g - 1) / g * g, b = (lba + n) / g * g, s;
++	u64 step = 0x80000 / g * g;	/* <= 256 MiB per ERASE command */
++	int r;
++
++	if (!step)
++		step = g;
++
++	if (n < 2 * g || b <= a)
++		return bfill_verified(lba, n, 0);
++	if ((r = bfill_verified(lba, a - lba, 0)))
++		return r;
++	for (s = a; s < b; ) {
++		u64 k = min(b - s, step);
++		if (hw_erase(s, k)) {
++			INFO("erase command failed at LBA %llu; writing zeros instead", s);
++			if ((r = bfill_verified(s, k, 0)))
++				return r;
++		}
++		s += k;
++	}
++	/* erased content is all-0 or all-1 depending on the card */
++	if (bread(a, 1, FB_VBUF))
++		return -EIO;
++	for (s = 1; s < 512; s++)
++		if (FB_VBUF[s] != FB_VBUF[0] || (FB_VBUF[0] != 0 && FB_VBUF[0] != 0xff))
++			return -EILSEQ;
++	return bfill_verified(b, lba + n - b, 0);
++}
++
++/* ------------------------------------------------------------------ GPT -- */
++
++struct fb_part {
++	char	name[37];
++	u64	lba, nblk;
++};
++static struct fb_part parts[FB_MAX_PARTS];
++static int nparts;
++
++struct gpt_hdr {
++	u8	sig[8];
++	__le32	rev, hdr_size, hdr_crc, reserved;
++	__le64	my_lba, alt_lba, first_usable, last_usable;
++	u8	guid[16];
++	__le64	entries_lba;
++	__le32	n_entries, entry_size, entries_crc;
++} __packed;
++
++static u32 gpt_hdr_crc(struct gpt_hdr *h)
++{
++	u32 saved = h->hdr_crc, c;
++
++	h->hdr_crc = 0;
++	c = crc32(0, (u8 *)h, le32_to_cpu(h->hdr_size));
++	h->hdr_crc = saved;
++	return c;
++}
++
++/* Validates a GPT image whose LBA 1 is at img+512 (entries follow at their LBA). */
++static const char *gpt_check(u8 *img, u32 img_len, u64 disk_last)
++{
++	struct gpt_hdr *h = (struct gpt_hdr *)(img + 512);
++	u64 elba = le64_to_cpu(h->entries_lba);
++	u32 esz = le32_to_cpu(h->entry_size), ne = le32_to_cpu(h->n_entries);
++	u64 ebytes = (u64)esz * ne;
++
++	if (img_len < 1024 || memcmp(h->sig, "EFI PART", 8))
++		return "no GPT header at LBA 1";
++	if (le32_to_cpu(h->hdr_size) < 92 || le32_to_cpu(h->hdr_size) > 512 ||
++	    gpt_hdr_crc(h) != le32_to_cpu(h->hdr_crc))
++		return "GPT header CRC mismatch";
++	if (esz < 128 || ne == 0 || ne > FB_MAX_PARTS * 4 || elba != 2 ||
++	    2 * 512 + ebytes > (u64)img_len || 2 * 512 + ebytes > 34 * 512)
++		return "unsupported GPT entry layout";
++	if (crc32(0, img + elba * 512, ebytes) != le32_to_cpu(h->entries_crc))
++		return "GPT entries CRC mismatch";
++	if (le64_to_cpu(h->first_usable) < 34 ||
++	    le64_to_cpu(h->last_usable) > disk_last - 33 ||
++	    le64_to_cpu(h->first_usable) > le64_to_cpu(h->last_usable))
++		return "GPT usable range does not fit this disk";
++	return NULL;
++}
++
++static int gpt_load(void)
++{
++	u8 *img = FB_VBUF;
++	struct gpt_hdr *h = (struct gpt_hdr *)(img + 512);
++	u32 i, esz, ne;
++
++	nparts = 0;
++	if (bread(0, 34, img) || gpt_check(img, 34 * 512, disk_blocks() - 1))
++		return -ENOENT;
++	esz = le32_to_cpu(h->entry_size);
++	ne = le32_to_cpu(h->n_entries);
++	for (i = 0; i < ne && nparts < FB_MAX_PARTS; i++) {
++		u8 *e = img + 1024 + i * esz;
++		u64 first = get_unaligned_le64(e + 32), last = get_unaligned_le64(e + 40);
++		int k;
++
++		if (!memcmp(e, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) || last < first)
++			continue;
++		for (k = 0; k < 36; k++) {
++			u16 ch = get_unaligned_le16(e + 56 + 2 * k);
++			if (!ch)
++				break;
++			parts[nparts].name[k] = (ch < 0x80) ? ch : '?';
++		}
++		parts[nparts].name[k] = 0;
++		parts[nparts].lba = first;
++		parts[nparts].nblk = last - first + 1;
++		nparts++;
++	}
++	return 0;
++}
++
++struct region {
++	char	name[40];
++	u64	lba, nblk;
++	int	critical, is_gpt, is_ram;
++};
++
++static int region_find(const char *name, struct region *r, char *why)
++{
++	char base[40];
++	size_t n = strlen(name);
++	int i;
++
++	memset(r, 0, sizeof(*r));
++	strlcpy(r->name, name, sizeof(r->name));
++	strlcpy(base, name, sizeof(base));
++	if (!strcmp(name, "mmc0")) {
++		r->nblk = disk_blocks();
++		r->critical = 1;
++		return 0;
++	}
++	if (!strcmp(name, "ram")) {	/* read-only: DDR as left by the last run (debug) */
++		r->nblk = (256 << 20) / 512;
++		r->is_ram = 1;
++		return 0;
++	}
++	if (!strcmp(name, "gpt")) {
++		r->nblk = 34;
++		r->critical = r->is_gpt = 1;
++		return 0;
++	}
++	if (gpt_load()) {
++		strcpy(why, "no valid GPT on the eMMC (flash 'gpt' first, or use mmc0)");
++		return -ENOENT;
++	}
++	if (!strcmp(name, "bootloader")) {
++		u64 first = disk_blocks();
++		for (i = 0; i < nparts; i++)
++			first = min(first, parts[i].lba);
++		r->lba = 34;
++		r->nblk = first - 34;
++		r->critical = 1;
++		return 0;
++	}
++	/* Creality A/B pairs: kernel/kernel2, rootfs/rootfs2, rtos/rtos2 */
++	if (n > 2 && name[n - 2] == '_' && (name[n - 1] == 'a' || name[n - 1] == 'b')) {
++		base[n - 2] = 0;
++		if (!strcmp(base, "kernel") || !strcmp(base, "rootfs") || !strcmp(base, "rtos")) {
++			if (name[n - 1] == 'b')
++				strcat(base, "2");
++		} else {
++			strlcpy(base, name, sizeof(base));
++		}
++	}
++	for (i = 0; i < nparts; i++) {
++		if (!strcmp(parts[i].name, base)) {
++			r->lba = parts[i].lba;
++			r->nblk = parts[i].nblk;
++			r->critical = !strcmp(base, "sn_mac");
++			return 0;
++		}
++	}
++	sprintf(why, "no partition '%s'", name);
++	return -ENOENT;
++}
++
++static int has_slot(const char *name)
++{
++	return !strcmp(name, "kernel") || !strcmp(name, "rootfs") || !strcmp(name, "rtos");
++}
++
++/* ------------------------------------------------------------- sn_mac / ota */
++
++static char snmac_area[4096 + 1];
++static char *snf[9];	/* SN;MAC;MODEL;BOARD;PCBA;MACHINE_SN;STRUCT;IC_LC; */
++
++static int snmac_load(void)
++{
++	struct region r;
++	char why[80], *p;
++	int i;
++
++	memset(snf, 0, sizeof(snf));
++	if (region_find("sn_mac", &r, why) || bread(r.lba, 8, snmac_area))
++		return -ENOENT;
++	snmac_area[4096] = 0;
++	for (p = snmac_area, i = 0; i < 8; i++) {
++		char *s = strchr(p, ';');
++		if (!s)
++			return -EINVAL;
++		*s = 0;
++		snf[i] = p;
++		p = s + 1;
++	}
++	for (i = 0; i < 8; i++)
++		for (p = snf[i]; *p; p++)
++			if (*p < 0x20 || *p > 0x7e)
++				return -EINVAL;
++	return 0;
++}
++
++static int current_slot(void)	/* 0 = a, 1 = b, <0 = error */
++{
++	struct region r;
++	char why[80];
++
++	if (region_find("ota", &r, why) || bread(r.lba, 1, FB_VBUF))
++		return -1;
++	return !memcmp(FB_VBUF, "ota:kernel2", 11);
++}
++
++/* ------------------------------------------------------------- commands -- */
++
++static u32 dl_size;
++static int leave;
++
++static int need_critical(struct region *r)
++{
++	if (r->critical && !critical_unlocked) {
++		FAIL("'%s' is critical: run 'fastboot flashing unlock_critical' first", r->name);
++		return 1;
++	}
++	return 0;
++}
++
++static void getvar_one(const char *v, char *out)
++{
++	struct region r;
++	char why[80];
++
++	out[0] = 0;
++	if (!strcmp(v, "version"))
++		strcpy(out, "0.4");
++	else if (!strcmp(v, "version-bootloader"))
++		strcpy(out, "nocry-fastboot " FB_VERSION);
++	else if (!strcmp(v, "product"))
++		strcpy(out, (!snmac_load() && *snf[2]) ? snf[2] : "nocry-x2000");
++	else if (!strcmp(v, "serialno"))
++		strcpy(out, g_dnl_serial);
++	else if (!strcmp(v, "max-download-size") || !strcmp(v, "max-fetch-size"))
++		sprintf(out, "0x%08x", FB_BUF_SIZE);
++	else if (!strcmp(v, "is-userspace") || !strcmp(v, "secure"))
++		strcpy(out, "no");
++	else if (!strcmp(v, "unlocked"))
++		strcpy(out, "yes");
++	else if (!strcmp(v, "critical-unlocked"))
++		strcpy(out, critical_unlocked ? "yes" : "no");
++	else if (!strcmp(v, "slot-count"))
++		strcpy(out, "2");
++	else if (!strcmp(v, "current-slot")) {
++		int s = current_slot();
++		if (s >= 0)
++			strcpy(out, s ? "b" : "a");
++	} else if (!strncmp(v, "has-slot:", 9))
++		strcpy(out, has_slot(v + 9) ? "yes" : "no");
++	else if (!strncmp(v, "is-logical:", 11))
++		strcpy(out, "no");
++	else if (!strncmp(v, "partition-size:", 15)) {
++		if (!region_find(v + 15, &r, why))
++			sprintf(out, "0x%016llx", r.nblk * 512);
++	} else if (!strncmp(v, "partition-type:", 15)) {
++		if (!region_find(v + 15, &r, why))
++			strcpy(out, "raw");
++	} else if (!strcmp(v, "emmc-size"))
++		sprintf(out, "0x%016llx", disk_blocks() * 512);
++}
++
++static void cmd_getvar(const char *v)
++{
++	static const char *const all[] = {
++		"version", "version-bootloader", "product", "serialno", "max-download-size",
++		"max-fetch-size", "is-userspace", "secure", "unlocked", "critical-unlocked",
++		"slot-count", "current-slot", "emmc-size", NULL,
++	};
++	char out[FB_RESP_MAX];
++	int i;
++
++	if (strcmp(v, "all")) {
++		getvar_one(v, out);
++		if (out[0])
++			OKAY("%s", out);
++		else
++			FAIL("unknown variable '%s'", v);
++		return;
++	}
++	for (i = 0; all[i]; i++) {
++		getvar_one(all[i], out);
++		if (out[0])
++			INFO("%s: %s", all[i], out);
++	}
++	if (!gpt_load()) {
++		for (i = 0; i < nparts; i++)
++			INFO("partition-size:%s: 0x%016llx", parts[i].name, parts[i].nblk * 512);
++	}
++	OKAY("");
++}
++
++static void cmd_download(const char *arg)
++{
++	u32 n = simple_strtoul(arg, NULL, 16), got = 0;
++	int r;
++
++	dl_size = 0;
++	if (n == 0 || n > FB_BUF_SIZE) {
++		FAIL("data too large (max 0x%08x)", FB_BUF_SIZE);
++		return;
++	}
++	if (fb_send("DATA", "%08x", n))
++		return;
++	while (got < n) {
++		u32 k = min(n - got, (u32)FB_CHUNK);
++		r = fb_xfer(0, FB_BUF + got, k);
++		if (r != (int)k) {
++			printf("fb: download aborted at %u/%u (%d)\n", got, n, r);
++			return;		/* host gave up or reset; nothing to answer */
++		}
++		got += k;
++	}
++	dl_size = n;
++	printf("fb: downloaded %u bytes\n", n);
++	OKAY("");
++}
++
++#define SPARSE_MAGIC	0xed26ff3a
++#define CHUNK_RAW	0xcac1
++#define CHUNK_FILL	0xcac2
++#define CHUNK_SKIP	0xcac3
++#define CHUNK_CRC	0xcac4
++
++static int flash_sparse(struct region *r)
++{
++	u8 *p = FB_BUF, *end = FB_BUF + dl_size;
++	u16 fhs = get_unaligned_le16(p + 8), chs = get_unaligned_le16(p + 10);
++	u32 bs = get_unaligned_le32(p + 12), total = get_unaligned_le32(p + 16);
++	u32 nch = get_unaligned_le32(p + 20), i, bpb;
++	u64 lba = r->lba;
++	int ret;
++
++	if (get_unaligned_le16(p + 4) != 1 || fhs < 28 || chs < 12 || bs == 0 || bs % 512) {
++		FAIL("unsupported sparse image");
++		return -EINVAL;
++	}
++	bpb = bs / 512;
++	if ((u64)total * bpb > r->nblk) {
++		FAIL("sparse image (%llu bytes) larger than '%s' (%llu bytes)",
++		     (u64)total * bs, r->name, r->nblk * 512);
++		return -EFBIG;
++	}
++	p += fhs;
++	for (i = 0; i < nch; i++) {
++		u16 type;
++		u32 csz, tsz;
++		u64 nblk;
++
++		if (p + chs > end) {
++			FAIL("truncated sparse image");
++			return -EINVAL;
++		}
++		type = get_unaligned_le16(p);
++		csz = get_unaligned_le32(p + 4);
++		tsz = get_unaligned_le32(p + 8);
++		nblk = (u64)csz * bpb;
++		if (tsz < chs || p + tsz > end || lba + nblk > r->lba + r->nblk) {
++			FAIL("bad sparse chunk %u", i);
++			return -EINVAL;
++		}
++		switch (type) {
++		case CHUNK_RAW:
++			if (tsz - chs != (u64)csz * bs) {
++				FAIL("bad raw chunk %u", i);
++				return -EINVAL;
++			}
++			ret = bwrite_verified(lba, nblk, p + chs, r->name);
++			break;
++		case CHUNK_FILL:
++			ret = bfill_verified(lba, nblk, get_unaligned_le32(p + chs));
++			break;
++		case CHUNK_SKIP:
++		case CHUNK_CRC:
++			ret = 0;
++			break;
++		default:
++			FAIL("unknown sparse chunk type 0x%04x", type);
++			return -EINVAL;
++		}
++		if (ret) {
++			FAIL("write/verify failed (%d)", ret);
++			return ret;
++		}
++		if (type != CHUNK_CRC)
++			lba += nblk;
++		p += tsz;
++	}
++	return 0;
++}
++
++/* Writes LBA 0-33 from the image, re-pointed at this disk, plus a matching backup GPT. */
++static int flash_gpt(void)
++{
++	u64 last = disk_blocks() - 1;
++	struct gpt_hdr *h = (struct gpt_hdr *)(FB_BUF + 512);
++	const char *bad = gpt_check(FB_BUF, dl_size, last);
++	u8 *bk = FB_ZBUF;	/* 32 entry sectors + backup header */
++	struct gpt_hdr *bh;
++	u32 esec;
++	int r;
++
++	if (bad) {
++		FAIL("%s", bad);
++		return -EINVAL;
++	}
++	esec = (le32_to_cpu(h->n_entries) * le32_to_cpu(h->entry_size) + 511) / 512;
++	/* primary: alternate LBA = this disk's last LBA (the factory image hard-codes one) */
++	h->alt_lba = cpu_to_le64(last);
++	h->hdr_crc = cpu_to_le32(gpt_hdr_crc(h));
++	/* protective MBR covers the whole disk */
++	if (FB_BUF[510] == 0x55 && FB_BUF[511] == 0xaa && FB_BUF[446 + 4] == 0xee)
++		put_unaligned_le32(min(last, (u64)0xffffffff), FB_BUF + 446 + 12);
++	if ((r = bwrite_verified(0, 34, FB_BUF, NULL)))
++		return r;
++	/* backup: entries at last-esec, header at last */
++	memset(bk, 0, (esec + 1) * 512);
++	memcpy(bk, FB_BUF + 1024, esec * 512);
++	bh = (struct gpt_hdr *)(bk + esec * 512);
++	memcpy(bh, h, le32_to_cpu(h->hdr_size));
++	bh->my_lba = cpu_to_le64(last);
++	bh->alt_lba = cpu_to_le64(1);
++	bh->entries_lba = cpu_to_le64(last - esec);
++	bh->hdr_crc = cpu_to_le32(gpt_hdr_crc(bh));
++	return bwrite_verified(last - esec, esec + 1, bk, NULL);
++}
++
++static void cmd_flash(const char *name)
++{
++	struct region r;
++	char why[80];
++	u32 nblk;
++	int ret;
++
++	if (region_find(name, &r, why)) {
++		FAIL("%s", why);
++		return;
++	}
++	if (r.is_ram) {
++		FAIL("'ram' is read-only");
++		return;
++	}
++	if (need_critical(&r))
++		return;
++	if (!dl_size) {
++		FAIL("no data downloaded");
++		return;
++	}
++	printf("fb: flash %s (%u bytes) -> LBA %llu+%llu\n", name, dl_size, r.lba, r.nblk);
++	if (r.is_gpt) {
++		ret = flash_gpt();
++		if (ret == -EINVAL)
++			return;		/* already answered */
++	} else if (dl_size >= 28 && get_unaligned_le32(FB_BUF) == SPARSE_MAGIC) {
++		if ((ret = flash_sparse(&r)))
++			return;		/* already answered */
++	} else {
++		nblk = (dl_size + 511) / 512;
++		if (nblk > r.nblk) {
++			FAIL("image (%u bytes) larger than '%s' (%llu bytes)", dl_size, name, r.nblk * 512);
++			return;
++		}
++		memset(FB_BUF + dl_size, 0, nblk * 512 - dl_size);
++		ret = bwrite_verified(r.lba, nblk, FB_BUF, name);
++	}
++	if (ret)
++		FAIL("write/verify failed (%d)", ret);
++	else
++		OKAY("");
++}
++
++static void cmd_erase(const char *name)
++{
++	struct region r;
++	char why[80];
++	int ret;
++
++	if (region_find(name, &r, why)) {
++		FAIL("%s", why);
++		return;
++	}
++	if (r.is_ram) {
++		FAIL("'ram' is read-only");
++		return;
++	}
++	if (need_critical(&r))
++		return;
++	INFO("erasing %s (%llu MiB)", name, r.nblk >> 11);
++	ret = erase_range(r.lba, r.nblk);
++	if (ret)
++		FAIL("erase failed (%d)", ret);
++	else
++		OKAY("");
++}
++
++/* fetch:<name>[:<offset>[:<size>]], byte offset/size */
++static void cmd_fetch(char *arg)
++{
++	struct region r;
++	char why[80], *o = strchr(arg, ':'), *s = NULL;
++	u64 off = 0, size, bytes;
++	u32 sent = 0;
++	u8 *src;
++
++	if (o) {
++		*o++ = 0;
++		s = strchr(o, ':');
++		if (s)
++			*s++ = 0;
++		off = simple_strtoull(o, NULL, 16);
++	}
++	if (region_find(arg, &r, why)) {
++		FAIL("%s", why);
++		return;
++	}
++	bytes = r.nblk * 512;
++	if (off > bytes || off % 512) {
++		FAIL("offset must be 512-aligned and inside '%s'", arg);
++		return;
++	}
++	size = s ? simple_strtoull(s, NULL, 16) : bytes - off;
++	if (size > bytes - off)
++		size = bytes - off;
++	if (size == 0 || size > FB_BUF_SIZE) {
++		FAIL("fetch size must be 1..0x%08x bytes (use offset/size)", FB_BUF_SIZE);
++		return;
++	}
++	/* ram: sent straight from DDR (uncached KSEG1, so dirty lines of the
++	 * previous run that never reached DDR are not mixed with ours) */
++	src = r.is_ram ? (u8 *)0xa0000000 + off : FB_BUF;
++	if (!r.is_ram && bread(r.lba + off / 512, (size + 511) / 512, FB_BUF)) {
++		FAIL("read error");
++		return;
++	}
++	if (fb_send("DATA", "%08x", (u32)size))
++		return;
++	while (sent < size) {
++		u32 k = min((u32)size - sent, (u32)FB_CHUNK);
++		if (fb_xfer(1, src + sent, k) != (int)k)
++			return;
++		sent += k;
++	}
++	OKAY("");
++}
++
++#define UIMAGE_MAGIC 0x27051956
++
++static void cmd_boot(void)
++{
++	char cmd[64], args[700];
++	u8 *k = FB_BUF;
++
++	if (dl_size >= 1648 && !memcmp(FB_BUF, "ANDROID!", 8)) {
++		u32 ksz = get_unaligned_le32(FB_BUF + 8), rsz = get_unaligned_le32(FB_BUF + 16);
++		u32 page = get_unaligned_le32(FB_BUF + 36);
++		char *cl = (char *)FB_BUF + 64;	/* 512-byte cmdline */
++
++		if (!page || page % 512 || page + ksz > dl_size) {
++			FAIL("bad Android boot image header");
++			return;
++		}
++		k = FB_BUF + page;
++		args[0] = 0;
++		if (cl[0])
++			strlcpy(args, cl, 512 + 1);
++		if (rsz) {
++			u32 roff = page + (ksz + page - 1) / page * page;
++			if (roff + rsz > dl_size) {
++				FAIL("bad ramdisk size");
++				return;
++			}
++			sprintf(args + strlen(args), "%srd_start=0x%08x rd_size=0x%x",
++				args[0] ? " " : "", (u32)(FB_BUF + roff), rsz);
++		}
++		if (args[0])
++			setenv("bootargs", args);
++	}
++	if (get_unaligned_be32(k) != UIMAGE_MAGIC) {
++		FAIL("need a uImage kernel (bare or inside an Android boot image)");
++		return;
++	}
++	OKAY("");
++	sprintf(cmd, "bootm 0x%08x", (u32)k);
++	printf("fb: %s (bootargs: %s)\n", cmd, getenv("bootargs") ? getenv("bootargs") : "<none>");
++	g_dnl_unregister();
++	udelay(100000);
++	run_command(cmd, 0);
++	puts("fb: bootm returned; back to fastboot\n");
++	g_dnl_register("fastboot");
++}
++
++static void cmd_set_active(const char *slot)
++{
++	struct region r;
++	char why[80];
++	u8 *b = FB_ZBUF;
++
++	if (strcmp(slot, "a") && strcmp(slot, "b")) {
++		FAIL("slot must be a or b");
++		return;
++	}
++	if (region_find("ota", &r, why)) {
++		FAIL("%s", why);
++		return;
++	}
++	/* Creality's OTA scripts: `echo ota:kernel2 > ota` boots kernel2/rootfs2/rtos2 */
++	memset(b, 0, 512);
++	strcpy((char *)b, slot[0] == 'b' ? "ota:kernel2\n" : "ota:kernel\n");
++	if (bwrite_verified(r.lba, 1, b, NULL))
++		FAIL("write failed");
++	else
++		OKAY("");
++}
++
++static void cmd_oem(char *a)
++{
++	int i;
++
++	while (*a == ' ')
++		a++;
++	if (!strcmp(a, "snmac")) {
++		static const char *const n[] = { "sn", "mac", "model", "board", "pcba_test",
++						 "machine_sn", "structure_version", "ic_lc" };
++		if (snmac_load()) {
++			FAIL("sn_mac is blank or not a valid record");
++			return;
++		}
++		for (i = 0; i < 8; i++)
++			INFO("%s: %s", n[i], snf[i]);
++		OKAY("");
++	} else if (!strncmp(a, "snmac-model ", 12)) {
++		const char *m = a + 12;
++		struct region r;
++		char why[80], *p, *out = (char *)FB_ZBUF;
++
++		for (p = (char *)m; *p; p++)
++			if (*p < 0x20 || *p > 0x7e || *p == ';')
++				break;
++		if (*p || !*m || strlen(m) > 32) {
++			FAIL("model: 1-32 printable characters, no ';'");
++			return;
++		}
++		if (snmac_load() || region_find("sn_mac", &r, why)) {
++			FAIL("sn_mac is blank or not a valid record");
++			return;
++		}
++		memset(out, 0, 4096);
++		snf[2] = (char *)m;
++		for (i = 0; i < 8; i++)
++			sprintf(out + strlen(out), "%s;", snf[i]);
++		if (bwrite_verified(r.lba, 8, (u8 *)out, NULL)) {
++			FAIL("write failed");
++			return;
++		}
++		INFO("model is now '%s'", m);
++		OKAY("");
++	} else if (!strcmp(a, "dmesg")) {
++		/* nocry recovery kernel's "earlycon=nocrymem" ring, left in DDR across a reset */
++		volatile u32 *h = (volatile u32 *)0xae800000;
++		volatile char *ring = (volatile char *)(h + 4);
++		u32 pos = h[1], cap = h[2], start, n, i;
++		char line[200];
++		int k = 0;
++
++		if (h[0] != 0x4d454d43 || cap == 0 || cap > (1 << 20)) {
++			FAIL("no nocrymem log at 0x0e800000 (boot the recovery kernel first)");
++			return;
++		}
++		n = min(pos, cap);
++		start = pos - n;
++		INFO("nocrymem: %u bytes logged%s", pos, pos > cap ? " (ring wrapped)" : "");
++		for (i = 0; i < n; i++) {
++			char c = ring[(start + i) % cap];
++			if (c == '\n' || k == (int)sizeof(line) - 1) {
++				line[k] = 0;
++				INFO("%s", line);
++				k = 0;
++				if (c == '\n')
++					continue;
++			}
++			line[k++] = (c >= 0x20 && c < 0x7f) ? c : '.';
++		}
++		if (k) {
++			line[k] = 0;
++			INFO("%s", line);
++		}
++		OKAY("");
++	} else if (!strcmp(a, "gpt")) {
++		if (gpt_load()) {
++			FAIL("no valid GPT");
++			return;
++		}
++		for (i = 0; i < nparts; i++)
++			INFO("%-12s 0x%09llx +0x%09llx", parts[i].name, parts[i].lba * 512,
++			     parts[i].nblk * 512);
++		OKAY("");
++	} else {
++		INFO("oem snmac | oem snmac-model <MODEL> | oem gpt | oem dmesg");
++		FAIL("unknown oem command");
++	}
++}
++
++static void dispatch(char *c)
++{
++	printf("fb< %s\n", c);
++	if (!strncmp(c, "getvar:", 7))
++		cmd_getvar(c + 7);
++	else if (!strncmp(c, "download:", 9))
++		cmd_download(c + 9);
++	else if (!strncmp(c, "flash:", 6))
++		cmd_flash(c + 6);
++	else if (!strncmp(c, "erase:", 6))
++		cmd_erase(c + 6);
++	else if (!strncmp(c, "fetch:", 6))
++		cmd_fetch(c + 6);
++	else if (!strcmp(c, "boot"))
++		cmd_boot();
++	else if (!strncmp(c, "set_active:", 11))
++		cmd_set_active(c + 11);
++	else if (!strcmp(c, "flashing unlock_critical")) {
++		critical_unlocked = 1;
++		INFO("critical regions (mmc0, gpt, bootloader, sn_mac) writable until power-off");
++		OKAY("");
++	} else if (!strcmp(c, "flashing lock_critical")) {
++		critical_unlocked = 0;
++		OKAY("");
++	} else if (!strcmp(c, "flashing get_unlock_ability")) {
++		INFO("get_unlock_ability: 1");
++		OKAY("");
++	} else if (!strcmp(c, "flashing unlock") || !strcmp(c, "flashing lock")) {
++		INFO("nocry has no lock state; see unlock_critical");
++		OKAY("");
++	} else if (!strcmp(c, "reboot") || !strcmp(c, "continue")) {
++		INFO("resetting; the board boots from eMMC unless BOOT is held");
++		OKAY("");
++		g_dnl_unregister();
++		udelay(100000);
++		run_command("reset", 0);
++	} else if (!strcmp(c, "reboot-bootloader")) {
++		INFO("already in nocry fastboot (RAM); staying");
++		OKAY("");
++	} else if (!strncmp(c, "oem", 3))
++		cmd_oem(c + 3);
++	else
++		FAIL("unknown command");
++}
++
++static char fb_cmd_buf[FB_CMD_MAX + 1] __aligned(64);
++
++static int do_nocry_fastboot(cmd_tbl_t *cmdtp, int flag, int argc, char *const argv[])
++{
++	int n;
++
++	mmc = find_mmc_device(0);
++	if (!mmc || mmc_init(mmc)) {
++		puts("fb: mmc0 not available\n");
++		return CMD_RET_FAILURE;
++	}
++	printf("fb: mmc0 %llu bytes, %u-bit, %u Hz, erase group %u blocks\n",
++	       mmc->capacity, mmc->bus_width, mmc->clock, mmc->erase_grp_size);
++	strcpy(g_dnl_serial, "nocry");
++	if (!snmac_load() && *snf[0] && strlen(snf[0]) < 32)
++		strcpy(g_dnl_serial, snf[0]);
++
++	board_usb_init();
++	g_dnl_register("fastboot");
++	puts("fb: ready\n");
++	leave = 0;
++	while (!leave) {
++		if (!fb.online) {
++			usb_gadget_handle_interrupts();
++			if (ctrlc())
++				break;
++			continue;
++		}
++		n = fb_xfer(0, fb_cmd_buf, FB_CMD_MAX);
++		if (n == -EINTR)
++			break;
++		if (n <= 0)
++			continue;
++		fb_cmd_buf[n] = 0;
++		dispatch(fb_cmd_buf);
++	}
++	g_dnl_unregister();
++	return CMD_RET_SUCCESS;
++}
++
++U_BOOT_CMD(fastboot, 1, 0, do_nocry_fastboot,
++	   "nocry fastboot over USB (eMMC)", "");
+diff --color -ruN '--exclude=.git' base01/drivers/usb/gadget/g_dnl.c fb/drivers/usb/gadget/g_dnl.c
+--- a/drivers/usb/gadget/g_dnl.c	2026-11-25 16:16:19.495543053 -0700
++++ b/drivers/usb/gadget/g_dnl.c	2026-11-25 16:14:12.707038644 -0700
+@@ -31,7 +31,9 @@
+ 
+ #include "gadget_chips.h"
+ #include "composite.c"
++#ifdef CONFIG_USB_GADGET_MASS_STORAGE
+ #include "f_mass_storage.c"
++#endif
+ 
+ /*
+  * One needs to define the following:
+@@ -49,7 +51,13 @@
+ #define DRIVER_VERSION		"usb_dnl 2.0"
+ 
+ static const char shortname[] = "usb_dnl_";
++#ifdef CONFIG_NOCRY_FASTBOOT
++static const char product[] = "nocry fastboot";
++char g_dnl_serial[33] = "nocry";	/* set by the fastboot command before registering */
++extern int nocry_fb_add(struct usb_configuration *c);
++#else
+ static const char product[] = "USB download gadget";
++#endif
+ static const char manufacturer[] = CONFIG_G_DNL_MANUFACTURER;
+ 
+ static struct usb_device_descriptor device_desc = {
+@@ -70,6 +78,9 @@
+ static struct usb_string g_dnl_string_defs[] = {
+ 	{ 0, manufacturer, },
+ 	{ 1, product, },
++#ifdef CONFIG_NOCRY_FASTBOOT
++	{ 2, g_dnl_serial, },
++#endif
+ 	{  }		/* end of list */
+ };
+ 
+@@ -113,6 +124,10 @@
+ 	else if (!strcmp(s, "usb_dnl_ums"))
+ 		ret = fsg_add(c);
+ #endif
++#ifdef CONFIG_NOCRY_FASTBOOT
++	else if (!strcmp(s, "usb_dnl_fastboot"))
++		ret = nocry_fb_add(c);
++#endif
+ 
+ 	return ret;
+ }
+@@ -158,6 +173,13 @@
+ 
+ 	g_dnl_string_defs[1].id = id;
+ 	device_desc.iProduct = id;
++#ifdef CONFIG_NOCRY_FASTBOOT
++	id = usb_string_id(cdev);
++	if (id < 0)
++		return id;
++	g_dnl_string_defs[2].id = id;
++	device_desc.iSerialNumber = id;
++#endif
+ 
+ 	g_dnl_bind_fixup(&device_desc);
+ 	ret = g_dnl_config_register(cdev);
+@@ -198,13 +220,13 @@
+ int g_dnl_register(const char *type)
+ {
+ 	/* We only allow "dfu" atm, so 3 should be enough */
+-	static char name[sizeof(shortname) + 3];
++	static char name[sizeof(shortname) + 10];
+ 	int ret;
+ 
+ 	if (!strcmp(type, "dfu")) {
+ 		strcpy(name, shortname);
+ 		strcat(name, type);
+-	} else if (!strcmp(type, "ums")) {
++	} else if (!strcmp(type, "ums") || !strcmp(type, "fastboot")) {
+ 		strcpy(name, shortname);
+ 		strcat(name, type);
+ 	} else {
+diff --color -ruN '--exclude=.git' base01/drivers/usb/gadget/jz47xx_dwc2_udc.c fb/drivers/usb/gadget/jz47xx_dwc2_udc.c
+--- a/drivers/usb/gadget/jz47xx_dwc2_udc.c	2026-11-25 16:16:19.495629476 -0700
++++ b/drivers/usb/gadget/jz47xx_dwc2_udc.c	2026-11-25 16:14:12.707235677 -0700
+@@ -185,9 +185,9 @@
+ 
+ static int dwc_udc_init(struct dwc2_udc *dev)
+ {
+-/* nocry ums keeps CONFIG_BURNER for the SPL->stage2 param handover, but needs a full UDC re-init */
+-#if !defined(CONFIG_BURNER) || defined(CONFIG_NOCRY_UMS)
+-#ifdef CONFIG_NOCRY_UMS
++/* nocry stage2s keep CONFIG_BURNER for the SPL->stage2 param handover, but need a full UDC re-init */
++#if !defined(CONFIG_BURNER) || defined(CONFIG_NOCRY_STAGE2)
++#ifdef CONFIG_NOCRY_STAGE2
+ 	/* The bootrom left us enumerated as a108:eaef. Drop off the bus long
+ 	 * enough for the host to notice, so it re-enumerates the new gadget. */
+ 	udc_set_reg(0, DCTL_SOFT_DISCONN, OTG_DCTL);
+@@ -203,7 +203,7 @@
+ 	dwc_fifo_allocate();
+ 
+ 	dwc_otg_device_init();
+-#ifdef CONFIG_NOCRY_UMS
++#ifdef CONFIG_NOCRY_STAGE2
+ 	/* g_dnl's bind() asked for pull-up before this core reset; redo it. */
+ 	udc_set_reg(DCTL_SOFT_DISCONN, 0, OTG_DCTL);
+ #endif
+diff --color -ruN '--exclude=.git' base01/drivers/usb/gadget/Makefile fb/drivers/usb/gadget/Makefile
+--- a/drivers/usb/gadget/Makefile	2026-11-25 03:42:38.624875946 -0700
++++ b/drivers/usb/gadget/Makefile	2026-11-25 16:14:12.706933829 -0700
+@@ -37,6 +37,7 @@
+ COBJS-$(CONFIG_USB_GADGET_S3C_UDC_OTG) += s3c_udc_otg.o
+ COBJS-$(CONFIG_USB_GADGET_FOTG210) += fotg210.o
+ COBJS-$(CONFIG_USBDOWNLOAD_GADGET) += g_dnl.o
++COBJS-$(CONFIG_NOCRY_FASTBOOT) += f_nocry_fb.o
+ COBJS-$(CONFIG_DFU_FUNCTION) += f_dfu.o
+ COBJS-$(CONFIG_USB_JZ_DWC2_UDC_V1_1)	+= jz47xx_dwc2_udc.o
+ COBJS-$(CONFIG_FASTBOOT_GADGET) += g_fastboot.o
+diff --color -ruN '--exclude=.git' base01/include/configs/burner_common.h fb/include/configs/burner_common.h
+--- a/include/configs/burner_common.h	2026-11-25 16:16:19.495841306 -0700
++++ b/include/configs/burner_common.h	2026-11-25 17:10:54.618830362 -0700
+@@ -43,9 +43,13 @@
+ #define CONFIG_SYS_NO_FLASH
+ #define CONFIG_SYS_FLASH_BASE	        0 /* init flash_base as 0 */
+ 
++#if defined(CONFIG_NOCRY_UMS) || defined(CONFIG_NOCRY_FB)
++#define CONFIG_NOCRY_STAGE2	/* any nocry RAM-loaded stage2 (no cloner, no eFuse) */
++#endif
++
+ #define CONFIG_SYS_LONGHELP
+ #define CONFIG_SYS_MAXARGS              16
+-#ifdef CONFIG_NOCRY_UMS
++#ifdef CONFIG_NOCRY_STAGE2
+ #define CONFIG_SYS_PROMPT               "nocry# "
+ #else
+ #define CONFIG_SYS_PROMPT               "burner# "
+@@ -108,7 +112,7 @@
+  */
+ /* CONFIG_BURNER also means: take DDR/clock/UART params from the SPL header at runtime */
+ #define CONFIG_BURNER
+-#ifndef CONFIG_NOCRY_UMS
++#ifndef CONFIG_NOCRY_STAGE2
+ #define CONFIG_CMD_BURN
+ #define CONFIG_SOFT_BURNER
+ #define CONFIG_USB_GADGET
+@@ -126,13 +130,17 @@
+ */
+ 
+ #define CONFIG_MMC_CREATE_GPP_AND_ENH
+-#else /* CONFIG_NOCRY_UMS */
++#else /* CONFIG_NOCRY_STAGE2 */
+ /*
+- * nocry: RAM-loaded stage2 exporting eMMC (MSC0 user area) as USB mass storage.
+- * MSC0 runs at the V12 burner clock (52 MHz, jz_sdhci.c) with SDMA (burner_x2000_v12.h).
+- * NOCRY_UMS_RO reports the disk write-protected and refuses writes.
++ * nocry: RAM-loaded stage2s for the eMMC (MSC0 user area, 52 MHz, PIO).
++ *   NOCRY_UMS     eMMC as USB mass storage (NOCRY_UMS_RO: write-protected)
++ *   NOCRY_FB      Android fastboot protocol (drivers/usb/gadget/f_nocry_fb.c)
+  */
++#ifdef CONFIG_NOCRY_FB
++#define CONFIG_BOOTCOMMAND                  "fastboot"
++#else
+ #define CONFIG_BOOTCOMMAND                  "ums 0"
++#endif
+ #undef CONFIG_SPL_USB_BOOT                 /* SPL of this target is unused; avoids burner deps */
+ #undef CONFIG_CMD_EFUSE                     /* no eFuse access in nocry stage2, not even from the UART console */
+ #undef CONFIG_JZ_EFUSE
+@@ -148,14 +156,26 @@
+ #define CONFIG_USB_JZ_DWC2_UDC_V1_1
+ #define CONFIG_USB_GADGET_VBUS_DRAW         500
+ #define CONFIG_USBDOWNLOAD_GADGET
++/* pid.codes test VID/PIDs; replace with allocated pid.codes PIDs before release */
++#define CONFIG_G_DNL_VENDOR_NUM             0x1209
++#define CONFIG_G_DNL_MANUFACTURER           "nocry"
++#ifdef CONFIG_NOCRY_FB
++#define CONFIG_NOCRY_FASTBOOT
++#define CONFIG_G_DNL_PRODUCT_NUM            0x0002
++/* fastboot boot: kernel+initramfs unpacks to 0x80010000; stay below the 0x84000000 download buffer */
++#define CONFIG_SYS_BOOTM_LEN                0x03c00000
++/*
++ * Stage2s above ~0x44000 (278528) bytes did not start on hardware (278840 failed twice,
++ * 278168 worked): keep this image small. Long command help is not needed over fastboot.
++ */
++#undef CONFIG_SYS_LONGHELP
++#else
+ #define CONFIG_CMD_USB_MASS_STORAGE
+ #define CONFIG_USB_GADGET_MASS_STORAGE
+ #define CONFIG_FSG_BUFLEN                   (128 * 1024)
+-/* pid.codes test VID/PID; replace with an allocated pid.codes PID before release */
+-#define CONFIG_G_DNL_VENDOR_NUM             0x1209
+ #define CONFIG_G_DNL_PRODUCT_NUM            0x0001
+-#define CONFIG_G_DNL_MANUFACTURER           "nocry"
+-#endif /* CONFIG_NOCRY_UMS */
++#endif
++#endif /* CONFIG_NOCRY_STAGE2 */
+ 
+ #endif /* __BURNER_COMMON_H__ */
+ 

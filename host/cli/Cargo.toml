@@ -1,0 +1,12 @@
+[package]
+name = "nocry"
+description = "USB-boot, recovery and reimaging tool for Ingenic X2000(E) based boards (Creality Nebula / K1 family)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+nocry-core = { path = "../core" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

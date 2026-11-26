@@ -1,0 +1,20 @@
+{
+  "name": "ingenic-cloner-x2000e-400mhz",
+  "description": "Reproduces the 0x800-byte parameter header of the spl.bin shipped in ballaswag/ingenic-usbboot (as produced by Ingenic's cloner). Verification only: it uses the old ddr_type enum and must NOT be paired with the k1-debian v12 SPL.",
+  "layout": "cloner",
+  "extal": 24000000,
+  "cpufreq": 800000000,
+  "uart": { "idx": 2, "baud": 115200, "gpio": { "port": 3, "func": 0, "pins": "0xc0000000" } },
+  "gpio_funcs": [ { "port": 3, "func": 0, "pins": "0x00fe0000" } ],
+  "ginfo_size": "0xb8",
+  "ddr": {
+    "chip": "W97BV6MK_LPDDR2_CLONER",
+    "name": "W97BV6MK_LPDDR2",
+    "freq": 400000000,
+    "odt": false,
+    "auto_self_refresh": false,
+    "actpd": true,
+    "mr3_ds": 2,
+    "v12": true
+  }
+}

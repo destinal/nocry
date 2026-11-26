@@ -1,0 +1,95 @@
+#!/bin/sh
+# nocry recovery USB gadget: CDC-ACM console (ttyGS0) + ADB + fastboot (nocry-fbd), both FunctionFS.
+# `S30nocry-usb refbd` restarts nocry-fbd and re-binds the gadget (development).
+# Optional: nocry.ums=ro|rw on the kernel command line adds the eMMC as a USB disk.
+G=/sys/kernel/config/usb_gadget/nocry
+log() { echo "nocry-usb: $*" > /dev/kmsg; }	# kernel log -> nocrymem ring -> `fastboot oem dmesg`
+start_fbd() {
+	( /usr/sbin/nocry-fbd /dev/mmcblk0 /dev/usb-ffs/fb 2>&1 | while IFS= read -r l; do echo "fbd: $l" > /dev/kmsg; done; log "nocry-fbd exited" ) &
+	for i in $(seq 50); do [ -e /dev/usb-ffs/fb/ep1 ] && return 0; sleep 0.1; done
+	return 1
+}
+refbd() {
+	cd $G
+	echo "" > UDC 2>/dev/null
+	killall nocry-fbd 2>/dev/null; sleep 1
+	start_fbd || log "nocry-fbd NOT ready"
+	sleep 2		# adbd re-opens its endpoints after the unbind
+	for i in $(seq 15); do
+		ls /sys/class/udc | head -n1 > UDC 2>/dev/null && { log "re-bound"; return 0; }
+		sleep 1
+	done
+	log "re-bind FAILED"
+}
+start() {
+	log "start; udc: $(ls /sys/class/udc 2>&1 | tr '\n' ' ')"
+	exec 2>/dev/kmsg
+	mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+	mkdir -p $G && cd $G
+	echo 0x1209 > idVendor; echo 0x0003 > idProduct	# pid.codes test PID (placeholder)
+	echo 0x0200 > bcdUSB; echo 0x0100 > bcdDevice
+	mkdir -p strings/0x409
+	echo nocry > strings/0x409/manufacturer
+	echo "nocry recovery" > strings/0x409/product
+	sn=$(dd if=/dev/mmcblk0 bs=512 skip=4096 count=1 2>/dev/null | cut -d';' -f1 | tr -cd 'A-Za-z0-9')
+	echo "${sn:-nocry}" > strings/0x409/serialnumber
+	mkdir -p configs/c.1/strings/0x409
+	echo "console + adb + fastboot" > configs/c.1/strings/0x409/configuration
+	echo 500 > configs/c.1/MaxPower
+	mkdir -p functions/acm.gs0 functions/ffs.adb functions/ffs.fb
+	ln -sf functions/acm.gs0 configs/c.1/
+	ln -sf functions/ffs.adb configs/c.1/
+	ln -sf functions/ffs.fb configs/c.1/
+	case " $(cat /proc/cmdline) " in
+	*" nocry.ums=ro "*|*" nocry.ums=rw "*)
+		mkdir -p functions/mass_storage.0
+		L=functions/mass_storage.0/lun.0
+		grep -q 'nocry.ums=rw' /proc/cmdline && ro=0 || ro=1
+		# ro/removable can only be changed while no file is attached: set them first
+		echo $ro > $L/ro
+		echo 0 > $L/removable
+		# same SCSI identity as the U-Boot nocry-ums disk: host tools check model "nocry eMMC"
+		printf '%-8s%-16s%-4s' nocry "nocry eMMC" 6.6 > $L/inquiry_string
+		echo /dev/mmcblk0 > $L/file
+		if [ "$(cat $L/ro)" != "$ro" ]; then
+			log "mass storage: ro is $(cat $L/ro), wanted $ro: NOT exporting the disk"
+			echo "" > $L/file
+		else
+			log "mass storage: /dev/mmcblk0, ro=$(cat $L/ro)"
+		fi
+		ln -sf functions/mass_storage.0 configs/c.1/ ;;
+	esac
+	mkdir -p /dev/usb-ffs/adb
+	mountpoint -q /dev/usb-ffs/adb || mount -t functionfs adb /dev/usb-ffs/adb
+	log "functions: $(ls configs/c.1 | tr '\n' ' ')"
+	# Android 4.2 adbd (root, not secure) also listens on 127.0.0.1:5037 and exits if it
+	# can't bind; S40network brings lo up too late, so do it here.
+	ifconfig lo 127.0.0.1 up
+	# adbd's stdout/stderr go to the kernel log (nocrymem ring, `fastboot oem dmesg`)
+	( /usr/bin/adbd 2>&1 | while IFS= read -r l; do echo "adbd: $l" > /dev/kmsg; done; log "adbd exited" ) &
+	# adbd writes its descriptors to ep0; the UDC can only be bound after that
+	for i in $(seq 50); do [ -e /dev/usb-ffs/adb/ep1 ] && break; sleep 0.1; done
+	if [ -e /dev/usb-ffs/adb/ep1 ]; then
+		log "adbd ready"
+	else
+		# an unready FunctionFS function makes the whole bind fail: keep the console anyway
+		log "adbd NOT ready ($(pidof adbd || echo 'not running')); binding without adb"
+		rm -f configs/c.1/ffs.adb
+	fi
+	mkdir -p /dev/usb-ffs/fb
+	mountpoint -q /dev/usb-ffs/fb || mount -t functionfs fb /dev/usb-ffs/fb
+	if start_fbd; then
+		log "nocry-fbd ready"
+	else
+		log "nocry-fbd NOT ready; binding without fastboot"
+		rm -f configs/c.1/ffs.fb
+	fi
+	udc=$(ls /sys/class/udc | head -n1)
+	[ -n "$udc" ] || { log "no UDC (dwc2 not bound?)"; return 1; }
+	echo "$udc" > UDC && log "gadget bound to $udc" || log "binding $udc FAILED"
+}
+case "$1" in
+start) start ;;
+refbd) refbd ;;
+stop) echo "" > $G/UDC 2>/dev/null; start-stop-daemon -K -q -x /usr/bin/adbd ;;
+esac

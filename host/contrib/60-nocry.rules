@@ -1,0 +1,23 @@
+# nocry udev rules.
+# Install: sudo cp 60-nocry.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+# then replug (or: sudo udevadm trigger --action=add --subsystem-match=usb --attr-match=idVendor=a108)
+
+# 1. Ingenic X2000(E) bootrom / USB boot mode: let the logged-in user load stage1/stage2.
+SUBSYSTEM=="usb", ATTR{idVendor}=="a108", ATTR{idProduct}=="eaef", TAG+="uaccess", MODE="0660"
+
+# 2. nocry-ums disk (stage2 running; pid.codes test ID until a PID is allocated):
+#    - logged-in user may read/write the exported eMMC without the 'disk' group
+#    - desktop must not automount its ext2 partitions (restore refuses mounted targets)
+SUBSYSTEM=="block", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ATTRS{manufacturer}=="nocry", TAG+="uaccess", ENV{UDISKS_IGNORE}="1", ENV{UDISKS_AUTO}="0"
+#    - 128 KiB SCSI requests (default usb-storage limit is 120 KiB) = one stage2 buffer each
+ACTION=="add", SUBSYSTEM=="scsi", ENV{DEVTYPE}=="scsi_device", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ATTR{max_sectors}="256"
+
+# 3. nocry fastboot stage2 (1209:0002): the stock `fastboot` client opens it via libusb.
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0002", TAG+="uaccess", MODE="0660"
+
+# 4. nocry recovery Linux (1209:0003): adb (FunctionFS) + CDC-ACM console (/dev/ttyACM*).
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0003", TAG+="uaccess", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0003", TAG+="uaccess", SYMLINK+="nocry-console"
+#    recovery's eMMC disk (nocry recovery --ums ro|rw): like rule 2, with 1 MiB SCSI requests
+SUBSYSTEM=="block", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0003", ATTRS{manufacturer}=="nocry", TAG+="uaccess", ENV{UDISKS_IGNORE}="1", ENV{UDISKS_AUTO}="0"
+ACTION=="add", SUBSYSTEM=="scsi", ENV{DEVTYPE}=="scsi_device", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0003", ATTR{max_sectors}="2048"

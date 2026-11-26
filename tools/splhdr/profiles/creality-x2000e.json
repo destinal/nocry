@@ -1,0 +1,25 @@
+{
+  "name": "creality-x2000e",
+  "description": "Ingenic X2000E (V12) with in-package Winbond W97BV6MK LPDDR2, as on the Creality K1 / K1 Max. For use with the k1-debian burner_x2000 (x2000_v12) SPL. Other X2000E Creality boards (K1C pre-2025, Nebula Pad) are expected to match but are UNVERIFIED.",
+  "layout": "v12",
+  "extal": 24000000,
+  "cpufreq": 800000000,
+  "mpll": 1500000000,
+  "uart": { "idx": 2, "baud": 115200, "gpio": { "port": 3, "func": 0, "pins": "0xc0000000" } },
+  "gpio_funcs": [ { "port": 3, "func": 0, "pins": "0x00fe0000" } ],
+  "ginfo_size": "0x94",
+  "ddr": {
+    "chip": "W97BV6MK",
+    "freq": 500000000,
+    "odt": false,
+    "auto_self_refresh": false,
+    "actpd": true,
+    "mr3_ds": 2,
+    "v12": true
+  },
+  "notes": [
+    "500 MHz = MPLL 1500 MHz / 3: the DDR clock k1-debian's burner_x2000 SPL and crealityk1 U-Boot use.",
+    "Timings: Ingenic's open W97BV6MK table (golden-tested against the C creator).",
+    "ODT/auto-self-refresh off and ACTPD on, as in the header Ingenic's cloner sends (hardware-proven via ballaswag's spl.bin)."
+  ]
+}

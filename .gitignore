@@ -1,0 +1,14 @@
+# never publish: board backups, RAM dumps, generated identities (serial numbers, MAC addresses)
+/backups/
+/ram*.bin
+nocry-identities.log
+*.img
+*.img.sha256
+
+# build output (binaries are published as release assets, not in git)
+/host/target/
+/gui/build/
+/tools/burner-build/out/
+/tools/recovery-build/out/
+__pycache__/
+*.pyc

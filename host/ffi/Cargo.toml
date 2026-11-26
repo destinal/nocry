@@ -1,0 +1,15 @@
+[package]
+name = "nocry-ffi"
+description = "C interface to nocry-core for the Qt front end"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "nocry_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+nocry-core = { path = "../core" }
+anyhow = "1"

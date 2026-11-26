@@ -1,0 +1,18 @@
+[package]
+name = "nocry-core"
+description = "nocry library: USB boot, fastboot client, images, GPT, sn_mac, restore/backup engines"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rusb = "0.9"
+crc32fast = "1"
+getrandom = { version = "0.2", features = ["std"] }
+libc = "0.2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
