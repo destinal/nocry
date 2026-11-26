@@ -16,7 +16,7 @@ libc = "0.2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
-backhand = { version = "0.18", default-features = false, features = ["gzip"] }   # Creality rootfs images are gzip squashfs; xz would pull in liblzma (C)
+flate2 = "1"
 
 # no system libusb on Windows/macOS: build it in
 [target.'cfg(not(target_os = "linux"))'.dependencies]

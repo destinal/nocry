@@ -102,17 +102,8 @@ fn read_opt(p: &Path) -> Result<Option<Vec<u8>>> {
 /// Reads etc/ota_info out of the rootfs squashfs (no external tools).
 fn ota_info(rootfs: &[u8]) -> (Option<String>, Option<String>) {
     let read = || -> Option<String> {
-        let fs = backhand::FilesystemReader::from_reader(std::io::Cursor::new(rootfs)).ok()?;
-        for node in fs.files() {
-            if node.fullpath == Path::new("/etc/ota_info") {
-                if let backhand::InnerNode::File(f) = &node.inner {
-                    let mut out = Vec::new();
-                    fs.file(&f.basic).reader().read_to_end(&mut out).ok()?;
-                    return Some(String::from_utf8_lossy(&out).to_string());
-                }
-            }
-        }
-        None
+        let out = crate::squashfs::read_file(rootfs, "etc/ota_info", 64 * 1024)?;
+        Some(String::from_utf8_lossy(&out).to_string())
     };
     let s = read().unwrap_or_default();
     let get = |k: &str| s.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());

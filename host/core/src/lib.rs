@@ -16,4 +16,5 @@ pub mod image;
 pub mod restore;
 pub mod session;
 pub mod snmac;
+pub mod squashfs;
 pub mod usb;
