@@ -10,5 +10,6 @@ nocry-identities.log
 /gui/build/
 /tools/burner-build/out/
 /tools/recovery-build/out/
+/tools/rtos-build/out/
 __pycache__/
 *.pyc
