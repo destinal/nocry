@@ -97,7 +97,9 @@ On the board (RAM only):  SPL → fastboot stage2 (U-Boot) → recovery Linux wi
 Progress (2026-11-25), phase 1:
 - Done: fastboot service in the recovery (`nocry-fbd`) with streaming write and on-board hashing; backup, restore, write-image and snmac run over it by default with no disk device on the PC; `host/` is a workspace with the `nocry-core` library and the `nocry` CLI.
 - Done: device orchestration moved into `nocry-core` (`session`, `events`); C interface `host/ffi`; first Qt window (`gui/`) showing live state, device details and partitions, verified against the Nebula on Linux.
-- Still to do in the GUI: every action (backup, install, switch system, factory reset, restore), cancellation, error dialogs; builds for macOS and Windows have not been attempted.
+- Done since: all simple-mode actions, Advanced mode, firmware list, packages for the three platforms (see README for what is tested where).
+- Done 2026-11-26: Linux udev helper, install to the inactive slot, secure erase (verified on the Nebula: eMMC secure discard), board log viewer, USB boot mode help, refusal of non-X2000 boards.
+- Still to do: a picture of the Nebula Pad's BOOT/RESET buttons (only a K1 schematic exists); starting a board from slot B has not been tried; Windows package untested.
 
 1. **Core split and transport:** `nocry-core` library; fastboot service in recovery with hash-range; measure speed; port restore/backup to it.
 2. **Images:** built-in OTA and squashfs reading; Creality firmware list and download cache; auto-fetch of the `.ingenic` boot area.

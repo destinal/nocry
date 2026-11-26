@@ -75,6 +75,14 @@ enum Cmd {
     /// Start nocry fastboot (boots stage1+stage2 if the board is in USB boot mode); then use the
     /// stock `fastboot` tool: flash/erase/fetch by GPT name, mmc0, gpt, bootloader, kernel_a/_b...
     Fastboot,
+    /// Erase settings and files (rootfs_data, userdata) so they cannot be recovered: eMMC
+    /// secure erase where the card supports it, else overwrite; verified. Firmware stays.
+    SecureErase {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Print the board's own log (recovery kernel log, or what the last start left in memory)
+    BootLog,
     /// Boot the nocry recovery Linux from RAM (via nocry fastboot; nothing is written) and wait
     /// for adb. --ums also exports the eMMC as a USB disk (HS200 8-bit; restore/snmac use it).
     Recovery {
@@ -415,6 +423,21 @@ fn main() -> Result<()> {
             let want = if write { Want::Rw } else { Want::PreferRw };
             let t = open_target(soc, target.as_ref(), want, write, allow_any_device, images.as_ref(), device.as_deref(), via)?;
             cmd_snmac(t, set_model, yes)?
+        }
+        Cmd::SecureErase { yes } => {
+            if !yes {
+                bail!("this erases all settings and files on the board for good; add --yes to do it");
+            }
+            let w = secure_wipe_data(soc, Via::Auto, None, None)?;
+            for (n, m) in &w.partitions {
+                println!("{n}: {m}");
+            }
+            println!("erased and verified {} bytes", w.bytes);
+        }
+        Cmd::BootLog => {
+            let (kind, text) = boot_log()?;
+            eprintln!("[{kind}]");
+            println!("{text}");
         }
         Cmd::Fastboot => {
             ensure_fastboot(soc, images.as_ref(), device.as_deref())?;

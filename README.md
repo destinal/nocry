@@ -27,6 +27,9 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 - **Install firmware** from a Creality `.ingenic` package or an unpacked OTA: repair in place (keep data) or clean install. Handles a completely blank board, generating a serial number and MAC address if needed.
 - **Convert** between Nebula-based models (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max) by installing the other model's firmware.
 - **Switch the active firmware slot** (A/B) and **factory reset**.
+- **Install to the other slot**: put a second firmware version of the same printer type beside the running one, then choose which starts. Untested on hardware beyond the write itself: no board has been started from slot B yet.
+- **Secure erase**: a factory reset that also destroys the old settings and files, using the storage chip's secure erase where it has one (it does on the Nebula Pad), then checks that every byte is zero. About 3 minutes.
+- **Board log**: read the recovery system's kernel log from the window or with `nocry boot-log`.
 - **Rebuild a blank board** from an update file or the list: the bootloader and partition table that update files lack are fetched once from Creality's factory package and checksum-verified.
 - **Advanced**: back up, restore or erase a single partition; edit the serial number, MAC address and model; erase the entire storage.
 - **Pick firmware from a list**: versions published by Creality for the supported printers, downloaded and checksum-verified, or use a local update file (`*_ota_img_V*.img`), `.ingenic` package or folder.
@@ -54,13 +57,13 @@ tools/recovery-build/build.sh      # recovery Linux (needs Docker; ~15 min the f
 cmake -S gui -B gui/build -DCMAKE_BUILD_TYPE=Release && cmake --build gui/build -j   # GUI (Qt 6)
 ```
 
-On Linux, install `host/contrib/60-nocry.rules` into `/etc/udev/rules.d/` so a normal user can open the USB devices. See `host/README.md` for the command-line tool and `gui/README.md` for the GUI.
+On Linux a udev rule is needed so a normal user can open the USB devices. The window offers to install it on first run (one password prompt); by hand, copy `host/contrib/60-nocry.rules` into `/etc/udev/rules.d/`. See `host/README.md` for the command-line tool and `gui/README.md` for the GUI.
 
 ## Safety
 
 - The bootrom loader only sends requests 0x00–0x05; the stages are built without eFuse code.
 - Destructive actions are dry runs or ask for confirmation first, and save the partition table, slot record and identity to the PC before writing.
-- Boards with secure boot (the 2025 K1C, X2600E) are out of scope.
+- Boards with secure boot (the 2025 K1C, X2600E) are out of scope. A board whose processor is not in the X2000 family is refused before anything is sent to it. Secure boot itself cannot be queried, so an X2000 board with it enabled shows up as a loader that never starts, and nocry says so.
 - Changing a board's serial number or MAC address, or copying another board's identity, is possible and is your responsibility.
 
 ## Credits and licence
