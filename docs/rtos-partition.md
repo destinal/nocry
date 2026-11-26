@@ -88,6 +88,32 @@ paths left in the binary:
   (`lcdc.c`, DPU), MIPI-DSI, a 480x272 panel driver, PWM backlight.
 - **IJG libjpeg** for the logos.
 
+## Where the source comes from
+
+The image is built from **Ingenic's FreeRTOS SDK for the X2000** ("深度FreeRTOS平台", the
+"deep FreeRTOS platform"), with Creality's boot-logo application on top. Ingenic documents it
+at <http://docs.ingenic.com.cn/> (Darwin / X2000, "RTOS开发平台"). The SDK is fetched with
+`repo` from Ingenic's own Gerrit server (`mirror/freertos/manifest.git`) and access requires
+registering an SSH key with Ingenic, so it is **not publicly downloadable**.
+
+Ingenic's public bare-metal library, [libbare-cpu](https://gitee.com/ingenic-dev/libbare-cpu),
+supports the same chip and has FreeRTOS ports, but it is a different code base: none of the
+file or function names in the board's image (`os/freertos/thread_waiter.c`,
+`arch_request_irq_disabled`, `xburst2/soc-x2000/...`) occur in it.
+
+Licences of the parts, as far as they can be told from the binary:
+
+| Part | Licence | Source owed with the binary? |
+|---|---|---|
+| FreeRTOS kernel | MIT (V10 and later; older versions a modified GPL with a linking exception) | no |
+| RT-Thread DFS | Apache-2.0 (3.1 and later; GPL-2.0 with exception before) | no |
+| IJG libjpeg | IJG licence | no (acknowledgement) |
+| newlib | BSD-style | no |
+| Ingenic drivers, Creality application | proprietary | no |
+| the SPL that loads it (U-Boot 2013.07) | GPL-2.0 | **yes**; matching code is in k1-debian/u-boot |
+
+The FreeRTOS version could not be determined; the image has no version string.
+
 ## Logo choice depends on the model in `sn_mac`
 
 The rtos splits the `sn_mac` record at `;` (serial; MAC; model) and compares the model
