@@ -1,0 +1,38 @@
+name: windows-driver
+# Checks that a current Windows accepts the driver package the app installs (signature and INF).
+on:
+  workflow_dispatch:
+  push:
+    paths: ["host/contrib/windows/**", ".github/workflows/windows-driver.yml"]
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File host\contrib\windows\install-driver.ps1
+          if ($LASTEXITCODE) { Get-Content host\contrib\windows\install-driver.log; exit 1 }
+          Get-Content host\contrib\windows\install-driver.log
+          $d = pnputil /enum-drivers | Out-String
+          if ($d -notmatch 'nocry\.inf') { Write-Host $d; throw 'package not in the driver store' }
+          $left = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -like '*nocry*' }
+          if ($left) { throw 'the signing key was not destroyed' }
+          if (-not (Get-ChildItem Cert:\LocalMachine\TrustedPublisher | Where-Object { $_.Subject -like '*nocry*' })) { throw 'certificate not trusted' }
+      - name: Install again (idempotent)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File host\contrib\windows\install-driver.ps1
+          if ($LASTEXITCODE) { exit 1 }
+          $n = (pnputil /enum-drivers | Select-String 'nocry\.inf').Count
+          if ($n -ne 1) { throw "expected one package, found $n" }
+      - name: Uninstall
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File host\contrib\windows\install-driver.ps1 -Uninstall
+          if ($LASTEXITCODE) { exit 1 }
+          if ((pnputil /enum-drivers | Out-String) -match 'nocry\.inf') { throw 'package still present' }
+          foreach ($s in 'Root','TrustedPublisher','My') {
+            if (Get-ChildItem "Cert:\LocalMachine\$s" | Where-Object { $_.Subject -like '*nocry*' }) { throw "certificate left in $s" }
+          }
