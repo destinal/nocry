@@ -2,7 +2,17 @@
 
 A recovery, backup and firmware-installation tool for Ingenic X2000E-based Creality boards. It replaces Ingenic's Cloner with something safer and easier: everything it loads onto the board runs from RAM, every write is verified, and it cannot send eFuse or secure-boot commands.
 
-**Status: early, tested on one board family.** Everything below has been run on a retail Creality Nebula Pad (and the same board converted to Ender-3 V3 KE firmware and back). K1 and K1 Max support is planned and untested. The GUI builds and runs on Linux only so far. Use it at your own risk and take a backup first.
+**Status: early, tested on one board family.** Everything below has been run on a retail Creality Nebula Pad (and the same board converted to Ender-3 V3 KE firmware and back). K1 and K1 Max support is planned and untested. Use it at your own risk and take a backup first.
+
+## Download
+
+Get the latest pre-release from the [releases page](https://github.com/destinal/nocry/releases).
+
+| Platform | Package | State |
+|---|---|---|
+| Linux (x86-64) | `.AppImage` | Tested. Install `60-nocry.rules` once so a normal user can open the board (see Building). |
+| macOS (Apple silicon) | `.dmg`, drag to Applications | Tested and working. Unsigned: right-click the app and choose Open the first time. |
+| Windows (x64) | `-setup.exe`, installs for the current user without administrator rights | Builds, **not yet tested**. The board in USB boot mode probably needs a WinUSB driver that the installer does not provide yet. |
 
 ![The nocry window: board details and the main actions](docs/screenshots/home.png)
 
