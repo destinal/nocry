@@ -99,6 +99,7 @@ Progress (2026-11-25), phase 1:
 - Done: device orchestration moved into `nocry-core` (`session`, `events`); C interface `host/ffi`; first Qt window (`gui/`) showing live state, device details and partitions, verified against the Nebula on Linux.
 - Done since: all simple-mode actions, Advanced mode, firmware list, packages for the three platforms (see README for what is tested where).
 - Done 2026-11-26: Linux udev helper, install to the inactive slot, secure erase (verified on the Nebula: eMMC secure discard), board log viewer, USB boot mode help, refusal of non-X2000 boards.
+- Done 2026-11-26: board families (`host/core/src/boards.rs`): K1 family next to the Nebula family; what a firmware supports is read from the firmware; partition table fitted to the storage size on a rebuild; K1 and Ender-3 V3 firmware lists; reader for the newer unencrypted update container and LZO squashfs.
 - Still to do: a picture of the Nebula Pad's BOOT/RESET buttons (only a K1 schematic exists); starting a board from slot B has not been tried; Windows package untested.
 
 1. **Core split and transport:** `nocry-core` library; fastboot service in recovery with hash-range; measure speed; port restore/backup to it.

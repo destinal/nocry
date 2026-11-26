@@ -71,6 +71,8 @@ pub struct Package {
     pub ota_board: Option<String>,
     /// printer types (and mainboards) the firmware itself says it supports
     pub support: Vec<crate::boards::Support>,
+    /// something the user should know about this firmware before installing it
+    pub remark: Option<String>,
     pub ota_version: Option<String>,
 }
 
@@ -110,7 +112,22 @@ fn ota_info(rootfs: &[u8]) -> (Option<String>, Option<String>) {
     };
     let s = read().unwrap_or_default();
     let get = |k: &str| s.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());
-    (get("ota_board_name="), get("ota_version="))
+    if let (Some(b), Some(v)) = (get("ota_board_name="), get("ota_version=")) {
+        return (Some(b), Some(v));
+    }
+    // the K1 family's newer generation (Linux 5.10, late 2025): etc/hardware and etc/version
+    let line = |path: &str| {
+        crate::squashfs::read_file(rootfs, path, 4096)
+            .map(|b| String::from_utf8_lossy(&b).trim().to_string())
+            .filter(|s| !s.is_empty() && s.len() < 64 && s.bytes().all(|c| c.is_ascii_graphic()))
+    };
+    match (line("etc/hardware"), line("etc/version")) {
+        (Some(b), Some(v)) => {
+            let v = v.rsplit_once("_V").map(|(_, n)| n.to_string()).unwrap_or(v);
+            (Some(b), Some(v))
+        }
+        _ => (get("ota_board_name="), get("ota_version=")),
+    }
 }
 
 impl Package {
@@ -138,6 +155,9 @@ impl Package {
         } else if crate::ota::is_ota(p) {
             let o = crate::ota::load(p)?;
             (None, o.rtos, o.kernel, o.rootfs)
+        } else if crate::ota::is_plain_ota(p) {
+            let o = crate::ota::load_plain(p)?;
+            (None, o.rtos, o.kernel, o.rootfs)
         } else {
             bail!(
                 "{}: not a firmware nocry can read. Expected a Creality .ingenic package, an OTA update \
@@ -162,7 +182,13 @@ impl Package {
         }
         let (ota_board, ota_version) = ota_info(&rootfs);
         let support = crate::boards::firmware_support(&rootfs);
-        Ok(Package { source: p.display().to_string(), boot, rtos, kernel, rootfs, ota_board, ota_version, support })
+        // the K1 family's newer generation is published only for printers with the CFS-C upgrade
+        let remark = crate::squashfs::read_file(&rootfs, "etc/hardware", 4096).map(|_| {
+            "this is the newer firmware generation for K1-family printers fitted with the CFS-C upgrade kit; \
+             it is not meant for a printer without that kit"
+                .to_string()
+        });
+        Ok(Package { source: p.display().to_string(), boot, rtos, kernel, rootfs, ota_board, ota_version, support, remark })
     }
 }
 

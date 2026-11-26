@@ -153,20 +153,28 @@ pub struct Support {
 /// /etc/init.d/S55klipper_service, which picks the printer's configuration at every start.
 /// Empty if the script is missing or reads differently.
 pub fn firmware_support(rootfs: &[u8]) -> Vec<Support> {
-    let Some(script) = squashfs::read_file(rootfs, "etc/init.d/S55klipper_service", 1 << 20) else {
-        return vec![];
-    };
-    parse_support(&String::from_utf8_lossy(&script))
+    // the second path is where the K1 family's newer generation keeps it
+    for path in ["etc/init.d/S55klipper_service", "apps/etc/init.d/CS55klipper_service"] {
+        if let Some(script) = squashfs::read_file(rootfs, path, 1 << 20) {
+            let s = parse_support(&String::from_utf8_lossy(&script));
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    vec![]
 }
 
 pub fn parse_support(script: &str) -> Vec<Support> {
     let mut out: Vec<Support> = vec![];
-    let Some(start) = script.find("copy_config()") else {
-        return out;
-    };
-    let body = &script[start..];
-    let Some(case) = body.find("case $model in") else {
-        return out;
+    // older firmware: `case $model in` inside copy_config(); the K1 family's newer generation:
+    // `case $product in` at the top of the script
+    let (body, case) = match script.find("copy_config()").and_then(|s| script[s..].find("case $model in").map(|c| (s, c))) {
+        Some((s, c)) => (&script[s..], c),
+        None => match script.find("case $product in") {
+            Some(c) => (script, c),
+            None => return out,
+        },
     };
     let mut cur: Option<Support> = None;
     for raw in body[case..].lines().skip(1) {
@@ -260,6 +268,12 @@ copy_config()
         let s = parse_support("copy_config()\n{\n case $model in\n \"Nebula Pad\")\n  config_dir=Nebula/Ender-3\\ Pro\n  ;;\n\n *)\n  config_dir=\n  ;;\n esac\n}\n");
         assert_eq!(s, vec![Support { model: "Nebula Pad".into(), mainboards: vec![] }]);
         assert!(supports(&s, "Nebula Pad", "NEBULA V1.0.0.1"));
+    }
+
+    #[test]
+    fn reads_newer_generation() {
+        let s = parse_support("product=$(x2000_get_sn_mac.sh model)\nif [ -n \"$product\" ]; then\n case $product in\n \"K1C\")\n  model=\"k1c\"\n  ;;\n \"CR-K1 Max\")\n  model=\"k1max\"\n  gcode=\"k1max\"\n  ;;\n *)\n  model=\"k1c\"\n  ;;\n esac\nfi\n");
+        assert_eq!(s.iter().map(|x| x.model.as_str()).collect::<Vec<_>>(), ["K1C", "CR-K1 Max"]);
     }
 
     #[test]

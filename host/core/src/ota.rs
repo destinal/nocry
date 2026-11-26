@@ -215,6 +215,64 @@ pub fn load(path: &Path) -> Result<Ota> {
     Ok(ota)
 }
 
+// ---------------------------------------------------------------------------
+// The newer, unencrypted container ("..._ota_X2000E_V...img", K1-family S12 firmware from late 2025)
+//
+//   0x000  file name (0x80)      0x080  description (0x40)     0x0c0  build time, text (0x40)
+//   0x100  version, text (0x20)  0x120  u32 time               0x128  u64 file size
+//   0x130  u32 number of entries, u32 1
+//   0x138  entries, 0xe0 bytes each: u32 id, name (0x80), target device "mmcblk0pN" (0x40),
+//          u64 size, u64 offset in the file, 8 zero bytes, u32 crc32 of the data
+// Each image is listed twice, once per slot (p3/p4 rtos, p5/p6 kernel, p7/p8 rootfs).
+
+const PLAIN_ENTRIES: usize = 0x138;
+const PLAIN_ENTRY: usize = 0xe0;
+
+fn plain_header(h: &[u8], file_len: u64) -> Option<usize> {
+    if h.len() < PLAIN_ENTRIES {
+        return None;
+    }
+    let name_ok = h[..0x80].iter().take_while(|&&c| c != 0).all(|&c| (0x20..0x7f).contains(&c)) && h[0] != 0;
+    let total = u64::from_le_bytes(h[0x128..0x130].try_into().unwrap());
+    let n = u32::from_le_bytes(h[0x130..0x134].try_into().unwrap()) as usize;
+    (name_ok && total == file_len && (1..=64).contains(&n)).then_some(n)
+}
+
+pub fn is_plain_ota(path: &Path) -> bool {
+    let Ok(md) = std::fs::metadata(path) else { return false };
+    let mut h = [0u8; PLAIN_ENTRIES];
+    std::fs::File::open(path).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut h)).is_ok() && plain_header(&h, md.len()).is_some()
+}
+
+pub fn load_plain(path: &Path) -> Result<Ota> {
+    let d = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let n = plain_header(&d, d.len() as u64).context("not an update file of the unencrypted kind")?;
+    let text = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).to_string();
+    let mut ota = Ota { version: text(&d[0x100..0x120]).trim_start_matches(['V', 'v']).to_string(), seed: String::new(), ..Default::default() };
+    for i in 0..n {
+        let e = PLAIN_ENTRIES + i * PLAIN_ENTRY;
+        if e + PLAIN_ENTRY > d.len() {
+            bail!("the update file's table of contents is cut short");
+        }
+        let (name, dev) = (text(&d[e + 4..e + 0x84]), text(&d[e + 0x84..e + 0xc4]));
+        let size = u64::from_le_bytes(d[e + 0xc4..e + 0xcc].try_into().unwrap()) as usize;
+        let off = u64::from_le_bytes(d[e + 0xcc..e + 0xd4].try_into().unwrap()) as usize;
+        let crc = u32::from_le_bytes(d[e + 0xdc..e + 0xe0].try_into().unwrap());
+        let slot = match dev.as_str() {
+            "mmcblk0p3" => &mut ota.rtos,
+            "mmcblk0p5" => &mut ota.kernel,
+            "mmcblk0p7" => &mut ota.rootfs,
+            _ => continue, // the second slot's copies, or something this board layout has no place for
+        };
+        let img = d.get(off..off.saturating_add(size)).with_context(|| format!("{name}: lies outside the update file"))?;
+        if crc32fast::hash(img) != crc {
+            bail!("{name} in the update file is damaged (checksum mismatch)");
+        }
+        *slot = Some(img.to_vec());
+    }
+    Ok(ota)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

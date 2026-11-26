@@ -601,6 +601,10 @@ pub fn install(
         ..Default::default()
     };
     say!("firmware: {} {} from {}", r.firmware_board, r.firmware_version, pkg.source);
+    if let Some(n) = &pkg.remark {
+        say!("note: {n}");
+        r.notes.push(n.clone());
+    }
     let want = if execute { Want::Rw } else { Want::PreferRw };
     let t = open_target(soc, target, want, execute, false, None, None, via)?;
     let mut blank = true;
@@ -666,11 +670,14 @@ pub fn install(
         r.model_before_name = crate::snmac::product_name(&r.model_before);
     }
     r.firmware_name = crate::snmac::product_name_for_ota_board(&r.firmware_board);
+    if pkg.remark.is_some() {
+        r.firmware_name += " (for the CFS-C upgrade)";
+    }
     if let Some((b, _)) = &plan.device_firmware {
         r.device_firmware_name = crate::snmac::product_name_for_ota_board(b);
     }
     r.identity_generated = plan.identity_generated;
-    r.notes = plan.notes.clone();
+    r.notes.extend(plan.notes.iter().cloned());
     r.details = plan.describe();
     r.bytes_to_write = plan.bytes();
     if !execute || r.bytes_to_write == 0 {

@@ -19,8 +19,17 @@ fn inflate(data: &[u8], limit: usize) -> Option<Vec<u8>> {
     (out.len() <= limit).then_some(out)
 }
 
+fn unlzo(data: &[u8], limit: usize) -> Option<Vec<u8>> {
+    let out = lzokay_native::decompress_all(data, Some(limit)).ok()?;
+    (out.len() <= limit).then_some(out)
+}
+
+const COMP_GZIP: u16 = 1;
+const COMP_LZO: u16 = 3;
+
 struct Sq<'a> {
     img: &'a [u8],
+    comp: u16,
     block_size: usize,
     inode_table: u64,
     dir_table: u64,
@@ -28,13 +37,20 @@ struct Sq<'a> {
 }
 
 impl<'a> Sq<'a> {
+    fn unpack(&self, data: &[u8], limit: usize) -> Option<Vec<u8>> {
+        match self.comp {
+            COMP_LZO => unlzo(data, limit),
+            _ => inflate(data, limit),
+        }
+    }
+
     /// One metadata block at absolute `pos`: (data, position of the next block).
     fn meta_block(&self, pos: u64) -> Option<(Vec<u8>, u64)> {
         let p = pos as usize;
         let h = u16le(self.img, p)?;
         let n = (h & 0x7fff) as usize;
         let raw = self.img.get(p + 2..p + 2 + n)?;
-        let data = if h & 0x8000 != 0 { raw.to_vec() } else { inflate(raw, 8192)? };
+        let data = if h & 0x8000 != 0 { raw.to_vec() } else { self.unpack(raw, 8192)? };
         Some((data, pos + 2 + n as u64))
     }
 
@@ -93,7 +109,7 @@ impl<'a> Sq<'a> {
         if word & (1 << 24) != 0 {
             Some(raw.to_vec())
         } else {
-            inflate(raw, self.block_size)
+            self.unpack(raw, self.block_size)
         }
     }
 
@@ -134,14 +150,16 @@ impl<'a> Sq<'a> {
 }
 
 /// Reads the regular file at `path` (e.g. "etc/ota_info", no symlinks followed) from a
-/// gzip squashfs image. None if the image is not gzip squashfs 4, or the file is missing
+/// gzip- or lzo-compressed squashfs image. None if the image is not such a squashfs 4, or the file is missing
 /// or larger than `max` bytes.
 pub fn read_file(img: &[u8], path: &str, max: usize) -> Option<Vec<u8>> {
-    if img.get(..4)? != b"hsqs" || u16le(img, 20)? != 1 || u16le(img, 28)? != 4 {
+    let comp = u16le(img, 20)?;
+    if img.get(..4)? != b"hsqs" || !(comp == COMP_GZIP || comp == COMP_LZO) || u16le(img, 28)? != 4 {
         return None;
     }
     let sq = Sq {
         img,
+        comp,
         block_size: u32le(img, 12)? as usize,
         inode_table: u64le(img, 64)?,
         dir_table: u64le(img, 72)?,

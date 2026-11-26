@@ -2,7 +2,19 @@
 
 A recovery, backup and firmware-installation tool for Ingenic X2000E-based Creality boards. It replaces Ingenic's Cloner with something safer and easier: everything it loads onto the board runs from RAM, every write is verified, and it cannot send eFuse or secure-boot commands.
 
-**Status: early, tested on one board family.** Everything below has been run on a retail Creality Nebula Pad (and the same board converted to Ender-3 V3 KE firmware and back). K1 and K1 Max support is planned and untested. Use it at your own risk and take a backup first.
+**Status: early.** Most of it has been run on a retail Creality Nebula Pad (and the same board converted to Ender-3 V3 KE firmware and back). On a K1 mainboard the loader, the recovery system and a full backup work; installing K1-family firmware has so far only been tested on image copies of that board. Use it at your own risk and take a backup first.
+
+## Boards
+
+| Family | Printers | Firmware | State |
+|---|---|---|---|
+| Nebula Pad | retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max | one per printer type | tested on hardware |
+| K1 | K1, K1 Max, K1C (pre-2025), K1 SE, and others on mainboards `CR4CU220812S10/S11/S12` | one "K1 series" firmware for all of them; the printer type and mainboard fields of the board's identity decide the configuration | loader, recovery, backup tested on a K1 mainboard; installs tested on image copies only |
+| K1 | Ender-3 V3, Ender-3 V3 Plus | "Ender-3 V3 series" firmware | not tried on hardware |
+
+What a firmware supports (which printer types, on which mainboards) is read from the firmware itself, so nocry asks which printer a board is for only when the board and the firmware leave it open. Firmware for the other family is refused. The newer firmware generation for K1 printers with the CFS-C upgrade (`..._ota_X2000E_...img`) can be read and is labelled as such.
+
+Storage size and partition table: an existing table is used as it is. When a board is rebuilt from scratch, the factory table is fitted to the board's storage the way Creality's factory tool does it (the last partition, `userdata`, takes whatever is left), so 4, 8 and 32 GB parts all work.
 
 ## Download
 
@@ -25,7 +37,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 - **Back up** the whole eMMC to a file, verified by hashes computed on the board (about 5 minutes for 7.3 GiB).
 - **Restore** a backup; only the parts that differ are written.
 - **Install firmware** from a Creality `.ingenic` package or an unpacked OTA: repair in place (keep data) or clean install. Handles a completely blank board, generating a serial number and MAC address if needed.
-- **Convert** between Nebula-based models (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max) by installing the other model's firmware.
+- **Convert** within a family: between Nebula-based models (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max) by installing the other model's firmware, or which K1-family printer a K1 mainboard is set up for.
 - **Switch the active firmware slot** (A/B) and **factory reset**.
 - **Install to the other slot**: put a second firmware version of the same printer type beside the running one, then choose which starts. Untested on hardware beyond the write itself: no board has been started from slot B yet.
 - **Copy a slot**: copy the firmware of slot A into slot B or the other way round, verified (about 40 seconds), from the Switch Active Slot window or with `nocry copy-slot a --yes`.
