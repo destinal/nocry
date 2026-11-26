@@ -185,6 +185,33 @@ effect:
 Three real differences were found this way and fixed: two display registers whose reset
 bits nocry-rtos had cleared, and the moment at which "display end" is cleared last.
 
+## The K1 family's image (480x800 panels)
+
+From the K1 firmware 1.3.3.5 image (`CR4CU220812S11`), run in the emulator against simulated
+panels. Not yet implemented in nocry-rtos and nothing here has been checked on a K1 board.
+
+The image is built from the same code as the Nebula Pad's, with four panel drivers instead of
+one. All are 480x800 RGB panels on the same 16 data pins, configured over a bit-banged
+3-wire serial link (9-bit words: a command/data bit, then 8 bits):
+
+| Pins | CS PA2, clock PC27, data PC28 (both directions for one panel), data out of the panel PB16, reset PB29, power PC21 (low = on) |
+|---|---|
+
+At start-up the image asks each driver in turn whether its panel is there; the first that
+answers is used and its number becomes `lcm_id` on the kernel command line. If none answers,
+number 3 is used ("default lcd").
+
+| `lcm_id` | Panel driver | Recognised by |
+|---|---|---|
+| 1 | `gc9503cv_ue_480_800` | registers 0xDB and 0xDC read 0x95, 0x04 |
+| 3 | `st7701_tjc_480_800` | register 0xA1 starts 0x77 0x01 (or 0x88 0x02, 0x99 0x03), register 0x04 reads 0x54 0x01 0x01 |
+| 8 | `st7701_9bit_spi_pj_480_800` | register 0x04 reads 0x43 0x02 0x04 |
+| 9 | `st7701_9bit_spi_dc_480_800` | register 0x04 reads 0xDC 0x43 0x48 |
+
+After that the sequence is the Nebula Pad's with other values: pixel clock MPLL / 70 (about
+21.4 MHz, 50 Hz refresh), the panel's own timings, `TFT_CFG` = 2, the panel's power-on and a
+list of serial commands, a 480x800 frame buffer, then the same backlight and hand-over steps.
+
 ## Method
 
 `dd` the partition from a full backup; `strings` for source paths and the toolchain banner;

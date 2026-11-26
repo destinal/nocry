@@ -81,6 +81,9 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Unpack a firmware file (.ingenic package, update .img, or folder) into DIR:
+    /// rtos.bin (zero.bin), kernel.bin (xImage), rootfs.squashfs
+    Unpack { firmware: PathBuf, dir: PathBuf },
     /// Show the two firmware slots, or with --set a|b choose the one that starts
     Slots {
         #[arg(long)]
@@ -445,6 +448,15 @@ fn main() -> Result<()> {
                 println!("{n}: {m}");
             }
             println!("erased and verified {} bytes", w.bytes);
+        }
+        Cmd::Unpack { firmware, dir } => {
+            let p = restore::Package::load(&firmware)?;
+            std::fs::create_dir_all(&dir)?;
+            for (n, d) in [("rtos.bin", &p.rtos), ("kernel.bin", &p.kernel), ("rootfs.squashfs", &p.rootfs)] {
+                std::fs::write(dir.join(n), d)?;
+                println!("{n}: {} bytes", d.len());
+            }
+            println!("board {}, version {}", p.ota_board.as_deref().unwrap_or("?"), p.ota_version.as_deref().unwrap_or("?"));
         }
         Cmd::Slots { set } => {
             let s = match set {

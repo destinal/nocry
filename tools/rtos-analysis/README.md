@@ -5,6 +5,7 @@ and prints every hardware register access in order, together with the image's ow
 messages. It is how the set-up sequence in `rtos/display.c` was established.
 
     pip install --user unicorn
+    nocry unpack <firmware file> out/                # out/rtos.bin is the image
     python3 emu.py <rtos image> <regdump>            # CPM (clock) registers seeded from a running system
     GATED=1 python3 emu.py <rtos image> <regdump>    # all clock gates closed first: shows which the image opens
 
@@ -13,6 +14,17 @@ messages. It is how the set-up sequence in `rtos/display.c` was established.
 registers 0x10000000-0x100000ff from a running stock system; the image reads the PLL
 settings from them.
 
+Environment: `MODEL` and `BOARD` set the model and mainboard fields of the `sn_mac` record the
+image is given (default: a Nebula Pad). `PANEL=tjc|pj|dc|gc9503|none` chooses what a simulated
+panel answers on the K1 boards' serial link, so each detection path can be followed.
+`PINS=0` prints raw GPIO register writes instead of decoded pin changes and serial words.
+
+    MODEL=CR-K1 BOARD=CR4CU220812S11 PANEL=tjc python3 emu.py k1/rtos.bin regdump.txt
+
+Function addresses differ between images; they are kept per image in `profiles.json`.
+`match.py <profiled image> <new image> <name>` makes the profile for another image by
+instruction pattern.
+
 How it works, and its limits:
 
 - The scheduler is not emulated. Thread functions run one after another; when one sleeps, the
@@ -20,10 +32,9 @@ How it works, and its limits:
 - Waiting for the display's "frame done" interrupt is answered by running the image's own
   interrupt handler with that flag set.
 - Cache maintenance, FPU and MSA set-up are skipped: the emulated CPU (74Kf) lacks them.
-- Peripheral registers are a plain dictionary (plus GPIO set/clear and PWM enable semantics),
-  so values the hardware would change by itself are not modelled.
-- Addresses in `emu.py` and `stubs_extra.py` are for the retail 1.1.0.30 image
-  (sha256 of the first 0x67948 bytes starts f0ab5db5120c8d69).
+- Peripheral registers are a plain dictionary (plus GPIO set/clear and PWM enable semantics)
+  that starts at 0, so reset values the image keeps, and anything the hardware changes by
+  itself, are not seen. Check against a capture from the board (below).
 
 ## Register capture on the board
 
