@@ -45,6 +45,10 @@ char *nocry_slots_json(void);
  * Returns the same JSON as nocry_slots_json with the new state. */
 char *nocry_set_active_slot_json(const char *slot, const char *safety_dir);
 
+/* Copy the firmware of slot `from` ("a"|"b") into the other slot, verified. The active slot,
+ * settings and identity are not changed. Returns the slots JSON with the new state. */
+char *nocry_copy_slot_json(const char *from, const char *safety_dir);
+
 /* Factory reset: blank the data partitions the firmware recreates on first boot (rootfs_data,
  * and userdata unless keep_userdata). execute=0 only checks. Firmware, slots and identity stay.
  * {"ok":true,"partitions":[{"name":..,"size":..}],"bytes_to_write":N,"executed":bool} */

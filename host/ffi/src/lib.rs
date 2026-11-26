@@ -229,6 +229,18 @@ pub unsafe extern "C" fn nocry_set_active_slot_json(slot: *const c_char, safety_
 }
 
 /// # Safety
+/// `from` must be "a" or "b" (NUL-terminated); `safety_dir` NULL or a valid path.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_copy_slot_json(from: *const c_char, safety_dir: *const c_char) -> *mut c_char {
+    let from = CStr::from_ptr(from).to_string_lossy().to_string();
+    let safety = opt_path(safety_dir);
+    events::reset_cancel();
+    slots_json(std::panic::catch_unwind(|| {
+        session::copy_slot(&nocry_core::bootrom::SOCS[0], Via::Auto, &from, safety.as_deref(), test_target().as_ref())
+    }))
+}
+
+/// # Safety
 /// `safety_dir` must be NULL or a valid NUL-terminated path.
 #[no_mangle]
 pub unsafe extern "C" fn nocry_factory_reset_json(keep_userdata: c_int, execute: c_int, safety_dir: *const c_char) -> *mut c_char {

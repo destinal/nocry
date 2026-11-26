@@ -1306,3 +1306,36 @@ pub fn boot_log() -> Result<(String, String)> {
     }
     bail!("the log is only available while the board runs nocry's recovery system or loader")
 }
+
+/// Copy the firmware of slot `from` ("a" or "b") into the other slot: its rtos, kernel and
+/// rootfs partitions, byte for byte, verified. The active-slot record, settings and identity
+/// are not touched. Only parts that differ are written.
+pub fn copy_slot(soc: &SocProfile, via: Via, from: &str, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>) -> Result<Slots> {
+    if from != "a" && from != "b" {
+        bail!("slot must be a or b");
+    }
+    let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
+    let (g, s) = read_slots(&t)?;
+    if !(if from == "a" { &s.a } else { &s.b }).bootable() {
+        bail!("slot {} has no complete firmware to copy", from.to_uppercase());
+    }
+    let to = if from == "a" { "b" } else { "a" };
+    let sfx = |slot: &str| if slot == "b" { "2" } else { "" };
+    let mut jobs = vec![];
+    for base in ["rtos", "kernel", "rootfs"] {
+        let (sn, dn) = (format!("{base}{}", sfx(from)), format!("{base}{}", sfx(to)));
+        let sp = g.find(&sn).with_context(|| format!("no {sn} partition"))?;
+        let dp = g.find(&dn).with_context(|| format!("no {dn} partition"))?;
+        if sp.size() != dp.size() {
+            bail!("{sn} and {dn} differ in size ({} and {} bytes); the slot cannot be copied", sp.size(), dp.size());
+        }
+        jobs.push((sp.offset(), dp.offset(), sp.size(), dn));
+    }
+    safety_copy(&t, safety_dir, "slot-copy")?;
+    let mut written = 0;
+    for (src, dst, size, name) in &jobs {
+        written += write_range(&t, *dst, *size, name, |o, n| t.read(src + o, n))?;
+    }
+    say!("slot {} copied to slot {} and verified ({} bytes written); the active slot was not changed", from.to_uppercase(), to.to_uppercase(), written);
+    Ok(read_slots(&t)?.1)
+}

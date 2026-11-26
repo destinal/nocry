@@ -162,7 +162,7 @@ public:
         backupButton = new ActionButton(tr("Back up…"), tr("Save everything on the board to a file."));
         restoreButton = new ActionButton(tr("Restore backup…"), tr("Put a saved backup back onto the board."));
         installButton = new ActionButton(tr("Install firmware…"), tr("Repair, update or reinstall the printer's software."));
-        switchButton = new ActionButton(tr("Switch Active Slot…"), tr("Choose which installed firmware starts."));
+        switchButton = new ActionButton(tr("Switch Active Slot…"), tr("Choose which installed firmware starts, or copy one slot to the other."));
         resetButton = new ActionButton(tr("Factory reset…"), tr("Erase settings and files; keep the firmware."));
         auto *grid = new QGridLayout;
         grid->addWidget(backupButton, 0, 0);
@@ -430,6 +430,17 @@ public:
     // Read both system slots (switchTo empty), then let the user pick; or switch to "a"/"b".
     void startSlots(const QString &switchTo)
     {
+        if (switchTo.startsWith("copy:")) {
+            const QByteArray from = switchTo.mid(5).toUtf8(), sd = safetyDir();
+            const QString F = switchTo.mid(5).toUpper(), T = F == "A" ? "B" : "A";
+            runAdvanced(tr("Copying slot %1 to slot %2").arg(F, T), [from, sd] { return takeJson(nocry_copy_slot_json(from.constData(), sd.constData())); },
+                [F, T](const QJsonObject &o) {
+                    const QJsonObject t = o.value(T.toLower()).toObject();
+                    return tr("Slot %1 now holds a verified copy of slot %2 (%3 %4).\n\nThe board still starts slot %5.")
+                        .arg(T, F, t.value("firmware_name").toString(), t.value("firmware_version").toString(), o.value("active").toString().toUpper());
+                });
+            return;
+        }
         if (busy)
             return;
         setBusy(true);
@@ -775,6 +786,35 @@ private:
         if (!a.value("bootable").toBool() || !b.value("bootable").toBool())
             v->addWidget(new QLabel(tr("A slot without complete firmware cannot be selected.")));
         v->addWidget(new QLabel(tr("Settings and files are shared by both slots and are not changed.")));
+        // copying one slot's firmware over the other
+        QString copyFrom;
+        auto *copyRow = new QHBoxLayout;
+        for (const QString &f : {QStringLiteral("a"), QStringLiteral("b")}) {
+            const QString F = f.toUpper(), T = f == "a" ? "B" : "A";
+            const QJsonObject src = f == "a" ? a : b, dst = f == "a" ? b : a;
+            auto *cb = new QPushButton(tr("Copy slot %1 to slot %2…").arg(F, T));
+            cb->setEnabled(src.value("bootable").toBool());
+            copyRow->addWidget(cb);
+            connect(cb, &QPushButton::clicked, &d, [&, f, F, T, src, dst] {
+                QString info = tr("Slot %1 will get an exact copy of the firmware in slot %2 (%3 %4).").arg(T, F, src.value("firmware_name").toString(), src.value("firmware_version").toString());
+                if (dst.value("bootable").toBool())
+                    info += tr("\n\nThe firmware now in slot %1 (%2 %3) will be replaced.").arg(T, dst.value("firmware_name").toString(), dst.value("firmware_version").toString());
+                if (active == T.toLower())
+                    info += tr("\n\nSlot %1 is the active slot: this replaces the firmware the board starts.").arg(T);
+                info += tr("\n\nWhich slot starts, and your settings and files, are not changed.");
+                QMessageBox box(QMessageBox::Warning, tr("Copy slot"), tr("Copy slot %1 to slot %2?").arg(F, T), QMessageBox::Cancel, &d);
+                box.setInformativeText(info);
+                auto *go = box.addButton(tr("Copy"), QMessageBox::DestructiveRole);
+                box.setDefaultButton(QMessageBox::Cancel);
+                box.exec();
+                if (box.clickedButton() == go) {
+                    copyFrom = f;
+                    d.accept();
+                }
+            });
+        }
+        copyRow->addStretch(1);
+        v->addLayout(copyRow);
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         bb->button(QDialogButtonBox::Ok)->setText(tr("Switch"));
         v->addWidget(bb);
@@ -785,6 +825,8 @@ private:
         connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
         if (d.exec() != QDialog::Accepted)
             return QString();
+        if (!copyFrom.isEmpty())
+            return QStringLiteral("copy:") + copyFrom;
         return ra->isChecked() ? "a" : "b";
     }
 

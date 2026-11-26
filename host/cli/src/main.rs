@@ -81,6 +81,13 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Copy the firmware of one slot (a or b) into the other, verified. The active slot,
+    /// settings and identity are not changed.
+    CopySlot {
+        from: String,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Print the board's own log (recovery kernel log, or what the last start left in memory)
     BootLog,
     /// Boot the nocry recovery Linux from RAM (via nocry fastboot; nothing is written) and wait
@@ -433,6 +440,14 @@ fn main() -> Result<()> {
                 println!("{n}: {m}");
             }
             println!("erased and verified {} bytes", w.bytes);
+        }
+        Cmd::CopySlot { from, yes } => {
+            let from = from.to_ascii_lowercase();
+            if !yes {
+                bail!("this replaces the firmware in the other slot; add --yes to do it");
+            }
+            let s = copy_slot(soc, Via::Auto, &from, None, None)?;
+            println!("A: {} {}\nB: {} {}\nactive: {}", s.a.firmware_name, s.a.firmware_version, s.b.firmware_name, s.b.firmware_version, s.active.to_uppercase());
         }
         Cmd::BootLog => {
             let (kind, text) = boot_log()?;
