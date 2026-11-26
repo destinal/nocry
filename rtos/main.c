@@ -47,23 +47,44 @@ void log_hex(const char *name, u32 v)
 #define mfc0(reg, sel) ({ u32 v_; __asm__ volatile("mfc0 %0, $" #reg ", " #sel : "=r"(v_)); v_; })
 #define mtc0(reg, sel, v) __asm__ volatile("mtc0 %0, $" #reg ", " #sel "\n ehb" : : "r"((u32)(v)))
 
-/* Rough: at least `ms` milliseconds at any CPU clock the SPL sets (up to about 1.5 GHz). */
-void mdelay(u32 ms)
-{
-	volatile u32 n;
+/*
+ * Time: the 64-bit counter the stock image uses (it calls this block TCU/OST), running from the
+ * 24 MHz crystal. Counting loops are no use here: this core ran them about 20 times slower than
+ * assumed, which made a K1 start take half a minute (2026-11-26).
+ */
+#define CPM_CLKGR0	0xb0000020u
+#define CPM_CLKGR1	0xb0000028u
+#define TMR		0xb0002000u
+#define TMR_ENABLE_SET	(TMR + 0x14)
+#define TMR_COUNT_LO	(TMR + 0x104)
+#define TMR_COUNT_HI	(TMR + 0x108)
+#define TMR_CTRL	(TMR + 0x110)
+#define TICKS_PER_US	24
 
-	while (ms--)
-		for (n = 0; n < 300000; n++)
-			;
+static void timer_init(void)
+{
+	/* clock gates and timer set-up in the stock image's order */
+	REG(CPM_CLKGR1) &= ~((1u << 17) | (1u << 26));	/* UART4, interrupt controller */
+	REG(CPM_CLKGR0) &= ~((1u << 20) | (1u << 18));	/* the two timer blocks */
+	REG(TMR_ENABLE_SET) = 0x8000;
+	REG(TMR_COUNT_LO) = 0;
+	REG(TMR_COUNT_HI) = 0;
+	REG(TMR_CTRL) = 0x00400004;
 }
 
 void udelay(u32 us)
 {
-	volatile u32 n;
+	u32 start = REG(TMR_COUNT_LO), ticks = us * TICKS_PER_US;
+	volatile u32 guard = us * 200 + 2000;	/* never hang if the counter does not run */
 
-	while (us--)
-		for (n = 0; n < 300; n++)
-			;
+	while (REG(TMR_COUNT_LO) - start < ticks && --guard)
+		;
+}
+
+void mdelay(u32 ms)
+{
+	while (ms--)
+		udelay(1000);
 }
 
 /* Shown when the image carries no picture store: dark background, a lighter frame and bar. */
@@ -137,6 +158,7 @@ void nocry_rtos_main(void *spl_args)
 	u32 cpu = ebase0 & 0x3ff;	/* EBase.CPUNum: 1 */
 	u32 bit = 1u << (cpu & 31);
 
+	timer_init();
 	logp = (char *)LOG_ADDR;
 	log_str("NCRTLOG1\nnocry-rtos\n");
 	log_hex("cpu ", cpu);
@@ -200,6 +222,7 @@ void nocry_rtos_main(void *spl_args)
 	invalidate_icache();
 	nocry_spl_word = nocry_panel->lcm_id;	/* panel id for the kernel command line (lcm_id=) */
 	_start[0] = 1;			/* "done": the SPL watches this word */
+	log_hex("run time, 24 MHz ticks ", REG(TMR_COUNT_LO));
 	log_str("handing back to the SPL\n");
 
 	/* power this core down the way the stock image does; the SPL waits for it to sleep */

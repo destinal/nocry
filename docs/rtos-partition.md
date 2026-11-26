@@ -188,7 +188,11 @@ bits nocry-rtos had cleared, and the moment at which "display end" is cleared la
 ## The K1 family's image (480x800 panels)
 
 From the K1 firmware 1.3.3.5 image (`CR4CU220812S11`), run in the emulator against simulated
-panels. Not yet implemented in nocry-rtos and nothing here has been checked on a K1 board.
+panels. nocry-rtos implements it (`VARIANT=k1`). Checked on a K1 mainboard (2026-11-26) only
+without a K1 panel: nocry's loader, recovery and backup work there unchanged; with a Nebula Pad
+screen attached no panel answers (all ID reads return 0xff), stock image and nocry-rtos both
+fall back to number 3, and the stock Linux takes the display over the same way after either.
+A K1 mainboard reports `CPU1 RESET ERROR PC:...` with the stock image too.
 
 The image is built from the same code as the Nebula Pad's, with four panel drivers instead of
 one. All are 480x800 RGB panels on the same 16 data pins, configured over a bit-banged

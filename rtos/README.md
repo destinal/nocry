@@ -25,7 +25,16 @@ and appended to the image by the build. nocry's own pictures (`rtos/pictures/`, 
 tools/rtos-build/build.sh` takes the logo out of a firmware's own rtos image instead, so a
 board can keep its original look without that artwork being part of nocry.
 
-Not done yet: other panels (480x800 boards).
+Build variants (`VARIANT=... tools/rtos-build/build.sh`):
+
+| Variant | For | State |
+|---|---|---|
+| `nebula` (default) | Nebula Pad, 480x272 panel | works on a Nebula Pad |
+| `k1` | K1-family mainboard (`CR4CU220812S11/S12`) with one of its four 480x800 panels, detected at start-up like the stock image does | on a K1 mainboard: runs in 1.0 s, falls back to the default panel when none answers, Linux takes over without complaint. **None of the four real panels has been tested**; their detection and set-up agree with the stock image in the emulator only |
+| `k1-nebula-screen` | K1-family mainboard with a Nebula Pad screen attached (experiment) | picture correct; the stock K1 Linux then expects 480x800 and its display driver times out |
+
+Waits are timed with the 24 MHz counter the stock image uses. Counting loops ran about 20
+times slower than assumed on this core.
 
 The CPU core is treated as the stock image treats it: FPU and MSA are switched on, their
 control registers read (FCSR 0x000c0000, MSACSR 0 on this board) and switched off again;

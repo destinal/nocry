@@ -453,9 +453,7 @@ u32 *nocry_display_init(void)
 	struct layer_desc *l;
 	int i;
 
-	/* "main init": clocks for PWM and the timers the stock image uses, backlight off */
-	REG(CPM_CLKGR1) &= ~((1u << 17) | (1u << 26));
-	REG(CPM_CLKGR0) &= ~((1u << 20) | (1u << 18));
+	/* "main init": PWM clock, panel choice, pins, backlight off */
 	set_divider(CPM_PWMCDR, 0x40000004);
 	REG(CPM_CLKGR1) &= ~(1u << 5);
 	nocry_panel = pn = choose_panel();
