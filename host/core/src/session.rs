@@ -541,6 +541,8 @@ pub struct InstallReport {
     pub details: String,
     pub bytes_to_write: u64,
     pub executed: bool,
+    /// the board had no partition table: this is a rebuild from scratch
+    pub blank_board: bool,
     /// where the pre-write copy of the first 3 MiB went, if one was taken
     pub safety_copy: String,
 }
@@ -569,13 +571,27 @@ pub fn install(
     say!("firmware: {} {} from {}", r.firmware_board, r.firmware_version, pkg.source);
     let want = if execute { Want::Rw } else { Want::PreferRw };
     let t = open_target(soc, target, want, execute, false, None, None, via)?;
+    let mut blank = true;
     if let Ok(g) = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?) {
+        blank = false;
         if let Some(p) = g.find("sn_mac") {
             if let Some(cur) = crate::snmac::SnMac::parse(&t.read(p.offset(), crate::snmac::RECORD_AREA)?) {
                 r.model_before = cur.model().into();
             }
         }
     }
+    // A blank board has no partition table or bootloader, and update files carry neither:
+    // take them from Creality's factory package (downloaded once, checksum-verified).
+    let mut boot = None;
+    if blank {
+        say!("the board is blank: it will be rebuilt from scratch (partition table, bootloader, firmware, identity)");
+        if pkg.boot.is_none() {
+            let dir = safety_dir.and_then(|d| d.parent()).map(|d| d.to_path_buf()).unwrap_or_else(crate::catalog::default_data_dir);
+            boot = Some(crate::catalog::boot_area(&dir)?);
+        }
+    }
+    r.blank_board = blank;
+    let keep_data = keep_data && !blank; // nothing to keep
     let opts = restore::Options {
         model: None,
         board: None,
@@ -593,7 +609,7 @@ pub fn install(
         wipe_overlay: false,
         rewrite: false,
     };
-    let plan = restore::plan(&t, &pkg, None, &opts)?;
+    let plan = restore::plan(&t, &pkg, boot, &opts)?;
     r.device_firmware = plan.device_firmware.as_ref().map(|(b, v)| format!("{b} {v}")).unwrap_or_default();
     r.model_after = plan.snmac_new.model().into();
     r.model_after_name = crate::snmac::product_name(&r.model_after);
@@ -970,4 +986,172 @@ pub fn shell_status(serial: &str) -> ShellStatus {
         }
     }
     s
+}
+
+/// Result of a partition or whole-storage operation.
+#[derive(Debug, Clone, Default)]
+pub struct PartReport {
+    pub name: String,
+    pub bytes: u64,
+    /// bytes that had to be written (restore/erase); 0 = already as wanted
+    pub bytes_written: u64,
+    pub sha256: String,
+    pub executed: bool,
+}
+
+const PIECE: u64 = 32 << 20;
+
+fn find_part(t: &restore::Target, name: &str) -> Result<(u64, u64)> {
+    let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)
+        .context("this board has no valid partition table (blank board?)")?;
+    let p = g.find(name).with_context(|| format!("no partition named {name:?}"))?;
+    Ok((p.offset(), p.size()))
+}
+
+fn safety_copy(t: &restore::Target, dir: Option<&std::path::Path>, why: &str) -> Result<()> {
+    if let Some(dir) = dir {
+        std::fs::create_dir_all(dir)?;
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+        let f = dir.join(format!("before-{why}-{ts}.first3MiB.bin"));
+        std::fs::write(&f, t.read(0, 3 << 20)?)?;
+        say!("safety copy of the first 3 MiB saved to {}", f.display());
+    }
+    Ok(())
+}
+
+/// Save one partition to `out` (+ `out.sha256`). The board is only read.
+pub fn partition_backup(soc: &SocProfile, via: Via, name: &str, out: &std::path::Path, target: Option<&PathBuf>) -> Result<PartReport> {
+    use sha2::Digest as _;
+    use std::io::Write as _;
+    let t = open_target(soc, target, Want::Ro, false, true, None, None, via)?;
+    let (off, size) = find_part(&t, name)?;
+    let part = out.with_extension("part");
+    let r = (|| -> Result<String> {
+        let mut f = std::fs::File::create(&part).with_context(|| format!("creating {}", part.display()))?;
+        let mut h = sha2::Sha256::new();
+        let mut done = 0;
+        while done < size {
+            crate::events::check_cancelled()?;
+            let n = PIECE.min(size - done) as usize;
+            let b = t.read(off + done, n)?;
+            h.update(&b);
+            f.write_all(&b)?;
+            done += n as u64;
+            crate::events::progress("reading", done, size, "");
+        }
+        f.sync_all()?;
+        Ok(format!("{:x}", h.finalize()))
+    })();
+    crate::events::progress_end();
+    let sha256 = match r {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            return Err(e);
+        }
+    };
+    std::fs::rename(&part, out)?;
+    let fname = out.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    std::fs::write(format!("{}.sha256", out.display()), format!("{sha256}  {fname}\n"))?;
+    say!("saved partition {name} ({size} bytes) to {}", out.display());
+    Ok(PartReport { name: name.into(), bytes: size, sha256, executed: true, ..Default::default() })
+}
+
+/// Make `len` bytes at `off` equal to what `src(piece_offset, n)` returns; only pieces that
+/// differ are written, and everything written is verified. Returns bytes written.
+fn write_range(t: &restore::Target, off: u64, len: u64, what: &str, mut src: impl FnMut(u64, usize) -> Result<Vec<u8>>) -> Result<u64> {
+    let mut written = 0;
+    let mut done = 0;
+    while done < len {
+        let n = PIECE.min(len - done) as usize;
+        let data = src(done, n)?;
+        if !t.matches(off + done, &data)? {
+            t.write_raw(off + done, &data, what)?;
+            t.sync()?;
+            if !t.matches(off + done, &data)? {
+                bail!("verify FAILED for {what} at {:#x}", off + done);
+            }
+            written += n as u64;
+        }
+        done += n as u64;
+        crate::events::progress(what, done, len, "");
+    }
+    crate::events::progress_end();
+    Ok(written)
+}
+
+/// Write a file into a partition (from its start; the file may be shorter than the partition).
+pub fn partition_restore(
+    soc: &SocProfile, via: Via, name: &str, file: &std::path::Path, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>,
+) -> Result<PartReport> {
+    use std::io::{Read as _, Seek as _};
+    let mut f = std::fs::File::open(file).with_context(|| format!("opening {}", file.display()))?;
+    let flen = f.seek(std::io::SeekFrom::End(0))?;
+    let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
+    let (off, size) = find_part(&t, name)?;
+    if flen == 0 {
+        bail!("{} is empty", file.display());
+    }
+    if flen > size {
+        bail!("{} is {flen} bytes, larger than partition {name} ({size} bytes)", file.display());
+    }
+    safety_copy(&t, safety_dir, "partition-restore")?;
+    let written = write_range(&t, off, flen, "writing", |o, n| {
+        let mut v = vec![0u8; n];
+        f.seek(std::io::SeekFrom::Start(o))?;
+        f.read_exact(&mut v)?;
+        Ok(v)
+    })?;
+    say!("partition {name}: {written} of {flen} bytes needed writing; verified");
+    Ok(PartReport { name: name.into(), bytes: flen, bytes_written: written, executed: true, ..Default::default() })
+}
+
+/// Fill a partition with zeros.
+pub fn partition_erase(soc: &SocProfile, via: Via, name: &str, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>) -> Result<PartReport> {
+    let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
+    let (off, size) = find_part(&t, name)?;
+    safety_copy(&t, safety_dir, "partition-erase")?;
+    let written = write_range(&t, off, size, "erasing", |_, n| Ok(vec![0u8; n]))?;
+    say!("partition {name} erased ({written} bytes needed writing); verified");
+    Ok(PartReport { name: name.into(), bytes: size, bytes_written: written, executed: true, ..Default::default() })
+}
+
+/// Fill the whole eMMC with zeros: partition table, bootloader, firmware, identity, data.
+/// The board is blank afterwards and only starts in USB boot mode until it is rebuilt.
+pub fn erase_disk(soc: &SocProfile, via: Via, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>) -> Result<PartReport> {
+    let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
+    safety_copy(&t, safety_dir, "full-erase")?;
+    let written = write_range(&t, 0, t.size, "erasing", |_, n| Ok(vec![0u8; n]))?;
+    say!("the whole storage is erased ({written} bytes needed writing); verified");
+    Ok(PartReport { name: "(entire storage)".into(), bytes: t.size, bytes_written: written, executed: true, ..Default::default() })
+}
+
+/// Write the identity record (serial number, MAC address, model, mainboard). Empty `model`
+/// or `board` keep the current values (or the Nebula defaults on a record-less board).
+pub fn set_identity(
+    soc: &SocProfile, via: Via, sn: &str, mac: &str, model: &str, board: &str,
+    safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>,
+) -> Result<crate::snmac::SnMac> {
+    let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
+    let (off, _) = find_part(&t, "sn_mac")?;
+    let mut rec = crate::snmac::SnMac::parse(&t.read(off, crate::snmac::RECORD_AREA)?).unwrap_or_default();
+    rec.fields[0] = sn.trim().to_uppercase();
+    rec.fields[1] = mac.trim().to_uppercase().replace([':', '-'], "");
+    if !model.trim().is_empty() {
+        rec.fields[2] = model.trim().to_string();
+    } else if rec.fields[2].is_empty() {
+        rec.fields[2] = "Nebula Pad".into();
+    }
+    if !board.trim().is_empty() {
+        rec.fields[3] = board.trim().to_string();
+    } else if rec.fields[3].is_empty() {
+        rec.fields[3] = crate::snmac::NEBULA_BOARD.into();
+    }
+    rec.validate_for_write()?;
+    let mut area = rec.to_area()?;
+    area.resize(4096, 0);
+    safety_copy(&t, safety_dir, "identity-change")?;
+    t.write_verified(off, &area, "sn_mac")?;
+    say!("identity written and verified: model {:?}, serial number and MAC address updated", rec.model());
+    Ok(rec)
 }

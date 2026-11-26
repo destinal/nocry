@@ -72,6 +72,18 @@ char *nocry_download_firmware_json(const char *url, const char *file, uint64_t s
  * serial: the board's serial number (may be NULL). Runs `adb devices`; call from a worker thread. */
 char *nocry_shell_status_json(const char *serial);
 
+/* Advanced. All return {"ok":true,"name","bytes","bytes_written","sha256"} or {"ok":false,"error"}.
+ * Writes are verified; a copy of the first 3 MiB goes to safety_dir first (NULL: none). */
+char *nocry_partition_backup_json(const char *name, const char *out_path);   /* + out_path.sha256 */
+char *nocry_partition_restore_json(const char *name, const char *file, const char *safety_dir);
+char *nocry_partition_erase_json(const char *name, const char *safety_dir);  /* fills with zeros */
+char *nocry_erase_disk_json(const char *safety_dir);                         /* the board is blank afterwards */
+
+/* Identity record. sn: 14 hex digits; mac: 12 hex digits (":" and "-" accepted); empty model
+ * or board keep the current value. {"ok":true,"sn","mac","model","board"} */
+char *nocry_set_identity_json(const char *sn, const char *mac, const char *model, const char *board, const char *safety_dir);
+char *nocry_generate_identity_json(void);   /* {"ok":true,"sn":"...","mac":"..."}: random, valid pair */
+
 /* Ask the running operation to stop at its next safe point (callable from any thread). */
 void nocry_cancel(void);
 

@@ -54,3 +54,14 @@ Tested on image copies through the GUI's self-test (`--selftest-install-list`): 
 ## Shell status
 
 While the recovery runs, a line under the status shows "ADB: ready / not installed / not connected" and "Serial console: <port>", with "How to get a shell…" opening per-platform instructions and copyable commands. Detection is in `session::shell_status`: `adb devices` for ADB; for the console, sysfs on Linux, `/dev/cu.usbmodem*` on macOS, the registry (via `reg query`) on Windows. Verified on Linux with the Nebula; the macOS and Windows detection paths have not been run.
+
+## Advanced tab (2026-11-26)
+
+- **Back up / Restore / Erase partition** for the selected row. Backup writes the file and a `.sha256`. Restore writes a file from the start of the partition (it may be shorter, never longer), only where it differs, verified. Erase fills with zeros.
+- **Edit serial number and MAC…**: 14 and 12 hex digits (":" and "-" accepted in the MAC), model, mainboard, and "Generate new random values". The changes are listed for confirmation before writing.
+- **Erase entire storage…**: two confirmations, the second by typing ERASE. Everything becomes zeros; the board is blank.
+- **Blank board**: Install firmware detects a board without a partition table and rebuilds it. If the chosen firmware has no boot area (update files do not), `catalog::boot_area` downloads Creality's `Ender-3_V3_KE_1.1.0.12.ingenic` from their GitHub releases once, extracts `u-boot-with-spl-mbr-gpt.bin` and checks it against a pinned sha256.
+
+Every write first saves the first 3 MiB to `<data>/safety`.
+
+Tested on a copy of the backup image with `--selftest-adv` (2026-11-26): partition backup equals the image and its checksum verifies; restore into `kernel2`; an oversized file refused; erase to zeros, image identical to the original afterwards; invalid MAC refused, valid identity written; full erase leaves every byte zero; the blank image rebuilt from the downloaded Nebula 1.1.0.30 update with 10 partitions, Creality's bootloader, a generated identity and nothing left to repair; original identity restored byte-identical. None of this has been run on a real board yet.

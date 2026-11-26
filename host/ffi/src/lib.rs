@@ -175,11 +175,11 @@ pub unsafe extern "C" fn nocry_install_json(os_path: *const c_char, keep_data: c
                 "{{\"ok\":true,\"firmware_board\":\"{}\",\"firmware_version\":\"{}\",\"has_boot_area\":{},\
                  \"device_firmware\":\"{}\",\"model_before\":\"{}\",\"model_after\":\"{}\",\"identity_generated\":{},\
                  \"notes\":[{}],\"details\":\"{}\",\"bytes_to_write\":{},\"executed\":{},\"safety_copy\":\"{}\",\
-                 \"model_before_name\":\"{}\",\"model_after_name\":\"{}\",\"firmware_name\":\"{}\",\"device_firmware_name\":\"{}\"}}",
+                 \"model_before_name\":\"{}\",\"model_after_name\":\"{}\",\"firmware_name\":\"{}\",\"device_firmware_name\":\"{}\",\"blank_board\":{}}}",
                 esc(&i.firmware_board), esc(&i.firmware_version), i.has_boot_area, esc(&i.device_firmware),
                 esc(&i.model_before), esc(&i.model_after), i.identity_generated, notes.join(","), esc(&i.details),
                 i.bytes_to_write, i.executed, esc(&i.safety_copy), esc(&i.model_before_name),
-                esc(&i.model_after_name), esc(&i.firmware_name), esc(&i.device_firmware_name)
+                esc(&i.model_after_name), esc(&i.firmware_name), esc(&i.device_firmware_name), i.blank_board
             )
         }
         Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
@@ -343,6 +343,102 @@ pub unsafe extern "C" fn nocry_shell_status_json(serial: *const c_char) -> *mut 
         "{{\"adb_installed\":{},\"adb_ready\":{},\"adb_serial\":\"{}\",\"adb_state\":\"{}\",\"console_port\":\"{}\"}}",
         s.adb_installed, s.adb_ready, esc(&s.adb_serial), esc(&s.adb_state), esc(&s.console_port)
     ))
+}
+
+fn part_json(r: std::thread::Result<anyhow::Result<session::PartReport>>) -> *mut c_char {
+    out(match r {
+        Ok(Ok(p)) => format!(
+            "{{\"ok\":true,\"name\":\"{}\",\"bytes\":{},\"bytes_written\":{},\"sha256\":\"{}\"}}",
+            esc(&p.name), p.bytes, p.bytes_written, esc(&p.sha256)
+        ),
+        Ok(Err(e)) => {
+            let m = format!("{e:#}");
+            format!("{{\"ok\":false,\"cancelled\":{},\"error\":\"{}\"}}", m.contains("cancelled"), esc(&m))
+        }
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
+unsafe fn text(p: *const c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(p).to_string_lossy().to_string()
+    }
+}
+
+/// # Safety
+/// Pointers must be valid NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_partition_backup_json(name: *const c_char, out_path: *const c_char) -> *mut c_char {
+    let (name, path) = (text(name), opt_path(out_path).unwrap_or_default());
+    events::reset_cancel();
+    part_json(std::panic::catch_unwind(|| session::partition_backup(&nocry_core::bootrom::SOCS[0], Via::Auto, &name, &path, test_target().as_ref())))
+}
+
+/// # Safety
+/// Pointers must be valid NUL-terminated strings (`safety_dir` may be NULL).
+#[no_mangle]
+pub unsafe extern "C" fn nocry_partition_restore_json(name: *const c_char, file: *const c_char, safety_dir: *const c_char) -> *mut c_char {
+    let (name, file, safety) = (text(name), opt_path(file).unwrap_or_default(), opt_path(safety_dir));
+    events::reset_cancel();
+    part_json(std::panic::catch_unwind(|| {
+        session::partition_restore(&nocry_core::bootrom::SOCS[0], Via::Auto, &name, &file, safety.as_deref(), test_target().as_ref())
+    }))
+}
+
+/// # Safety
+/// Pointers must be valid NUL-terminated strings (`safety_dir` may be NULL).
+#[no_mangle]
+pub unsafe extern "C" fn nocry_partition_erase_json(name: *const c_char, safety_dir: *const c_char) -> *mut c_char {
+    let (name, safety) = (text(name), opt_path(safety_dir));
+    events::reset_cancel();
+    part_json(std::panic::catch_unwind(|| session::partition_erase(&nocry_core::bootrom::SOCS[0], Via::Auto, &name, safety.as_deref(), test_target().as_ref())))
+}
+
+/// Zero the entire eMMC. The board is blank afterwards.
+/// # Safety
+/// `safety_dir` must be NULL or a valid NUL-terminated path.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_erase_disk_json(safety_dir: *const c_char) -> *mut c_char {
+    let safety = opt_path(safety_dir);
+    events::reset_cancel();
+    part_json(std::panic::catch_unwind(|| session::erase_disk(&nocry_core::bootrom::SOCS[0], Via::Auto, safety.as_deref(), test_target().as_ref())))
+}
+
+/// Write serial number, MAC address, model and mainboard (empty model/board keep the current).
+/// {"ok":true,"sn","mac","model","board"}
+/// # Safety
+/// Pointers must be valid NUL-terminated strings (`safety_dir` may be NULL).
+#[no_mangle]
+pub unsafe extern "C" fn nocry_set_identity_json(sn: *const c_char, mac: *const c_char, model: *const c_char, board: *const c_char, safety_dir: *const c_char) -> *mut c_char {
+    let (sn, mac, model, board, safety) = (text(sn), text(mac), text(model), text(board), opt_path(safety_dir));
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| {
+        session::set_identity(&nocry_core::bootrom::SOCS[0], Via::Auto, &sn, &mac, &model, &board, safety.as_deref(), test_target().as_ref())
+    });
+    out(match r {
+        Ok(Ok(i)) => format!(
+            "{{\"ok\":true,\"sn\":\"{}\",\"mac\":\"{}\",\"model\":\"{}\",\"board\":\"{}\"}}",
+            esc(i.sn()), esc(i.mac()), esc(i.model()), esc(i.board())
+        ),
+        Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
+/// A fresh random identity: a locally administered MAC address and a matching serial number.
+#[no_mangle]
+pub extern "C" fn nocry_generate_identity_json() -> *mut c_char {
+    let r = (|| -> anyhow::Result<(String, String)> {
+        let mac = nocry_core::snmac::generate_mac()?;
+        let sn = nocry_core::snmac::generate_sn(&mac, None)?;
+        Ok((sn, mac))
+    })();
+    out(match r {
+        Ok((sn, mac)) => format!("{{\"ok\":true,\"sn\":\"{sn}\",\"mac\":\"{mac}\"}}"),
+        Err(e) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+    })
 }
 
 /// Ask the running operation to stop at its next safe point.

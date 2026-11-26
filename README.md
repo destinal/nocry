@@ -16,7 +16,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 
 ![The nocry window: board details and the main actions](docs/screenshots/home.png)
 
-<sub>The serial number and MAC address in the screenshots are made up. More: [partition view](docs/screenshots/partitions.png).</sub>
+<sub>The serial number and MAC address in the screenshots are made up. More: [Advanced tab](docs/screenshots/advanced.png).</sub>
 
 ## What it does
 
@@ -27,6 +27,8 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 - **Install firmware** from a Creality `.ingenic` package or an unpacked OTA: repair in place (keep data) or clean install. Handles a completely blank board, generating a serial number and MAC address if needed.
 - **Convert** between Nebula-based models (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max) by installing the other model's firmware.
 - **Switch the active firmware slot** (A/B) and **factory reset**.
+- **Rebuild a blank board** from an update file or the list: the bootloader and partition table that update files lack are fetched once from Creality's factory package and checksum-verified.
+- **Advanced**: back up, restore or erase a single partition; edit the serial number, MAC address and model; erase the entire storage.
 - **Pick firmware from a list**: versions published by Creality for the supported printers, downloaded and checksum-verified, or use a local update file (`*_ota_img_V*.img`), `.ingenic` package or folder.
 - **Shell access**: the window shows whether `adb` and the USB serial console are available on the running recovery and gives the exact command for each.
 

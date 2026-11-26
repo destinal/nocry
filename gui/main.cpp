@@ -22,6 +22,8 @@
 #include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QInputDialog>
+#include <QRegularExpression>
 #include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -156,7 +158,37 @@ public:
         parts->verticalHeader()->hide();
         parts->setEditTriggers(QAbstractItemView::NoEditTriggers);
         parts->setSelectionBehavior(QAbstractItemView::SelectRows);
-        tabs->addTab(parts, tr("Partitions"));
+        parts->setSelectionMode(QAbstractItemView::SingleSelection);
+        auto *adv = new QWidget;
+        auto *av = new QVBoxLayout(adv);
+        auto *advNote = new QLabel(tr("For people who know what these do. Writing the wrong thing here can stop the printer from starting; "
+                                      "nocry can always rebuild the board from USB boot mode, but settings and files would be lost."));
+        advNote->setWordWrap(true);
+        av->addWidget(advNote);
+        av->addWidget(parts, 1);
+        partBackupButton = new QPushButton(tr("Back up partition…"));
+        partRestoreButton = new QPushButton(tr("Restore partition…"));
+        partEraseButton = new QPushButton(tr("Erase partition…"));
+        identityButton = new QPushButton(tr("Edit serial number and MAC…"));
+        eraseAllButton = new QPushButton(tr("Erase entire storage…"));
+        auto *prow = new QHBoxLayout;
+        prow->addWidget(partBackupButton);
+        prow->addWidget(partRestoreButton);
+        prow->addWidget(partEraseButton);
+        prow->addStretch(1);
+        av->addLayout(prow);
+        auto *irow = new QHBoxLayout;
+        irow->addWidget(identityButton);
+        irow->addWidget(eraseAllButton);
+        irow->addStretch(1);
+        av->addLayout(irow);
+        tabs->addTab(adv, tr("Advanced"));
+        connect(parts, &QTableWidget::itemSelectionChanged, this, [this] { updateButtons(); });
+        connect(partBackupButton, &QPushButton::clicked, this, [this] { choosePartBackup(); });
+        connect(partRestoreButton, &QPushButton::clicked, this, [this] { choosePartRestore(); });
+        connect(partEraseButton, &QPushButton::clicked, this, [this] { choosePartErase(); });
+        connect(identityButton, &QPushButton::clicked, this, [this] { chooseIdentity(); });
+        connect(eraseAllButton, &QPushButton::clicked, this, [this] { chooseEraseAll(); });
 
         // --- Activity log
         log = new QPlainTextEdit;
@@ -443,6 +475,87 @@ public:
 
     int autoRestore = 0;            // self-tests only: 1 = confirm, 2 = confirm and allow another board's identity
 
+    // Runs one advanced operation off the UI thread; `done` gets the result when it succeeded.
+    void runAdvanced(const QString &what, std::function<QJsonObject()> job, std::function<QString(const QJsonObject &)> done, bool cancellable = false)
+    {
+        if (busy)
+            return;
+        setBusy(true);
+        stateHint->setText(tr("%1. Do not unplug the board.").arg(what));
+        log->appendPlainText(what + QStringLiteral("…"));
+        cancelButton->setEnabled(cancellable);
+        cancelButton->setVisible(cancellable);
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, what, done] {
+            const QJsonObject o = w->result();
+            w->deleteLater();
+            cancelButton->setVisible(false);
+            handleEvent(NOCRY_EVENT_PROGRESS_END, {}, 0, 0, {});
+            setBusy(false);
+            infoStale = true;
+            pollState();
+            lastResult = o;
+            if (o.value("ok").toBool()) {
+                const QString msg = done(o);
+                log->appendPlainText(msg);
+                if (!quiet)
+                    QMessageBox::information(this, what, msg);
+            } else if (o.value("cancelled").toBool()) {
+                log->appendPlainText(tr("%1: cancelled.").arg(what));
+            } else {
+                log->appendPlainText(tr("%1 failed: %2").arg(what, o.value("error").toString()));
+                if (!quiet)
+                    QMessageBox::critical(this, what, o.value("error").toString());
+            }
+            if (onIdle)
+                onIdle();
+        });
+        w->setFuture(QtConcurrent::run(job));
+    }
+
+    QByteArray safetyDir() const { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8(); }
+
+    void startPartBackup(const QString &name, const QString &path)
+    {
+        const QByteArray n = name.toUtf8(), p = path.toUtf8();
+        runAdvanced(tr("Backing up partition %1").arg(name), [n, p] { return takeJson(nocry_partition_backup_json(n.constData(), p.constData())); },
+            [path](const QJsonObject &o) {
+                return tr("Partition saved and checksummed.\n\nFile: %1\nSize: %2\nSHA-256: %3")
+                    .arg(QDir::toNativeSeparators(path), QLocale().formattedDataSize(qint64(o.value("bytes").toDouble())), o.value("sha256").toString());
+            }, true);
+    }
+    void startPartRestore(const QString &name, const QString &file)
+    {
+        const QByteArray n = name.toUtf8(), f = file.toUtf8(), sd = safetyDir();
+        runAdvanced(tr("Restoring partition %1").arg(name), [n, f, sd] { return takeJson(nocry_partition_restore_json(n.constData(), f.constData(), sd.constData())); },
+            [name](const QJsonObject &o) {
+                return o.value("bytes_written").toDouble() == 0 ? tr("Partition %1 already held exactly this data. Nothing was written.").arg(name)
+                                                                : tr("Partition %1 was written and verified (%2 changed).").arg(name, QLocale().formattedDataSize(qint64(o.value("bytes_written").toDouble())));
+            });
+    }
+    void startPartErase(const QString &name)
+    {
+        const QByteArray n = name.toUtf8(), sd = safetyDir();
+        runAdvanced(tr("Erasing partition %1").arg(name), [n, sd] { return takeJson(nocry_partition_erase_json(n.constData(), sd.constData())); },
+            [name](const QJsonObject &) { return tr("Partition %1 is erased (all zeros) and verified.").arg(name); });
+    }
+    void startEraseAll()
+    {
+        const QByteArray sd = safetyDir();
+        runAdvanced(tr("Erasing the entire storage"), [sd] { return takeJson(nocry_erase_disk_json(sd.constData())); },
+            [](const QJsonObject &) {
+                return tr("The board's storage is completely erased. The board is blank and will only start in USB boot mode.\n\nUse Install firmware to rebuild it.");
+            });
+    }
+    void startIdentity(const QString &sn, const QString &mac, const QString &model, const QString &board)
+    {
+        const QByteArray a = sn.toUtf8(), b = mac.toUtf8(), c = model.toUtf8(), e = board.toUtf8(), sd = safetyDir();
+        runAdvanced(tr("Writing the identity"), [a, b, c, e, sd] { return takeJson(nocry_set_identity_json(a.constData(), b.constData(), c.constData(), e.constData(), sd.constData())); },
+            [](const QJsonObject &o) {
+                return tr("Identity written and verified.\n\nSerial number: %1\nMAC address: %2\nModel: %3").arg(o.value("sn").toString(), o.value("mac").toString(), o.value("model").toString());
+            });
+    }
+
     // Factory reset; the user has already confirmed in chooseReset().
     void startReset(bool keepUserdata)
     {
@@ -487,6 +600,17 @@ public:
     QTabWidget *tabWidget = nullptr;
     void openInstallDialog() { chooseInstall(); }
     void openShellHelp() { showShellHelp(); }
+    // self-test entry points (no dialogs)
+    void testAdvanced(const QStringList &a)
+    {
+        const QString op = a.value(0);
+        if (op == "pbackup") startPartBackup(a.value(1), a.value(2));
+        else if (op == "prestore") startPartRestore(a.value(1), a.value(2));
+        else if (op == "perase") startPartErase(a.value(1));
+        else if (op == "erase") startEraseAll();
+        else if (op == "identity") startIdentity(a.value(1), a.value(2), a.value(3), a.value(4));
+        else QApplication::exit(3);
+    }
     std::function<void()> onIdle;   // used by the self-tests
     QJsonObject lastResult;
     bool quiet = false;             // self-tests: no modal dialogs
@@ -524,7 +648,9 @@ private:
         info += tr("Currently on the board: %1\nTo be written: %2")
             .arg(curName.isEmpty() ? tr("no readable firmware") : tr("%1 firmware %2").arg(curName, curVer).simplified(),
                  QLocale().formattedDataSize(qint64(o.value("bytes_to_write").toDouble())));
-        if (keepData)
+        if (o.value("blank_board").toBool())
+            info = tr("This board is blank. nocry will rebuild it from scratch: partition table, bootloader, firmware and identity.\n\n") + info;
+        if (keepData && !o.value("blank_board").toBool())
             info += tr("\n\nYour settings, files, serial number and the other firmware slot are kept.");
         else
             info += tr("\n\nClean install: all settings and files on the printer will be erased. The serial number and MAC address are kept.");
@@ -620,6 +746,182 @@ private:
         box.setDefaultButton(QMessageBox::Cancel);
         box.exec();
         return box.clickedButton() == go ? (other ? 2 : 1) : 0;
+    }
+
+    QString selectedPartition() const
+    {
+        const int r = parts->currentRow();
+        return r >= 0 && parts->item(r, 0) ? parts->item(r, 0)->text() : QString();
+    }
+
+    void updateButtons()
+    {
+        const bool ok = !busy && canRead;
+        const bool sel = ok && !selectedPartition().isEmpty();
+        partBackupButton->setEnabled(sel);
+        partRestoreButton->setEnabled(sel);
+        partEraseButton->setEnabled(sel);
+        identityButton->setEnabled(ok && parts->rowCount() > 0);
+        eraseAllButton->setEnabled(ok);
+    }
+
+    bool confirmDanger(const QString &title, const QString &question, const QString &info, const QString &action)
+    {
+        QMessageBox box(QMessageBox::Warning, title, question, QMessageBox::Cancel, this);
+        box.setInformativeText(info);
+        auto *go = box.addButton(action, QMessageBox::DestructiveRole);
+        box.setDefaultButton(QMessageBox::Cancel);
+        box.exec();
+        return box.clickedButton() == go;
+    }
+
+    static QString partitionRole(const QString &n)
+    {
+        if (n == "sn_mac") return tr("It holds the serial number, MAC address and model.");
+        if (n == "ota") return tr("It records which firmware slot starts.");
+        if (n.startsWith("rtos")) return tr("It holds the real-time firmware that starts before Linux.");
+        if (n.startsWith("kernel")) return tr("It holds the Linux kernel of a firmware slot.");
+        if (n == "rootfs" || n == "rootfs2") return tr("It holds the system of a firmware slot.");
+        if (n == "rootfs_data") return tr("It holds settings and system changes.");
+        if (n == "userdata") return tr("It holds the printer's files and configuration.");
+        return QString();
+    }
+
+    void choosePartBackup()
+    {
+        const QString name = selectedPartition();
+        if (name.isEmpty())
+            return;
+        QString fn = QStringLiteral("nocry-%1").arg(name);
+        if (serial->text().size() >= 4 && serial->text() != QStringLiteral("—"))
+            fn += QStringLiteral("-%1").arg(serial->text().right(4));
+        fn += QStringLiteral("-%1.img").arg(QDate::currentDate().toString("yyyyMMdd"));
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        const QString path = QFileDialog::getSaveFileName(this, tr("Save partition %1 as").arg(name), QDir(dir).filePath(fn), tr("Disk images (*.img);;All files (*)"));
+        if (!path.isEmpty())
+            startPartBackup(name, path);
+    }
+
+    void choosePartRestore()
+    {
+        const QString name = selectedPartition();
+        if (name.isEmpty())
+            return;
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        const QString file = QFileDialog::getOpenFileName(this, tr("Choose the data for partition %1").arg(name), dir, tr("Disk images (*.img *.bin *.squashfs);;All files (*)"));
+        if (file.isEmpty())
+            return;
+        if (confirmDanger(tr("Restore partition"), tr("Replace the contents of partition \"%1\"?").arg(name),
+                tr("%1\n\nIt will be overwritten with:\n%2 (%3)\n\nnocry does not check that this file belongs in this partition.")
+                    .arg(partitionRole(name), QDir::toNativeSeparators(file), QLocale().formattedDataSize(QFileInfo(file).size())).trimmed(),
+                tr("Overwrite partition")))
+            startPartRestore(name, file);
+    }
+
+    void choosePartErase()
+    {
+        const QString name = selectedPartition();
+        if (name.isEmpty())
+            return;
+        if (confirmDanger(tr("Erase partition"), tr("Erase partition \"%1\"?").arg(name),
+                tr("%1\n\nThe whole partition is filled with zeros. This cannot be undone except from a backup.").arg(partitionRole(name)).trimmed(),
+                tr("Erase partition")))
+            startPartErase(name);
+    }
+
+    void chooseEraseAll()
+    {
+        if (!confirmDanger(tr("Erase entire storage"), tr("Erase everything on this board?"),
+                tr("This wipes the partition table, the bootloader, both firmware slots, all settings and files, and the board's serial number and MAC address.\n\n"
+                   "Afterwards the board is blank. It will not start by itself; it can only be rebuilt with nocry from USB boot mode, and it gets a new, generated "
+                   "serial number unless you enter the old one again.\n\nMake a backup first if there is anything you may want back."),
+                tr("Continue…")))
+            return;
+        bool ok = false;
+        const QString t = QInputDialog::getText(this, tr("Erase entire storage"), tr("Type ERASE to confirm:"), QLineEdit::Normal, QString(), &ok);
+        if (ok && t.trimmed() == QStringLiteral("ERASE"))
+            startEraseAll();
+        else if (ok)
+            QMessageBox::information(this, tr("Erase entire storage"), tr("Nothing was erased."));
+    }
+
+    void chooseIdentity()
+    {
+        QDialog d(this);
+        d.setWindowTitle(tr("Serial number and MAC address"));
+        auto *v = new QVBoxLayout(&d);
+        auto *note = new QLabel(tr("These identify the board to the printer's software, your network and Creality Cloud. Use the values printed on the "
+                                   "board's label where you can. Two devices with the same MAC address conflict on a network."));
+        note->setWordWrap(true);
+        note->setMinimumWidth(480);
+        v->addWidget(note);
+        auto *form = new QFormLayout;
+        const QString dash = QStringLiteral("—");
+        auto *sn = new QLineEdit(serial->text() == dash ? QString() : serial->text());
+        auto *mc = new QLineEdit(mac->text() == dash ? QString() : mac->text());
+        sn->setMaxLength(14);
+        mc->setMaxLength(17);
+        auto *mdl = new QComboBox;
+        mdl->setEditable(true);
+        const QList<QPair<QString, QString>> known = {{"Nebula Pad", tr("Retail Nebula Pad")}, {"F005", tr("Ender-3 V3 KE")}, {"F003", tr("CR-10 SE")}, {"F004", tr("Ender-5 Max")}};
+        for (const auto &k : known)
+            mdl->addItem(k.first == k.second ? k.first : QStringLiteral("%1 — %2").arg(k.first, k.second), k.first);
+        int idx = mdl->findData(modelId);
+        if (idx >= 0)
+            mdl->setCurrentIndex(idx);
+        else if (!modelId.isEmpty())
+            mdl->setEditText(modelId);
+        auto *brd = new QLineEdit(board->text() == dash ? QStringLiteral("NEBULA V1.0.0.1") : board->text());
+        form->addRow(tr("Serial number (14 hex digits):"), sn);
+        form->addRow(tr("MAC address (12 hex digits):"), mc);
+        form->addRow(tr("Model:"), mdl);
+        form->addRow(tr("Mainboard:"), brd);
+        v->addLayout(form);
+        auto *gen = new QPushButton(tr("Generate new random values"));
+        v->addWidget(gen, 0, Qt::AlignLeft);
+        auto *modelNote = new QLabel(tr("The model must match the installed firmware, or the printer gets no configuration. To change printer type, use Install firmware instead."));
+        modelNote->setWordWrap(true);
+        v->addWidget(modelNote);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        bb->button(QDialogButtonBox::Ok)->setText(tr("Write"));
+        v->addWidget(bb);
+        auto modelValue = [mdl] {
+            const int i = mdl->findText(mdl->currentText());
+            return i >= 0 ? mdl->itemData(i).toString() : mdl->currentText().trimmed();
+        };
+        auto valid = [=] {
+            static const QRegularExpression hs(QStringLiteral("^[0-9A-Fa-f]{14}$")), hm(QStringLiteral("^[0-9A-Fa-f]{12}$"));
+            const QString m = QString(mc->text()).remove(':').remove('-');
+            bb->button(QDialogButtonBox::Ok)->setEnabled(hs.match(sn->text().trimmed()).hasMatch() && hm.match(m.trimmed()).hasMatch()
+                                                         && !modelValue().isEmpty() && !brd->text().trimmed().isEmpty());
+        };
+        for (QLineEdit *e : {sn, mc, brd})
+            connect(e, &QLineEdit::textChanged, &d, valid);
+        connect(mdl, &QComboBox::currentTextChanged, &d, valid);
+        connect(gen, &QPushButton::clicked, &d, [=] {
+            const QJsonObject o = takeJson(nocry_generate_identity_json());
+            if (o.value("ok").toBool()) {
+                sn->setText(o.value("sn").toString());
+                mc->setText(o.value("mac").toString());
+            }
+        });
+        valid();
+        connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        if (d.exec() != QDialog::Accepted)
+            return;
+        const QString nsn = sn->text().trimmed().toUpper(), nmac = QString(mc->text()).remove(':').remove('-').trimmed().toUpper();
+        QString changes;
+        if (serial->text() != nsn) changes += tr("Serial number: %1 → %2\n").arg(serial->text(), nsn);
+        if (mac->text() != nmac) changes += tr("MAC address: %1 → %2\n").arg(mac->text(), nmac);
+        if (modelId != modelValue()) changes += tr("Model: %1 → %2\n").arg(modelId.isEmpty() ? dash : modelId, modelValue());
+        if (board->text() != brd->text().trimmed()) changes += tr("Mainboard: %1 → %2\n").arg(board->text(), brd->text().trimmed());
+        if (changes.isEmpty()) {
+            QMessageBox::information(this, tr("Serial number and MAC address"), tr("Nothing was changed."));
+            return;
+        }
+        if (confirmDanger(tr("Serial number and MAC address"), tr("Write this identity to the board?"), changes.trimmed(), tr("Write identity")))
+            startIdentity(nsn, nmac, modelValue(), brd->text().trimmed());
     }
 
     void chooseReset()
@@ -882,6 +1184,7 @@ private:
         switchButton->setEnabled(!b && canRead);
         resetButton->setEnabled(!b && canRead);
         restoreButton->setEnabled(!b && canRead);
+        updateButtons();
         if (b) {
             stateTitle->setText(tr("Working…"));
             stateHint->setText(tr("Leave the board connected."));
@@ -951,6 +1254,7 @@ private:
         switchButton->setEnabled(!busy && canRead);
         resetButton->setEnabled(!busy && canRead);
         restoreButton->setEnabled(!busy && canRead);
+        updateButtons();
     }
 
     // Ask (off the UI thread) whether adb sees the board and where its serial console is.
@@ -1099,6 +1403,7 @@ private:
     bool infoLoaded = false, infoStale = false, autoBlocked = false, recoveryRunning = false;
     QLabel *shellLine;
     QPushButton *shellButton;
+    QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton;
     QJsonObject shell;
     QPushButton *readButton, *backupButton, *installButton, *switchButton, *resetButton, *restoreButton, *cancelButton;
     QString modelId;
@@ -1179,6 +1484,22 @@ int main(int argc, char **argv)
             });
         };
         QTimer::singleShot(1500, [&w, img] { w.startRestore(img, false, false); });
+    }
+    // --selftest-adv <pbackup NAME OUT | prestore NAME FILE | perase NAME | erase | identity SN MAC MODEL BOARD>
+    // Writing operations require NOCRY_TEST_TARGET (an image file).
+    const int sa = args.indexOf("--selftest-adv");
+    if (sa > 0 && sa + 1 < args.size()) {
+        const QStringList a = args.mid(sa + 1);
+        if (a.value(0) != "pbackup" && !qEnvironmentVariableIsSet("NOCRY_TEST_TARGET"))
+            return 4;
+        w.quiet = true;
+        w.onIdle = [&w] {
+            QTimer::singleShot(200, [&w] {
+                fprintf(stderr, "%s\n", QJsonDocument(w.lastResult).toJson(QJsonDocument::Compact).constData());
+                QApplication::exit(w.lastResult.value("ok").toBool() ? 0 : 1);
+            });
+        };
+        QTimer::singleShot(1200, [&w, a] { w.testAdvanced(a); });
     }
     // --selftest-shell shot.png: read the board, save the main window and the shell help dialog
     const int sh = args.indexOf("--selftest-shell");
