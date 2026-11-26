@@ -117,6 +117,25 @@ def group(records, printers_by_id):
     return sorted(models.values(), key=lambda m: m["model"].lower())
 
 
+# Models nocry can install, keyed by the firmware's ota_board_name. The Nebula Pad is the
+# accessory "type 24"; the others are printers found by their internal name.
+NOCRY_MODELS = [("NEBULA", "Retail Nebula Pad"), ("F005", "Ender-3 V3 KE"), ("F003", "CR-10 SE"), ("F004", "Ender-5 Max")]
+
+
+def nocry_catalog(cat):
+    out = {"built": cat["built"], "models": []}
+    allm = [m for s in cat["series"] for m in s["models"]]
+    for key, name in NOCRY_MODELS:
+        m = next((m for m in allm if (key == "NEBULA" and m["model_id"] == "type-24") or m["internal_name"] == key), None)
+        if not m:
+            continue
+        fws = [{"version": f["version"], "file": f["file"], "size": f["size_bytes"], "released": f["released"],
+                "url": f["download_url"], "notes": f["notes"]}
+               for f in m["firmwares"] if f["file"].endswith(".img") and "_ota_" in f["file"]]
+        out["models"].append({"key": key, "name": name, "firmwares": fws})
+    return out
+
+
 def q(s):
     return json.dumps(s, ensure_ascii=False)     # a JSON string is a valid YAML scalar
 
@@ -148,6 +167,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-o", "--output", required=True, help="YAML file to write")
     ap.add_argument("--json", help="also write the catalog as JSON")
+    ap.add_argument("--nocry", help="also write the trimmed catalog nocry embeds (host/core/data/catalog.json)")
     a = ap.parse_args()
 
     printers = post("/api/cxy/v2/device/firmwarePrinterList", {"isAll": True}).get("list") or []
@@ -194,6 +214,8 @@ def main():
     open(a.output, "w", encoding="utf-8").write(to_yaml(cat))
     if a.json:
         json.dump(cat, open(a.json, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    if a.nocry:
+        json.dump(nocry_catalog(cat), open(a.nocry, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     nm = sum(len(s["models"]) for s in cat["series"])
     nf = sum(m["firmware_count"] for s in cat["series"] for m in s["models"])
     print(f"wrote {a.output}: {len(cat['series'])} series, {nm} models, {nf} firmware entries", file=sys.stderr)

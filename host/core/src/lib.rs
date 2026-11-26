@@ -8,6 +8,7 @@
 //! - `restore`, `diskimage`: provisioning/repair plans, full-disk backup and reimage
 
 pub mod bootrom;
+pub mod catalog;
 pub mod diskimage;
 pub mod events;
 pub mod fastboot;

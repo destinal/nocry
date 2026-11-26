@@ -57,6 +57,16 @@ char *nocry_factory_reset_json(int keep_userdata, int execute, const char *safet
  * device_sn_tail, different_board, has_checksum, bytes_differed, bytes_written, executed. */
 char *nocry_restore_backup_json(const char *image_path, int execute, int allow_identity_change, const char *safety_dir);
 
+/* The list of downloadable firmware: {"ok":true,"built":"YYYY-MM-DD","updated":bool,
+ * "models":[{"key":"NEBULA","name":"Retail Nebula Pad","firmwares":[{"version","file","size",
+ * "released","url","downloaded":bool,"notes":[...]}]}]}. refresh=1 asks Creality's server
+ * first and saves the result in data_dir. */
+char *nocry_catalog_json(const char *data_dir, int refresh);
+
+/* Download one firmware into <data_dir>/firmware, verify it, reuse an existing verified copy.
+ * Cancellable. {"ok":true,"path":"..."} */
+char *nocry_download_firmware_json(const char *url, const char *file, uint64_t size, const char *data_dir);
+
 /* Ask the running operation to stop at its next safe point (callable from any thread). */
 void nocry_cancel(void);
 

@@ -267,6 +267,70 @@ pub unsafe extern "C" fn nocry_restore_backup_json(image_path: *const c_char, ex
     })
 }
 
+fn catalog_json(c: &nocry_core::catalog::Catalog, data_dir: &std::path::Path) -> String {
+    let cache = data_dir.join("firmware");
+    let models: Vec<String> = c
+        .models
+        .iter()
+        .map(|m| {
+            let fws: Vec<String> = m
+                .firmwares
+                .iter()
+                .map(|f| {
+                    let notes: Vec<String> = f.notes.iter().map(|n| format!("\"{}\"", esc(n))).collect();
+                    format!(
+                        "{{\"version\":\"{}\",\"file\":\"{}\",\"size\":{},\"released\":\"{}\",\"url\":\"{}\",\"downloaded\":{},\"notes\":[{}]}}",
+                        esc(&f.version), esc(&f.file), f.size, esc(&f.released), esc(&f.url),
+                        nocry_core::catalog::cached_path(&cache, &f.url, &f.file).exists(), notes.join(",")
+                    )
+                })
+                .collect();
+            format!("{{\"key\":\"{}\",\"name\":\"{}\",\"firmwares\":[{}]}}", esc(&m.key), esc(&m.name), fws.join(","))
+        })
+        .collect();
+    format!("{{\"ok\":true,\"built\":\"{}\",\"updated\":{},\"models\":[{}]}}", esc(&c.built), c.updated, models.join(","))
+}
+
+/// The firmware list: the refreshed copy in `data_dir` if present, else the built-in one.
+/// With refresh != 0, asks Creality's server first (needs internet; blocks).
+/// # Safety
+/// `data_dir` must be a valid NUL-terminated path.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_catalog_json(data_dir: *const c_char, refresh: c_int) -> *mut c_char {
+    let dir = opt_path(data_dir).unwrap_or_default();
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| -> anyhow::Result<String> {
+        let c = if refresh != 0 { nocry_core::catalog::refresh(&dir)? } else { nocry_core::catalog::load(Some(&dir)) };
+        Ok(catalog_json(&c, &dir))
+    });
+    out(match r {
+        Ok(Ok(j)) => j,
+        Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
+/// Download a firmware into `<data_dir>/firmware` (verified by md5, reused if present).
+/// {"ok":true,"path":"..."} or {"ok":false,"cancelled":bool,"error":"..."}
+/// # Safety
+/// All pointers must be valid NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_download_firmware_json(url: *const c_char, file: *const c_char, size: u64, data_dir: *const c_char) -> *mut c_char {
+    let url = CStr::from_ptr(url).to_string_lossy().to_string();
+    let file = CStr::from_ptr(file).to_string_lossy().to_string();
+    let dir = opt_path(data_dir).unwrap_or_default().join("firmware");
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| nocry_core::catalog::download(&url, &file, size, &dir));
+    out(match r {
+        Ok(Ok(p)) => format!("{{\"ok\":true,\"path\":\"{}\"}}", esc(&p.display().to_string())),
+        Ok(Err(e)) => {
+            let m = format!("{e:#}");
+            format!("{{\"ok\":false,\"cancelled\":{},\"error\":\"{}\"}}", m.contains("cancelled"), esc(&m))
+        }
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
 /// Ask the running operation to stop at its next safe point.
 #[no_mangle]
 pub extern "C" fn nocry_cancel() {

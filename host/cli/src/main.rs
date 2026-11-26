@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use nocry_core::session::*;
-use nocry_core::{bootrom, diskimage, fastboot, gpt, restore, snmac, usb};
+use nocry_core::{bootrom, catalog, diskimage, fastboot, gpt, restore, snmac, usb};
 use bootrom::{Bootrom, SocProfile, SOCS};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -120,6 +120,15 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// List the Creality firmware nocry can download and install (--refresh asks Creality for
+    /// the current list)
+    Catalog {
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Download a firmware from the list (verified, cached). MODEL: NEBULA, F005, F003, F004;
+    /// VERSION: e.g. 1.1.0.30 or "latest". Prints the local path for --os
+    Fetch { model: String, version: String },
     /// Low-level access through fastboot (the recovery's nocry-fbd, or the U-Boot fastboot stage2)
     #[command(subcommand)]
     Fb(FbCmd),
@@ -416,6 +425,26 @@ fn main() -> Result<()> {
             cmd_recovery(soc, images.as_ref(), device.as_deref(), image, ums, cmdline, wait)?
         }
         Cmd::Fb(c) => cmd_fb(c)?,
+        Cmd::Catalog { refresh } => {
+            let dir = catalog::default_data_dir();
+            let c = if refresh { catalog::refresh(&dir)? } else { catalog::load(Some(&dir)) };
+            println!("firmware list of {} ({})", c.built, if c.updated { "updated from Creality" } else { "built in" });
+            for m in &c.models {
+                println!("{} ({})", m.name, m.key);
+                for f in &m.firmwares {
+                    let have = catalog::cached_path(&dir.join("firmware"), &f.url, &f.file).exists();
+                    println!("  {:<12} {}  {:>4} MiB  {}{}", f.version, f.released, f.size >> 20, f.file, if have { "  [downloaded]" } else { "" });
+                }
+            }
+        }
+        Cmd::Fetch { model, version } => {
+            let dir = catalog::default_data_dir();
+            let c = catalog::load(Some(&dir));
+            let (m, f) = catalog::find(&c, &model, &version)?;
+            println!("{} firmware {} ({} MiB)", m.name, f.version, f.size >> 20);
+            let p = catalog::download(&f.url, &f.file, f.size, &dir.join("firmware"))?;
+            println!("{}", p.display());
+        }
         Cmd::Ums { ro } => {
             let dev = ensure_ums(soc, if ro { Want::Ro } else { Want::Rw }, images.as_ref(), device.as_deref(), via)?;
             println!("ready: {}", dev.display());

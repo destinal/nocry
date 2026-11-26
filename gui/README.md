@@ -42,3 +42,11 @@ Not yet: a raw OTA file as input, the Creality Cloud list, fetching the boot are
 ## Main window (2026-11-25)
 
 A status line, then three tabs. Home: "This board" (model, firmware and version in the active slot, the other slot, serial, MAC, mainboard, storage) and the actions as described buttons. Partitions: the table. Activity log. Progress and Cancel sit below the tabs. The details fill in by themselves when a board appears, clear when it is unplugged, and refresh after any action that changed the board; a failed read is not retried in a loop (Refresh does it manually).
+
+## Firmware list (2026-11-26)
+
+Install firmware now offers "Download from Creality": a printer and a version are chosen from a list, with the board's own model preselected and the release notes shown. The list is built into the program (`host/core/data/catalog.json`) and "Check for new versions" refreshes it from Creality's API into the user's data folder. Downloads go to `<data>/firmware`, are verified against the md5 in the download address, and are reused. "Use a file on this computer" keeps the previous behaviour.
+
+Command line: `nocry catalog [--refresh]`, `nocry fetch <MODEL> <VERSION|latest>`.
+
+Tested on image copies through the GUI's self-test (`--selftest-install-list`): a retail copy updated from 1.1.0.23 to the downloaded 1.1.0.30 keeping data; a repeat neither downloads nor writes again; a clean install of the downloaded Ender-5 Max firmware converts the copy. Not yet run against a real board.

@@ -1,7 +1,9 @@
 // nocry GUI, first slice: live board state, "read device", log and progress from nocry-core.
 #include <QApplication>
 #include <QCheckBox>
+#include <QButtonGroup>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QTabWidget>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -245,6 +247,46 @@ public:
         w->setFuture(QtConcurrent::run([p] { return takeJson(nocry_backup_json(p.constData(), 1, 1)); }));
     }
 
+    // Download a firmware from the list (verified, reused if already there), then go on to
+    // the install check.
+    void startDownload(const QJsonObject &fw, bool keepData)
+    {
+        if (busy)
+            return;
+        setBusy(true);
+        stateHint->setText(tr("Downloading the firmware."));
+        cancelButton->setEnabled(true);
+        cancelButton->setVisible(true);
+        const QByteArray url = fw.value("url").toString().toUtf8(), file = fw.value("file").toString().toUtf8(), dir = dataDir();
+        const quint64 size = quint64(fw.value("size").toDouble());
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, keepData] {
+            const QJsonObject o = w->result();
+            w->deleteLater();
+            cancelButton->setVisible(false);
+            handleEvent(NOCRY_EVENT_PROGRESS_END, {}, 0, 0, {});
+            setBusy(false);
+            pollState();
+            lastResult = o;
+            if (o.value("ok").toBool()) {
+                startInstall(o.value("path").toString(), keepData, false);
+                return;
+            }
+            if (o.value("cancelled").toBool()) {
+                log->appendPlainText(tr("Download cancelled."));
+            } else {
+                log->appendPlainText(tr("Download failed: %1").arg(o.value("error").toString()));
+                if (!quiet)
+                    QMessageBox::critical(this, tr("Download failed"), o.value("error").toString());
+            }
+            if (onIdle)
+                onIdle();
+        });
+        w->setFuture(QtConcurrent::run([url, file, size, dir] {
+            return takeJson(nocry_download_firmware_json(url.constData(), file.constData(), size, dir.constData()));
+        }));
+    }
+
     // Step 1: work out what installing `os` would change. Step 2 (after the user confirms, or
     // autoConfirm in self-tests): write it.
     void startInstall(const QString &os, bool keepData, bool execute)
@@ -431,6 +473,7 @@ public:
     bool autoConfirm = false;       // self-tests only
 
     QTabWidget *tabWidget = nullptr;
+    void openInstallDialog() { chooseInstall(); }
     std::function<void()> onIdle;   // used by the self-tests
     QJsonObject lastResult;
     bool quiet = false;             // self-tests: no modal dialogs
@@ -580,32 +623,154 @@ private:
             startReset(keep->isChecked());
     }
 
+    QByteArray dataDir() const { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toUtf8(); }
+
+    // The firmware's id for this board's current model ("NEBULA", "F005"...), "" if unknown.
+    QString deviceModelKey() const { return modelId == "Nebula Pad" ? QStringLiteral("NEBULA") : modelId; }
+
     void chooseInstall()
     {
         QDialog d(this);
         d.setWindowTitle(tr("Install firmware"));
         auto *v = new QVBoxLayout(&d);
-        v->addWidget(new QLabel(tr("Firmware: a Creality update file (.img), an .ingenic package, or a folder with an unpacked update")));
+
+        // --- where the firmware comes from
+        auto *fromList = new QRadioButton(tr("Download from Creality"));
+        auto *fromFile = new QRadioButton(tr("Use a file on this computer"));
+        auto *srcGroup = new QButtonGroup(&d);
+        srcGroup->addButton(fromList);
+        srcGroup->addButton(fromFile);
+        fromList->setChecked(true);
+
+        auto *listBox = new QWidget;
+        auto *lf = new QFormLayout(listBox);
+        lf->setContentsMargins(24, 0, 0, 0);
+        auto *modelBox = new QComboBox;
+        auto *versionBox = new QComboBox;
+        auto *notes = new QLabel;
+        notes->setWordWrap(true);
+        notes->setTextFormat(Qt::PlainText);
+        notes->setMinimumWidth(460);
+        auto *hint = new QLabel;
+        hint->setWordWrap(true);
+        auto *listInfo = new QLabel;
+        auto *refresh = new QPushButton(tr("Check for new versions"));
+        auto *rrow = new QHBoxLayout;
+        rrow->addWidget(listInfo, 1);
+        rrow->addWidget(refresh);
+        lf->addRow(tr("Printer:"), modelBox);
+        lf->addRow(tr("Version:"), versionBox);
+        lf->addRow(QString(), notes);
+        lf->addRow(QString(), hint);
+        lf->addRow(QString(), rrow);
+
+        auto *fileBox = new QWidget;
+        auto *fh = new QHBoxLayout(fileBox);
+        fh->setContentsMargins(24, 0, 0, 0);
         auto *path = new QLineEdit;
-        path->setMinimumWidth(420);
+        path->setPlaceholderText(tr("Creality update file (.img), .ingenic package, or unpacked update folder"));
         auto *file = new QPushButton(tr("Choose file…"));
         auto *folder = new QPushButton(tr("Choose folder…"));
-        auto *h = new QHBoxLayout;
-        h->addWidget(path, 1);
-        h->addWidget(file);
-        h->addWidget(folder);
-        v->addLayout(h);
+        fh->addWidget(path, 1);
+        fh->addWidget(file);
+        fh->addWidget(folder);
+
+        v->addWidget(fromList);
+        v->addWidget(listBox);
+        v->addWidget(fromFile);
+        v->addWidget(fileBox);
+
+        // --- how to install
         auto *clean = new QRadioButton(tr("Clean install (Recommended) — erase settings and files, like a new printer"));
         auto *keep = new QRadioButton(tr("Keep my data — repair or update the system; settings and files stay"));
+        auto *modeGroup = new QButtonGroup(&d);
+        modeGroup->addButton(clean);
+        modeGroup->addButton(keep);
         clean->setChecked(true);
+        v->addSpacing(8);
         v->addWidget(clean);
         v->addWidget(keep);
         v->addWidget(new QLabel(tr("Nothing is written until you confirm on the next screen.")));
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         bb->button(QDialogButtonBox::Ok)->setText(tr("Continue"));
-        bb->button(QDialogButtonBox::Ok)->setEnabled(false);
         v->addWidget(bb);
-        connect(path, &QLineEdit::textChanged, &d, [bb](const QString &t) { bb->button(QDialogButtonBox::Ok)->setEnabled(QFileInfo::exists(t.trimmed())); });
+
+        QJsonArray models;
+        const QString mine = deviceModelKey();
+        auto fillVersions = [&] {
+            versionBox->clear();
+            const QJsonObject m = models.at(modelBox->currentIndex()).toObject();
+            for (const auto &fv : m.value("firmwares").toArray()) {
+                const QJsonObject f = fv.toObject();
+                QString t = tr("%1 — released %2, %3").arg(f.value("version").toString(), f.value("released").toString(),
+                                                           QLocale().formattedDataSize(qint64(f.value("size").toDouble())));
+                if (f.value("downloaded").toBool())
+                    t += tr(" (already downloaded)");
+                versionBox->addItem(t);
+            }
+            const QString key = m.value("key").toString();
+            hint->setText(!mine.isEmpty() && key != mine
+                ? tr("This is firmware for a different printer than this board is set up for. Installing it converts the board.")
+                : QString());
+            hint->setVisible(!hint->text().isEmpty());
+        };
+        auto showNotes = [&] {
+            const QJsonObject f = models.at(modelBox->currentIndex()).toObject().value("firmwares").toArray().at(versionBox->currentIndex()).toObject();
+            QStringList n;
+            for (const auto &x : f.value("notes").toArray())
+                n << x.toString().simplified();
+            QString t = n.join(' ');
+            if (t.size() > 320)
+                t = t.left(320) + QStringLiteral("…");
+            notes->setText(t);
+            notes->setVisible(!t.isEmpty());
+        };
+        auto fillModels = [&](const QJsonObject &cat) {
+            models = cat.value("models").toArray();
+            modelBox->clear();
+            int sel = 0;
+            for (int i = 0; i < models.size(); i++) {
+                const QJsonObject m = models[i].toObject();
+                const bool isMine = m.value("key").toString() == mine;
+                modelBox->addItem(isMine ? tr("%1 (this board)").arg(m.value("name").toString()) : m.value("name").toString());
+                if (isMine)
+                    sel = i;
+            }
+            modelBox->setCurrentIndex(sel);
+            listInfo->setText(cat.value("updated").toBool() ? tr("List updated %1").arg(cat.value("built").toString())
+                                                            : tr("List from %1").arg(cat.value("built").toString()));
+        };
+        auto update = [&] {
+            const bool lst = fromList->isChecked();
+            listBox->setEnabled(lst);
+            fileBox->setEnabled(!lst);
+            bb->button(QDialogButtonBox::Ok)->setEnabled(lst ? versionBox->count() > 0 : QFileInfo::exists(path->text().trimmed()));
+        };
+        connect(modelBox, &QComboBox::currentIndexChanged, &d, [&] { fillVersions(); showNotes(); update(); });
+        connect(versionBox, &QComboBox::currentIndexChanged, &d, [&] { showNotes(); });
+        connect(fromList, &QRadioButton::toggled, &d, [&] { update(); });
+        connect(path, &QLineEdit::textChanged, &d, [&] { update(); });
+        const QByteArray dir = dataDir();
+        fillModels(takeJson(nocry_catalog_json(dir.constData(), 0)));
+        update();
+        connect(refresh, &QPushButton::clicked, &d, [&] {
+            refresh->setEnabled(false);
+            listInfo->setText(tr("Asking Creality…"));
+            auto *w = new QFutureWatcher<QJsonObject>(&d);
+            connect(w, &QFutureWatcher<QJsonObject>::finished, &d, [&, w] {
+                const QJsonObject o = w->result();
+                w->deleteLater();
+                refresh->setEnabled(true);
+                if (o.value("ok").toBool()) {
+                    fillModels(o);
+                } else {
+                    fillModels(takeJson(nocry_catalog_json(dir.constData(), 0)));
+                    QMessageBox::warning(&d, tr("Check for new versions"), tr("Could not update the list: %1\n\nThe list already in the program is still usable.").arg(o.value("error").toString()));
+                }
+                update();
+            });
+            w->setFuture(QtConcurrent::run([dir] { return takeJson(nocry_catalog_json(dir.constData(), 1)); }));
+        });
         connect(file, &QPushButton::clicked, &d, [&] {
             const QString f = QFileDialog::getOpenFileName(&d, tr("Choose firmware"), QString(), tr("Creality firmware (*.img *.ingenic);;All files (*)"));
             if (!f.isEmpty())
@@ -618,8 +783,14 @@ private:
         });
         connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
         connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
-        if (d.exec() == QDialog::Accepted)
+        if (d.exec() != QDialog::Accepted)
+            return;
+        if (fromFile->isChecked()) {
             startInstall(path->text().trimmed(), keep->isChecked(), false);
+        } else {
+            const QJsonObject f = models.at(modelBox->currentIndex()).toObject().value("firmwares").toArray().at(versionBox->currentIndex()).toObject();
+            startDownload(f, keep->isChecked());
+        }
     }
 
     void chooseBackup()
@@ -670,6 +841,8 @@ private:
                 progressLabel->setText(what);
                 return;
             }
+            if (text == "downloading")
+                what = tr("Downloading");
             if (text == "reimage")
                 what = tr("Restoring");
             else if (text == "image")
@@ -888,6 +1061,54 @@ int main(int argc, char **argv)
             });
         };
         QTimer::singleShot(1500, [&w, img] { w.startRestore(img, false, false); });
+    }
+    // --selftest-install-dialog shot.png: open the Install firmware dialog, save a picture of it
+    const int sd = args.indexOf("--selftest-install-dialog");
+    if (sd > 0 && sd + 1 < args.size()) {
+        const QString shot = args[sd + 1];
+        w.quiet = true;
+        QTimer::singleShot(1200, [shot] {
+            QTimer::singleShot(600, [shot] {
+                if (QWidget *m = QApplication::activeModalWidget()) {
+                    m->grab().save(shot);
+                    static_cast<QDialog *>(m)->reject();
+                }
+                QTimer::singleShot(200, [] { QApplication::quit(); });
+            });
+        });
+        QTimer::singleShot(1200, [&w] { w.openInstallDialog(); });
+    }
+    // --selftest-install-list <MODEL-KEY> <version|latest> <keep:0|1> shot.png: download from the
+    // list, then plan; writes only with NOCRY_TEST_TARGET
+    const int sl = args.indexOf("--selftest-install-list");
+    if (sl > 0 && sl + 4 < args.size()) {
+        const QString key = args[sl + 1], ver = args[sl + 2], shot = args[sl + 4];
+        const bool keep = args[sl + 3] == "1";
+        w.quiet = true;
+        w.autoConfirm = qEnvironmentVariableIsSet("NOCRY_TEST_TARGET");
+        w.onIdle = [&w, shot] {
+            QTimer::singleShot(300, [&w, shot] {
+                w.grab().save(shot);
+                fprintf(stderr, "%s\n", QJsonDocument(w.lastResult).toJson(QJsonDocument::Compact).constData());
+                QApplication::exit(w.lastResult.value("ok").toBool() ? 0 : 1);
+            });
+        };
+        QTimer::singleShot(1500, [&w, key, ver, keep] {
+            const QByteArray dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toUtf8();
+            const QJsonObject cat = takeJson(nocry_catalog_json(dir.constData(), 0));
+            for (const auto &mv : cat.value("models").toArray()) {
+                if (mv.toObject().value("key").toString() != key)
+                    continue;
+                const QJsonArray fws = mv.toObject().value("firmwares").toArray();
+                for (const auto &fv : fws) {
+                    if (ver == "latest" || fv.toObject().value("version").toString() == ver) {
+                        w.startDownload(fv.toObject(), keep);
+                        return;
+                    }
+                }
+            }
+            QApplication::exit(3);
+        });
     }
     // --selftest-reset shot.png <keep-userdata:0|1>: only with NOCRY_TEST_TARGET (an image file)
     const int sr = args.indexOf("--selftest-reset");
