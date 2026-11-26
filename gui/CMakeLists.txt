@@ -5,6 +5,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent)
 
+# Qt (up to at least 6.8) links Apple's AGL framework, which current macOS SDKs no longer ship
+if(APPLE AND TARGET WrapOpenGL::WrapOpenGL)
+  get_target_property(_gl_libs WrapOpenGL::WrapOpenGL INTERFACE_LINK_LIBRARIES)
+  if(_gl_libs)
+    list(FILTER _gl_libs EXCLUDE REGEX "AGL")
+    set_target_properties(WrapOpenGL::WrapOpenGL PROPERTIES INTERFACE_LINK_LIBRARIES "${_gl_libs}")
+  endif()
+endif()
+
 # nocry-core through its C interface (host/ffi), built by cargo
 set(NOCRY_HOST ${CMAKE_SOURCE_DIR}/../host)
 set(NOCRY_FFI_LIB ${NOCRY_HOST}/target/release/${CMAKE_STATIC_LIBRARY_PREFIX}nocry_ffi${CMAKE_STATIC_LIBRARY_SUFFIX})
