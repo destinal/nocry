@@ -16,4 +16,7 @@ u32 *nocry_display_init(void);
 void nocry_display_start(void);
 void nocry_display_quiesce(void);
 
+/* pictures.c: draws the picture for the board's model; 0 if the image carries none */
+int nocry_show_picture(u32 *fb, const char *snmac, u32 snmac_len);
+
 #endif

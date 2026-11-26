@@ -6,7 +6,7 @@ closed FreeRTOS program that shows the boot logo). Background: `docs/rtos-partit
 Status: **works on a Nebula Pad** (2026-11-26, slot B, firmware 1.1.0.30). With this image in
 the rtos partition the board shows a picture at power-on, the loader gets its answer
 (`lcm_id=0`), and Creality's Linux starts, takes over the display and reaches the normal
-interface. The picture is still a placeholder (dark screen, blue border, light bar).
+interface.
 
 What it does, in the order the stock image does it (`display.c`): opens the clock gates,
 sets the PWM and pixel clocks, switches the panel pins, programs the display controller,
@@ -18,8 +18,14 @@ The hardware state it hands over was compared with the stock image's on the boar
 by register (1048 registers); what still differs is listed and explained in
 `docs/rtos-partition.md`.
 
-Not done yet: a real boot picture and the model-dependent choice the stock image makes;
-other panels (480x800 boards).
+Boot picture: chosen by the model field of the board's `sn_mac` record, as the stock image
+chooses its logo (`pictures.c`). The pictures are packed by `tools/rtos-build/mkpictures.py`
+and appended to the image by the build. nocry's own pictures (`rtos/pictures/`, drawn by
+`make_default_pictures.py`) are used by default; `PICTURES="--from-stock <zero.bin>"
+tools/rtos-build/build.sh` takes the logo out of a firmware's own rtos image instead, so a
+board can keep its original look without that artwork being part of nocry.
+
+Not done yet: other panels (480x800 boards).
 
 The CPU core is treated as the stock image treats it: FPU and MSA are switched on, their
 control registers read (FCSR 0x000c0000, MSACSR 0 on this board) and switched off again;

@@ -57,7 +57,7 @@ void mdelay(u32 ms)
 			;
 }
 
-/* Placeholder picture until there is a real one: dark background, a lighter frame and bar. */
+/* Shown when the image carries no picture store: dark background, a lighter frame and bar. */
 static void draw(u32 *fb)
 {
 	int x, y;
@@ -165,7 +165,14 @@ void nocry_rtos_main(void *spl_args)
 	mtc0(16, 5, mfc0(16, 5) & ~CONFIG5_MSAEN);
 	mtc0(12, 0, mfc0(12, 0) & ~ST_CU2);
 
-	draw(nocry_display_init());
+	{
+		u32 *fb = nocry_display_init();
+		u32 len = nocry_spl_word;	/* size of the sn_mac partition the SPL put below heap_end */
+		const char *rec = (len && len <= 0x1000000) ? __heap_end - len : 0;
+
+		if (!nocry_show_picture(fb, rec, len))
+			draw(fb);
+	}
 	nocry_display_start();
 
 	nocry_display_quiesce();
