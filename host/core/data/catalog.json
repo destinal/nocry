@@ -1,364 +1,722 @@
 {
- "built": "2026-11-26",
- "models": [
-  {
-   "key": "NEBULA",
-   "name": "Retail Nebula Pad",
-   "firmwares": [
+  "built": "2026-11-26",
+  "models": [
     {
-     "version": "1.1.0.30",
-     "file": "NEBULA_ota_img_V1.1.0.30.img",
-     "size": 118689530,
-     "released": "2026-01-14",
-     "url": "https://file2-cdn.creality.com/file/a92ba54773af1a1da4416759f324ada8/NEBULA_ota_img_V1.1.0.30.img",
-     "notes": [
-      "1、Added Ender-3 V3 SE new chip motherboard model (STM32F401).",
-      "2、Fixed known bugs."
-     ]
+      "firmwares": [
+        {
+          "file": "NEBULA_ota_img_V1.1.0.30.img",
+          "notes": [
+            "1、Added Ender-3 V3 SE new chip motherboard model (STM32F401).",
+            "2、Fixed known bugs."
+          ],
+          "released": "2026-01-14",
+          "size": 118689530,
+          "url": "https://file2-cdn.creality.com/file/a92ba54773af1a1da4416759f324ada8/NEBULA_ota_img_V1.1.0.30.img",
+          "version": "1.1.0.30"
+        },
+        {
+          "file": "NEBULA_ota_img_V1.1.0.29.img",
+          "notes": [
+            "V1.1.0.29 Firmware Update Notes:",
+            "1. Modify the print dimensions of Ender-3 Max Neo to 300x300x320.",
+            "2. Adjust the origin offset of Ender-3 Neo to center the origin position."
+          ],
+          "released": "2025-04-24",
+          "size": 118688874,
+          "url": "https://file2-cdn.creality.com/file/53bdfd55125a6542901c9b94de47678d/NEBULA_ota_img_V1.1.0.29.img",
+          "version": "1.1.0.29"
+        },
+        {
+          "file": "NEBULA_ota_img_V1.1.0.27.img",
+          "notes": [
+            "V1.1.0.27 Firmware Update Notes:",
+            "1. Added support for 4 new models (Ender3 S1、Ender3 S1 Pro、Ender3 Max Neo、Ender3 Neo) .",
+            "2. Fixed known bugs."
+          ],
+          "released": "2024-06-25",
+          "size": 118709850,
+          "url": "https://file2-cdn.creality.com/file/068b691524e67b418841fffc47bc428a/NEBULA_ota_img_V1.1.0.27.img",
+          "version": "1.1.0.27"
+        },
+        {
+          "file": "NEBULA_ota_img_V1.1.0.26.img",
+          "notes": [
+            "V1.1.0.26 Firmware Update Notes:",
+            "1. Translation optimisation for all interfaces.",
+            "2. Add new language translation via config file.",
+            "3. Add AI sensitivity setting.",
+            "4. Add object exclusion function.",
+            "5. Exclude objects using border colour and thickness to indicate different states of the object.",
+            "6. Modify the translation of print flow and throat fan detection prompts.",
+            "7. Update Japanese translation.",
+            "8. Add a length limit for Wi-Fi passwords.",
+            "9. Add underscore symbol to numeric keypad.",
+            "10. Optimise the problem that the content of the tips in the light tips box is occasionally not vertically centred."
+          ],
+          "released": "2024-03-15",
+          "size": 116668586,
+          "url": "https://file2-cdn.creality.com/file/ff16e23430b58c458df70e20f3386f7f/NEBULA_ota_img_V1.1.0.26.img",
+          "version": "1.1.0.26"
+        },
+        {
+          "file": "NEBULA_ota_img_V1.1.0.25.img",
+          "notes": [
+            "V1.1.0.25 Firmware Update Notes:",
+            "1. Stopping printing after modifying the use of objects will cause some slicing machine coordinates to be wrong.",
+            "2. Modify the U disk can not be recognized, access to the nebula screen file scanning progress has been 0% problem.",
+            "3. Fix the problem that you are stuck in the WiFi search interface when there is no WiFi signal and cannot enter the next step of self-test.",
+            "4. When modifying the vibration compensation, there will be an incorrect display of the X-axis picture during re-detection.",
+            "5. If you do not enter the AI detection setting interface, direct calibration will report that no liDAR problem has been detected.",
+            "6. If the USB flash drive is removed during file scanning, the scanning progress dialog box is displayed.",
+            "7. If you click Upload log after the mainboard communication fails to be modified, a message indicating that logs are successfully exported is displayed.",
+            "8. When the APP is launched to zero, no problem is displayed when the screen clicks the axis to move.",
+            "9. Do a Z-axis calibration if the configuration file is modified after adding the upgrade.",
+            "10. Add APP launch return to zero, and the screen can launch self-check function.",
+            "11. Add the function of using USB flash drive files to skip the log upload without masking during the startup self-test."
+          ],
+          "released": "2024-02-26",
+          "size": 117117802,
+          "url": "https://file2-cdn.creality.com/file/e1eeee66349f7133c55a1be490e21353/NEBULA_ota_img_V1.1.0.25.img",
+          "version": "1.1.0.25"
+        },
+        {
+          "file": "NEBULA_ota_img_V1.1.0.23.img",
+          "notes": [
+            "V1.1.0.23 Firmware Update Notes:",
+            "1. Add data collection function.",
+            "2. Modify the generation process of printing records.",
+            "3. Reset klipper printing data.",
+            "4. Change the condition of the prompt \"Printing is currently not allowed\" to non printing idle state or printing stop state.",
+            "5. Whether to select a file for adding operations such as copying and deleting files.",
+            "6. Remove the click effect of the file operation pop-up window.",
+            "7. Language switching increases interface refresh waiting time by 1 second.",
+            "8. Solve the bug of 100% water injection in the model that has not been completed, pause printing, enter the file preview interface, and then return to the printing interface.",
+            "9. Modify the calculation and display of remaining time and printed time.",
+            "10. Modifying the network list of the guidance process cannot ignore the bug of connected WiFi.",
+            "11. Actively scrolling to the top of the privacy policy content list to adapt to changes in list height during content switching, solving the problem of blank content areas appearing at the bottom when the list height changes.",
+            "12. New pop-up processing for MCU communication failure.",
+            "13. Add and delete video functions on the video details interface.",
+            "14. Add Ender3 V3 SE model and implement its self inspection process and vibration compensation process with reference to f005.",
+            "15. When an error occurs during machine startup, turn off the startup prompt and display an error message.",
+            "16. Do not handle errors with error levels 0-500 before adding a universal screen without selecting a model."
+          ],
+          "released": "2023-10-30",
+          "size": 113853354,
+          "url": "https://file2-cdn.creality.com/file/6f129aa0ef74b323e31177b122c04c74/NEBULA_ota_img_V1.1.0.23.img",
+          "version": "1.1.0.23"
+        }
+      ],
+      "key": "NEBULA",
+      "name": "Retail Nebula Pad"
     },
     {
-     "version": "1.1.0.29",
-     "file": "NEBULA_ota_img_V1.1.0.29.img",
-     "size": 118688874,
-     "released": "2025-04-24",
-     "url": "https://file2-cdn.creality.com/file/53bdfd55125a6542901c9b94de47678d/NEBULA_ota_img_V1.1.0.29.img",
-     "notes": [
-      "V1.1.0.29 Firmware Update Notes:",
-      "1. Modify the print dimensions of Ender-3 Max Neo to 300x300x320.",
-      "2. Adjust the origin offset of Ender-3 Neo to center the origin position."
-     ]
+      "firmwares": [
+        {
+          "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.17.img",
+          "notes": [
+            "1.1.0.17 Firmware Update Notes:\n1.Correction of some translations."
+          ],
+          "released": "2025-08-27",
+          "size": 118703338,
+          "url": "https://file2-cdn.creality.com/file/fd5ef4b38a5ac1e0cf2aec6847137f77/Ender-3_V3_KE_F005_ota_img_V1.1.0.17.img",
+          "version": "1.1.0.17"
+        },
+        {
+          "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.15.img",
+          "notes": [
+            "1.1.0.15 firmware Update Notes:",
+            "1. Fix homepage UI display issues.",
+            "2. Correct issues in Creality Cloud translation.",
+            "3. Optimize 2401 error pop-up.",
+            "4. Ensure compatibility with Creality 5.0."
+          ],
+          "released": "2024-09-29",
+          "size": 118738362,
+          "url": "https://file2-cdn.creality.com/file/9a9c7558a0cfa2ba761b134b27b1264d/Ender-3_V3_KE_F005_ota_img_V1.1.0.15.img",
+          "version": "1.1.0.15"
+        },
+        {
+          "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.14.img",
+          "notes": [
+            "V1.1.0.14 firmware update instructions:",
+            "1. Optimize Japanese translation, ten languages \"print flow\" to \"flow\".",
+            "2. Add limit for temperature setting on web side.",
+            "3. Add Wi-Fi password length limitation.",
+            "4. Add underscore symbol to numeric keyboard.",
+            "5. Change the compensation value for high from 0.2 to 0.1.",
+            "6. Add error code display when Creality Cloud binding exception.",
+            "7. i2c_4rate changed to 100K.",
+            "8. Fix the problem of gcode character encoding error report."
+          ],
+          "released": "2024-05-13",
+          "size": 118624762,
+          "url": "https://file2-cdn.creality.com/file/3443b29567400f1f095d6a71ae35bfc9/Ender-3_V3_KE_F005_ota_img_V1.1.0.14.img",
+          "version": "1.1.0.14"
+        },
+        {
+          "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.13.img",
+          "notes": [
+            "V1.1.0.13 firmware update instructions:",
+            "1. UI 10 countries language translation optimisation.",
+            "2. Add AI sensitivity adjustment function.",
+            "3. Shield camera shooting position option, default starting position of each layer.",
+            "4. Repair the frequent connection of websocke to Creative Cloud when no camera is connected."
+          ],
+          "released": "2024-03-28",
+          "size": 118580922,
+          "url": "https://file2-cdn.creality.com/file/97a66354298d4ac529c002d3e3949c2b/Ender-3_V3_KE_F005_ota_img_V1.1.0.13.img",
+          "version": "1.1.0.13"
+        },
+        {
+          "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.12.img",
+          "notes": [
+            "V1.1.0.12 firmware update instructions:",
+            "1.Add root permission feature.",
+            "2.Add camera night vision switch feature and click sound effect.",
+            "3.Supports model object exclusion feature, object exclusion can be set in Creality Print.",
+            "4.Optimize UI operation logic.",
+            "5.Fix other known bugs."
+          ],
+          "released": "2024-01-12",
+          "size": 118559722,
+          "url": "https://file2-cdn.creality.com/file/6b62fa75180a982ec44dc4e1f29f8c3d/Ender-3_V3_KE_F005_ota_img_V1.1.0.12.img",
+          "version": "1.1.0.12"
+        },
+        {
+          "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.9.img",
+          "notes": [
+            "V1.1.0.9 firmware update instructions:",
+            "1.Optimize printing remaining time display.",
+            "2.Add startup data collection function.",
+            "3.Added file rename functionality and file name length limit.",
+            "4.Solve model preview bug.",
+            "5.Fix web camera disconnection problem.",
+            "6.Fix boot network configuration bug."
+          ],
+          "released": "2023-10-16",
+          "size": 113439050,
+          "url": "https://file2-cdn.creality.com/file/c1f808458f0c27871eb20f9e905b8211/Ender-3_V3_KE_F005_ota_img_V1.1.0.9.img",
+          "version": "1.1.0.9"
+        }
+      ],
+      "key": "F005",
+      "name": "Ender-3 V3 KE"
     },
     {
-     "version": "1.1.0.27",
-     "file": "NEBULA_ota_img_V1.1.0.27.img",
-     "size": 118709850,
-     "released": "2024-06-25",
-     "url": "https://file2-cdn.creality.com/file/068b691524e67b418841fffc47bc428a/NEBULA_ota_img_V1.1.0.27.img",
-     "notes": [
-      "V1.1.0.27 Firmware Update Notes:",
-      "1. Added support for 4 new models (Ender3 S1、Ender3 S1 Pro、Ender3 Max Neo、Ender3 Neo) .",
-      "2. Fixed known bugs."
-     ]
+      "firmwares": [
+        {
+          "file": "CR-10_SE_F003_ota_img_V1.1.0.28.img",
+          "notes": [
+            "1.1.0.28 Firmware Update Notes:",
+            "1. Optimization of known issues."
+          ],
+          "released": "2025-09-27",
+          "size": 118829466,
+          "url": "https://file2-cdn.creality.com/file/5360f2a381a044afb7efde31b9ddf5a4/CR-10_SE_F003_ota_img_V1.1.0.28.img",
+          "version": "1.1.0.28"
+        },
+        {
+          "file": "CR-10_SE_F003_ota_img_V1.1.0.27.img",
+          "notes": [
+            "1.Repair the printing, after the broken material prompted to click to change the material, click on the feed, and prompted \"printing, do not allow the operation\".",
+            "2. Add expert mode function.",
+            "3. Add expert mode translation and pictures.",
+            "4. Fix the Russian translation of the prompt of the page flip button on the boot page.",
+            "5. Fix the translation error of the title \"Feed\" on the feed page.",
+            "6. Block LIDAR function and switch in setting page.",
+            "7. Shield the camera shooting position option, and default the starting position of each layer.",
+            "8. Add AI sensitivity adjustment function.",
+            "9. Add root privilege function.",
+            "10.Optimise the logic of zero return, only alarm when power failure.",
+            "11. Repair the hot bed PID setting target temperature is not effective.",
+            "12. Get the Z-axis offset value to keep three decimal places.",
+            "13. Save the Z-axis offset data only when exiting the Z-axis offset page.",
+            "14. Z-axis offset and flow rate values are not allowed to be set when calibrating before printing.",
+            "15. The key403 and key404 errors are only reported during a power failure."
+          ],
+          "released": "2024-03-15",
+          "size": 118568506,
+          "url": "https://file2-cdn.creality.com/file/bfeb940e85acfe2ab4779cc959b8e6be/CR-10_SE_F003_ota_img_V1.1.0.27.img",
+          "version": "1.1.0.27"
+        },
+        {
+          "file": "CR-10_SE_F003_ota_img_V1.1.0.23.img",
+          "notes": [
+            "1.Optimize system interface sliding sensitivity.",
+            "2.Added the function of printing detailed historical information for records.",
+            "3.Optimize printing interface layout and functions.",
+            "4.Camera optimization, support 1080P.",
+            "5.Add memory remaining capacity prompt.",
+            "6.Add time-lapse video deletion function.",
+            "7.Fix other known bug."
+          ],
+          "released": "2023-11-01",
+          "size": 113437530,
+          "url": "https://file2-cdn.creality.com/file/0355630fa22a78338501846c98523719/CR-10_SE_F003_ota_img_V1.1.0.23.img",
+          "version": "1.1.0.23"
+        },
+        {
+          "file": "CR-10 SE_ota_img_V1.1.0.21.img",
+          "notes": [
+            "1.Fixing the problem of error report for renewed fights.",
+            "2.Fix Creality slicing anomaly problem.",
+            "3.On-boot self-test optimization.",
+            "4.Fix the abnormal problem of model water injection chart.",
+            "5.Unable to upload logs and export logs when adding printing.",
+            "6.Optimize the problem of resuming the wrong layer after power outage.",
+            "7.Optimize the judgment of nozzle and hot bed heating detection during self-test.",
+            "8.Fix the abnormal display of QR code on the binding Chuangxiang Cloud interface.",
+            "9.Optimize camera driver.",
+            "10.Bind the Chuangxiang Cloud interface to add the Chuangxiang Cloud server region selection function.",
+            "11. Optimize camera driver",
+            "12.Fix the abnormal problem of power failure.",
+            "13.Adjust lidar calibration coordinates.",
+            "14.Optimized the deletion display function of the folder interface.",
+            "15.Added pop-up prompts for abnormal AI brushed."
+          ],
+          "released": "2023-09-27",
+          "size": 113507354,
+          "url": "https://file2-cdn.creality.com/file/e37d64e73b3966e048a4b97b1d5de01b/F003_ota_img_V1.1.0.21.img",
+          "version": "1.1.0.21"
+        }
+      ],
+      "key": "F003",
+      "name": "CR-10 SE"
     },
     {
-     "version": "1.1.0.26",
-     "file": "NEBULA_ota_img_V1.1.0.26.img",
-     "size": 116668586,
-     "released": "2024-03-15",
-     "url": "https://file2-cdn.creality.com/file/ff16e23430b58c458df70e20f3386f7f/NEBULA_ota_img_V1.1.0.26.img",
-     "notes": [
-      "V1.1.0.26 Firmware Update Notes:",
-      "1. Translation optimisation for all interfaces.",
-      "2. Add new language translation via config file.",
-      "3. Add AI sensitivity setting.",
-      "4. Add object exclusion function.",
-      "5. Exclude objects using border colour and thickness to indicate different states of the object.",
-      "6. Modify the translation of print flow and throat fan detection prompts.",
-      "7. Update Japanese translation.",
-      "8. Add a length limit for Wi-Fi passwords.",
-      "9. Add underscore symbol to numeric keypad.",
-      "10. Optimise the problem that the content of the tips in the light tips box is occasionally not vertically centred."
-     ]
+      "firmwares": [
+        {
+          "file": "F004_ota_img_V1.2.0.24.img",
+          "notes": [
+            "V1.2.0.24 Firmware Update Notes:",
+            "1.Add heated-bed overtemperature skip.",
+            "2.Add energy-saving mode: disable bed heating above a certain print height.",
+            "3.Optimize layer compression issue for max-size prints.",
+            "4.Fixed known issues to further enhance user experience and product stability."
+          ],
+          "released": "2026-07-01",
+          "size": 111060106,
+          "url": "https://file2-cdn.creality.com/file/4a200e17b7eeddd9f521f0bf3f96f187/F004_ota_img_V1.2.0.24.img",
+          "version": "1.2.0.24"
+        },
+        {
+          "file": "F004_ota_img_V1.2.0.21.img",
+          "notes": [
+            "V1.2.0.21 Firmware Update Notes:",
+            "1. Add object exclusion function.",
+            "2. There is no translation of the speed of the moving axis interface.",
+            "3. Improve the temperature of the nozzle to room temperature after the completion of feeding and unwinding.",
+            "4. Improve the problem that the printer does not have consumables after the 2001 error is reported after the fast switch is turned on.",
+            "5. Open root permissions."
+          ],
+          "released": "2025-07-23",
+          "size": 135652794,
+          "url": "https://file2-cdn.creality.com/file/fec90a04284a2207073c7a5357628764/F004_ota_img_V1.2.0.21.img",
+          "version": "1.2.0.21"
+        },
+        {
+          "file": "F004_ota_img_V1.2.0.20.img",
+          "notes": [
+            "V1.2.0.20 Firmware Update Notes:",
+            "1. Optimize the speed adjustment interface of the firmware side, there is no translation in other languages, and the display is Chinese.",
+            "2. Optimize the distance between the nozzle and the hot bed after wiping the nozzle.",
+            "3. In the expert mode, the manual Z-axis compensation can realize the problem of \"only one time effect\" or \"always take effect\" option.",
+            "4. Solve the problem that the camera turns on AI to detect the temperature of the hot bed and the nozzle is not leveled and printed according to the temperature set in the slice.",
+            "5. Optimize the wiping and spraying action to prevent the problem of the nozzle scraping the hot bed during the process of returning to zero.",
+            "6. Add hidden network function in the network.",
+            "7. Optimize the firmware to adapt to the model files generated by the current mainstream slicing software.",
+            "8. After the slicing software is paused, the pause point will always be executed."
+          ],
+          "released": "2025-04-29",
+          "size": 117342666,
+          "url": "https://file2-cdn.creality.com/file/18abd5dd216cc942c6e297b1527bde84/F004_ota_img_V1.2.0.20.img",
+          "version": "1.2.0.20"
+        },
+        {
+          "file": "F004_ota_img_V1.2.0.10.img",
+          "notes": [
+            "V1.2.0.10 Firmware Update Notes:",
+            "1. Solve the problem of virtual layer in power failure and material failure.",
+            "2. Solve the problem that the hot bed board does not rise at the bottom.",
+            "3. Cancel the printing and lower the hot bed to the bottom of the hot bed when the printing is completed.",
+            "4. Fixed the issue that some devices could not connect to Creality Cloud APP."
+          ],
+          "released": "2025-04-03",
+          "size": 117325690,
+          "url": "https://file2-cdn.creality.com/file/0f5abfea65e0bc48bccfd1f5b5e16bbf/F004_ota_img_V1.2.0.10.img",
+          "version": "1.2.0.10"
+        },
+        {
+          "file": "F004_ota_img_V1.2.0.09.img",
+          "notes": [
+            "Factory Firmware."
+          ],
+          "released": "2025-04-03",
+          "size": 117325002,
+          "url": "https://file2-cdn.creality.com/file/0b922bb5b5c302b8eb87740961adc47b/F004_ota_img_V1.2.0.09.img",
+          "version": "1.2.0.09"
+        }
+      ],
+      "key": "F004",
+      "name": "Ender-5 Max"
     },
     {
-     "version": "1.1.0.25",
-     "file": "NEBULA_ota_img_V1.1.0.25.img",
-     "size": 117117802,
-     "released": "2024-02-26",
-     "url": "https://file2-cdn.creality.com/file/e1eeee66349f7133c55a1be490e21353/NEBULA_ota_img_V1.1.0.25.img",
-     "notes": [
-      "V1.1.0.25 Firmware Update Notes:",
-      "1. Stopping printing after modifying the use of objects will cause some slicing machine coordinates to be wrong.",
-      "2. Modify the U disk can not be recognized, access to the nebula screen file scanning progress has been 0% problem.",
-      "3. Fix the problem that you are stuck in the WiFi search interface when there is no WiFi signal and cannot enter the next step of self-test.",
-      "4. When modifying the vibration compensation, there will be an incorrect display of the X-axis picture during re-detection.",
-      "5. If you do not enter the AI detection setting interface, direct calibration will report that no liDAR problem has been detected.",
-      "6. If the USB flash drive is removed during file scanning, the scanning progress dialog box is displayed.",
-      "7. If you click Upload log after the mainboard communication fails to be modified, a message indicating that logs are successfully exported is displayed.",
-      "8. When the APP is launched to zero, no problem is displayed when the screen clicks the axis to move.",
-      "9. Do a Z-axis calibration if the configuration file is modified after adding the upgrade.",
-      "10. Add APP launch return to zero, and the screen can launch self-check function.",
-      "11. Add the function of using USB flash drive files to skip the log upload without masking during the startup self-test."
-     ]
+      "firmwares": [
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.5.22.img",
+          "notes": [
+            "V1.3.5.22 Firmware Update Notes:",
+            "1.Optimize video stream transmission security.",
+            "2.Optimize model fan control logic."
+          ],
+          "released": "2026-07-10",
+          "size": 142580074,
+          "url": "https://file2-cdn.creality.com/file/98eeaa1ef181496ccd5dbffe54eb1ab2/CR4CU220812S11_ota_img_V1.3.5.22.img",
+          "version": "1.3.5.22"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V2.3.5.34.img",
+          "notes": [
+            "K1 Series CFS upgrade accessory kit 2.3.5.34 Firmware Update Details:",
+            "1.Fixed known issues to improve user experience and product stability."
+          ],
+          "released": "2025-12-30",
+          "size": 165920826,
+          "url": "https://file2-cdn.creality.com/file/b7988cbf341c24d5d0773adeb35dbb9f/CR4CU220812S11_ota_img_V2.3.5.34.img",
+          "version": "2.3.5.34"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.5.19.img",
+          "notes": [
+            "1.3.5.19 Firmware Update Notes:",
+            "1.Fix the issue where CrealityPrint shows a filament‑mismatch warning when starting a print."
+          ],
+          "released": "2025-12-04",
+          "size": 137717018,
+          "url": "https://file2-cdn.creality.com/file/a07d079630a920b1c2c9225693b6fafa/CR4CU220812S11_ota_img_V1.3.5.19.img",
+          "version": "1.3.5.19"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.3.46.img",
+          "notes": [
+            "Tips:",
+            "1. Please do a factory reset if you used the root script to install other components, otherwise it might cause errors.",
+            "2. Upgrade won't remove fluidd/mainsail, but will overwrite printer configs. Save configs if needed.",
+            "V1.3.3.46 Firmware Update Notes:",
+            "1. Optimize connectivity issues with Creality Cloud camera.",
+            "2. Change the LIDAR from always-on power to power-on-demand.",
+            "3. Add failure animation for UI therope fan and motherboard fan during startup self-check.",
+            "4. Update built-in Gcode.",
+            "5. Fix UI black screen issue caused by repeated detection during auto-leveling and when manually setting leveling points to more than 7x7.",
+            "6. Fix status bar incorrectly displaying camera connection when no camera is connected at startup.",
+            "7. Fix screen-off issue during screen operation."
+          ],
+          "released": "2024-12-24",
+          "size": 135906314,
+          "url": "https://file2-cdn.creality.com/file/808cb39dab5935b98cd9297b6595500b/CR4CU220812S11_ota_img_V1.3.3.46.img",
+          "version": "1.3.3.46"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.3.40.img",
+          "notes": [
+            "Tips:",
+            "1. Please do a factory reset if you used the root script to install other components, otherwise it might cause errors.",
+            "2. Upgrade won't remove fluidd/mainsail, but will overwrite printer configs. Save configs if needed.",
+            "V1.3.3.40 Firmware Update Notes:",
+            "1. Compatible with Creality Print 5.1 print files.",
+            "2. Optimize leveling parameters in the configuration file.",
+            "3. Fixed some bugs."
+          ],
+          "released": "2024-10-24",
+          "size": 135409434,
+          "url": "https://file2-cdn.creality.com/file/f977e009ba48f163845169b11225c381/CR4CU220812S11_ota_img_V1.3.3.40.img",
+          "version": "1.3.3.40"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.3.38.img",
+          "notes": [
+            "Factory firmware."
+          ],
+          "released": "2024-10-24",
+          "size": 135427898,
+          "url": "https://file2-cdn.creality.com/file/6af9326782edc1b0885fd077ac1476b0/CR4CU220812S11_ota_img_V1.3.3.38.img",
+          "version": "1.3.3.38"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.3.36.img",
+          "notes": [
+            "Tips:",
+            "1. Please do a factory reset if you used the root script to install other components, otherwise it might cause errors.",
+            "2. Upgrade won't remove fluidd/mainsail, but will overwrite printer configs. Save configs if needed.",
+            "V1.3.3.36 Firmware Update Notes:",
+            "1. Optimize the logic of filament loading and unloading",
+            "2. Optimize some UI issues;",
+            "3. Compatibility with Creality Print 5.1;",
+            "4. Optimize leveling parameters;",
+            "5. Fixed some bugs."
+          ],
+          "released": "2024-10-24",
+          "size": 135412170,
+          "url": "https://file2-cdn.creality.com/file/05cf62a3a5024b2e609e9d85443696d5/CR4CU220812S11_ota_img_V1.3.3.36.img",
+          "version": "1.3.3.36"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.3.29.img",
+          "notes": [
+            "Tips:",
+            "1. Please do a factory reset if you used the root script to install other components, otherwise it might cause errors.",
+            "2. Upgrade won't remove fluidd/mainsail, but will overwrite printer configs. Save configs if needed.",
+            "V1.3.3.29 Firmware Update Notes:",
+            "1. Compatible with Creality Print 5.0 print files.",
+            "2. Nozzle PID tune is now default to 220 degree.",
+            "3. Fixed some UI translation.",
+            "4. Optimize M141 command.",
+            "5. Add camera startup fail prompt.",
+            "6. Lower the temperature of the nozzle during the homing sequence (G28) to prevent leaking from the nozzle with certain material when the nozzle probes the print bed.",
+            "7. Fix machine malfunctions caused by printing with BambuStudio sliced files."
+          ],
+          "released": "2024-05-17",
+          "size": 130265370,
+          "url": "https://file2-cdn.creality.com/file/1f7f3932a08a6748aa72200d547bb67a/CR4CU220812S11_ota_img_V1.3.3.29.img",
+          "version": "1.3.3.29"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.3.8.img",
+          "notes": [
+            "V1.3.3.8 firmware Update Notes:",
+            "1.Solving the intermittent clogging problem of quick-swap nozzle through the use unload filament.",
+            "2.Fix some bugs."
+          ],
+          "released": "2024-03-21",
+          "size": 130542362,
+          "url": "https://file2-cdn.creality.com/file/4ba071338e120558283f884266f9250d/CR4CU220812S11_ota_img_V1.3.3.8.img",
+          "version": "1.3.3.8"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.3.5.img",
+          "notes": [
+            "V1.3.3.5 firmware Update Notes:",
+            "1.AI LiDAR Motion Advance restructured(Only K1 Max), compatible with CrealityPrint, Prusa, Orca slicers, supports calibration for harder materials like PLA/PETG/ABS.",
+            "2.Support for print speed adjustment, speed modes include Silent, Stable(50%), Standard(100%), and Ultrafast (125%).",
+            "3.New Expert Mode settings, supporting adjustments to flow and Z-axis offset during printing, supports nozzle PID calibration.",
+            "4.Support  Exclude Objects .",
+            "Firmware Optimization:",
+            "1.Optimized filament detection logic.",
+            "2.Updated logic for the chassis fan, no longer controlled by chamber temperature when starting printing.",
+            "3.Added Korean language to firmware.",
+            "4.Added filament status display on the home page.",
+            "Bug Fixes:",
+            "1.Fixed frequent UI crashes during object exclusion printing, causing black screen restarts.",
+            "2.Fixed inconsistency in maximum hotbed temperature between web and screen interfaces.",
+            "3.Fixed issue where the app did not display monitoring video when system synchronization failed.",
+            "4.Fixed the issue where abnormal print file names did not exit the print task."
+          ],
+          "released": "2024-01-25",
+          "size": 130539786,
+          "url": "https://file2-cdn.creality.com/file/0c96dc76c1455460ef66a8adaa367902/CR4CU220812S11_ota_img_V1.3.3.5.img",
+          "version": "1.3.3.5"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.2.20.img",
+          "notes": [
+            "V1.3.2.20 firmware Update Notes:",
+            "1. Added support for firmware root function, system settings added a way to view the root account password.",
+            "2. Added support for model object exclusion feature, object exclusion can be set in Creality Print.",
+            "3. Added support for firmware rollback feature, K1 firmware rollback version v1.3.1.28.",
+            "4. Added support for connecting to hidden networks, and open networks.",
+            "5. Added memory usage detection and insufficient space alarm function.",
+            "6. Fixed other known bugs."
+          ],
+          "released": "2023-11-20",
+          "size": 120368794,
+          "url": "https://file2-cdn.creality.com/file/a577bc37ee4f2defabb960b7fa89d8a6/CR4CU220812S11_ota_img_V1.3.2.20.img",
+          "version": "1.3.2.20"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.1.28.img",
+          "notes": [
+            "V1.3.1.28 firmware Update Notes:",
+            "1. Add boot animation.",
+            "2. Add export log, upload log status, progress.",
+            "3. Add support for connecting to hidden networks, support for connecting to open networks.",
+            "4. Non-CrealityPrint Gcode no longer displays preview image error flooding effect.",
+            "5. Optimize the logic of generating time-lapse video.",
+            "6. Optimize the file compression method of uploading logs to the server.",
+            "7. The cover of the time-lapse photography has been changed to the camera shooting screen.",
+            "8. Fix some known issues."
+          ],
+          "released": "2023-08-30",
+          "size": 114851274,
+          "url": "https://file2-cdn.creality.com/file/1ba6931b792817b1a8040a47dccd28e4/CR4CU220812S11_ota_img_V1.3.1.28.img",
+          "version": "1.3.1.28"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.1.19.img",
+          "notes": [
+            "V1.3.1.19 firmware Update Notes (Only for K1 Max):",
+            "Bug Fixes:",
+            "1.Fixed occasional 3002 issue.",
+            "2.Fixed occasional print pause issue.",
+            "3.Fixed machine MAC address change issue.",
+            "4.Fixed synchronization issue between APP and machine status.",
+            "5.Fixed popup issue during printing for resume printing.",
+            "6.Fixed the issue of being able to copy files and videos without a USB flash drive.",
+            "7.Fixed USB flash drive upgrade issue where upgrade information was not saved before reboot.",
+            "8.Fixed issue of version reminder popup after print completion.",
+            "9.Fixed issue of some errors in the history list with no content on click.",
+            "10.Fixed issue where common popup could occasionally cause process crash during copy, delete, export, etc.",
+            "11.Fixed issue of version upgrade popup reminder appearing multiple times when clicking system settings.",
+            "12.Fixed extremely rare occurrence of \"\"xxh60m\"\" in estimated print time on the home page.",
+            "Optimization:",
+            "1.Optimized nozzle wiping before printing.",
+            "2.Reduced time required for AI Lidar first-layer detection.",
+            "3.Optimized UI display effects on some pages.",
+            "4.Optimized some UI text.",
+            "5.Fixed issue of uneven filament retraction occurring occasionally after multiple pauses.",
+            "6.Optimized bed leveling algorithm for improved bed leveling effects.",
+            "7.Optimized ripple optimization effects.",
+            "8.Added bed leveling effect display to web interface.",
+            "9.Nozzle cooling after triggering pause.",
+            "New Features:",
+            "1.Added options for Creality Cloud servers, Creality Cloud user status, and logout button.",
+            "2.Added privacy policy protection-related features, requiring agreement to privacy policy before using functions such as log uploading, Creality Cloud IOT, and version upgrade.",
+            "3.Added server location setting.",
+            "4.Optimized pause and material loading/unloading functions to reduce extruder motor heating.",
+            "5.Added MCU disconnection and heating anomaly error classification.",
+            "6.Changed delayed video upload method from uploading after print completion to user-selected upload.",
+            "7.Added delayed photography and log upload to slicing interface.",
+            "8.Added chamber temperature display to UI home page and print status.",
+            "Known Issues:",
+            "After the update, Creality Cloud may disconnect, requiring agreement to privacy policy and re-binding of Creality Cloud.",
+            "Upgrade Guide:",
+            "Click on the screen for upgrade, wait for the upgrade to complete, then click on Settings - Device Self-Check - check Input Shaping and Auto Bed Leveling, click on Self-Check, wait for self-check to complete, then use the machine."
+          ],
+          "released": "2023-08-18",
+          "size": 114736762,
+          "url": "https://file2-cdn.creality.com/file/9a0828fd58dd87d79217d4cee74d00cb/CR4CU220812S11_ota_img_V1.3.1.19.img",
+          "version": "1.3.1.19"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.1.14.img",
+          "notes": [
+            "V1.3.1.14 firmware Update Notes:",
+            "1. Fixed the issue of insufficient extrusion on the E-axis.",
+            "2. Improved other known issues."
+          ],
+          "released": "2023-07-28",
+          "size": 113989290,
+          "url": "https://file2-cdn.creality.com/file/c25ff4f5f495815f46c484398b67e2e4/CR4CU220812S11_ota_img_V1.3.1.14.img",
+          "version": "1.3.1.14"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.1.4.img",
+          "notes": [
+            "V1.3.1.4 firmware Update Notes:",
+            "1. Bug fixed."
+          ],
+          "released": "2023-07-25",
+          "size": 113988026,
+          "url": "https://file2-cdn.creality.com/file/d0c132b8d5b804b485598be31ecaa6f7/CR4CU220812S11_ota_img_V1.3.1.4.img",
+          "version": "1.3.1.4"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.3.0.39.img",
+          "notes": [
+            "V1.3.0.39 firmware Update Notes:",
+            "1.Bug fixed."
+          ],
+          "released": "2023-07-17",
+          "size": 105550874,
+          "url": "https://file2-cdn.creality.com/file/21651e1cd4dd54ac3be8137d34174eaf/CR4CU220812S11_ota_img_V1.3.0.39.img",
+          "version": "1.3.0.39"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.2.9.22.img",
+          "notes": [
+            "V1.2.9.22 firmware Update Notes:",
+            "1.Bug fixed."
+          ],
+          "released": "2023-07-11",
+          "size": 102173146,
+          "url": "https://file2-cdn.creality.com/file/46edced616d6b5743158b5bb9ca6fc34/CR4CU220812S11_ota_img_V1.2.9.22.img",
+          "version": "1.2.9.22"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.2.9.21.img",
+          "notes": [
+            "V1.2.9.21 firmware Update Notes:",
+            "1. Modify Z-axis return to zero logic.",
+            "2. Fix the security issue.",
+            "3. Fix other known problems.",
+            "Note: Please do not touch the platform during Z-axis return to zero lift, otherwise it may cause abnormal machine detection."
+          ],
+          "released": "2023-06-29",
+          "size": 102173898,
+          "url": "https://file2-cdn.creality.com/file/bcbb922b16b10c90277c4e9b459869fe/CR4CU220812S11_ota_img_V1.2.9.21.img",
+          "version": "1.2.9.21"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.2.9.15.img",
+          "notes": [
+            "V1.2.9.15 firmware Update Notes:",
+            "1. Optimize the temperature control of the chamber.",
+            "2. Optimise error message content.",
+            "3. Other bug fixes."
+          ],
+          "released": "2023-06-06",
+          "size": 201961082,
+          "url": "https://file2-cdn.creality.com/file/a3882d389d5f316095b4da665ce0a279/CR4CU220812S11_ota_img_V1.2.9.15.img",
+          "version": "1.2.9.15"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.2.9.14.img",
+          "notes": [
+            "V1.2.9.14 firmware Update Notes:",
+            "1.The boot self-check has been modified to pause at a more convenient position for loading materials.",
+            "2.The fan operation is now compatible with the Gcode standard command M106, making it suitable for most slicing software.",
+            "3.The homing speed and print calibration functions have been optimized, reducing the time needed for homing and calibration.",
+            "4.After binding with Creality Cloud, users can now view their avatars.",
+            "5.Known issues have been fixed, improving product stability.",
+            "6.Details have been optimized to enhance the user experience."
+          ],
+          "released": "2023-05-27",
+          "size": 201707178,
+          "url": "https://file2-cdn.creality.com/file/8495d1606785f381f5271ec65ba241a1/CR4CU220812S11_ota_img_V1.2.9.14.img",
+          "version": "1.2.9.14"
+        },
+        {
+          "file": "CR4CU220812S11_ota_img_V1.2.9.12.img",
+          "notes": [
+            "V1.2.9.12 firmware Update Notes:",
+            "1. Update the built-in small boat gcode file for K1 model.",
+            "2. Optimize the bangbang algorithm."
+          ],
+          "released": "2023-04-27",
+          "size": 210781818,
+          "url": "https://file2-cdn.creality.com/file/bf10cce8e25ed10be1e3b822248283d9/CR4CU220812S11_ota_img_V1.2.9.12.img",
+          "version": "1.2.9.12"
+        }
+      ],
+      "key": "CR4CU220812S11",
+      "name": "K1 series (K1, K1 Max, K1C, K1 SE)"
     },
     {
-     "version": "1.1.0.23",
-     "file": "NEBULA_ota_img_V1.1.0.23.img",
-     "size": 113853354,
-     "released": "2023-10-30",
-     "url": "https://file2-cdn.creality.com/file/6f129aa0ef74b323e31177b122c04c74/NEBULA_ota_img_V1.1.0.23.img",
-     "notes": [
-      "V1.1.0.23 Firmware Update Notes:",
-      "1. Add data collection function.",
-      "2. Modify the generation process of printing records.",
-      "3. Reset klipper printing data.",
-      "4. Change the condition of the prompt \"Printing is currently not allowed\" to non printing idle state or printing stop state.",
-      "5. Whether to select a file for adding operations such as copying and deleting files.",
-      "6. Remove the click effect of the file operation pop-up window.",
-      "7. Language switching increases interface refresh waiting time by 1 second.",
-      "8. Solve the bug of 100% water injection in the model that has not been completed, pause printing, enter the file preview interface, and then return to the printing interface.",
-      "9. Modify the calculation and display of remaining time and printed time.",
-      "10. Modifying the network list of the guidance process cannot ignore the bug of connected WiFi.",
-      "11. Actively scrolling to the top of the privacy policy content list to adapt to changes in list height during content switching, solving the problem of blank content areas appearing at the bottom when the list height changes.",
-      "12. New pop-up processing for MCU communication failure.",
-      "13. Add and delete video functions on the video details interface.",
-      "14. Add Ender3 V3 SE model and implement its self inspection process and vibration compensation process with reference to f005.",
-      "15. When an error occurs during machine startup, turn off the startup prompt and display an error message.",
-      "16. Do not handle errors with error levels 0-500 before adding a universal screen without selecting a model."
-     ]
+      "firmwares": [
+        {
+          "file": "F001_ota_img_V1.2.3.28.img",
+          "notes": [
+            "V1.2.3.28 firmware Update Notes:",
+            "1. Compatible with 3MF files printing.",
+            "2. Fixed known issues to further enhance user experience and product stability."
+          ],
+          "released": "2025-04-17",
+          "size": 169858106,
+          "url": "https://file2-cdn.creality.com/file/9115557bcb60e2e0bc68c4eeb99d41b9/F001_ota_img_V1.2.3.28.img",
+          "version": "1.2.3.28"
+        }
+      ],
+      "key": "F001",
+      "name": "Ender-3 V3 series (V3, V3 Plus)"
     }
-   ]
-  },
-  {
-   "key": "F005",
-   "name": "Ender-3 V3 KE",
-   "firmwares": [
-    {
-     "version": "1.1.0.17",
-     "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.17.img",
-     "size": 118703338,
-     "released": "2025-08-27",
-     "url": "https://file2-cdn.creality.com/file/fd5ef4b38a5ac1e0cf2aec6847137f77/Ender-3_V3_KE_F005_ota_img_V1.1.0.17.img",
-     "notes": [
-      "1.1.0.17 Firmware Update Notes:\n1.Correction of some translations."
-     ]
-    },
-    {
-     "version": "1.1.0.15",
-     "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.15.img",
-     "size": 118738362,
-     "released": "2024-09-29",
-     "url": "https://file2-cdn.creality.com/file/9a9c7558a0cfa2ba761b134b27b1264d/Ender-3_V3_KE_F005_ota_img_V1.1.0.15.img",
-     "notes": [
-      "1.1.0.15 firmware Update Notes:",
-      "1. Fix homepage UI display issues.",
-      "2. Correct issues in Creality Cloud translation.",
-      "3. Optimize 2401 error pop-up.",
-      "4. Ensure compatibility with Creality 5.0."
-     ]
-    },
-    {
-     "version": "1.1.0.14",
-     "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.14.img",
-     "size": 118624762,
-     "released": "2024-05-13",
-     "url": "https://file2-cdn.creality.com/file/3443b29567400f1f095d6a71ae35bfc9/Ender-3_V3_KE_F005_ota_img_V1.1.0.14.img",
-     "notes": [
-      "V1.1.0.14 firmware update instructions:",
-      "1. Optimize Japanese translation, ten languages \"print flow\" to \"flow\".",
-      "2. Add limit for temperature setting on web side.",
-      "3. Add Wi-Fi password length limitation.",
-      "4. Add underscore symbol to numeric keyboard.",
-      "5. Change the compensation value for high from 0.2 to 0.1.",
-      "6. Add error code display when Creality Cloud binding exception.",
-      "7. i2c_4rate changed to 100K.",
-      "8. Fix the problem of gcode character encoding error report."
-     ]
-    },
-    {
-     "version": "1.1.0.13",
-     "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.13.img",
-     "size": 118580922,
-     "released": "2024-03-28",
-     "url": "https://file2-cdn.creality.com/file/97a66354298d4ac529c002d3e3949c2b/Ender-3_V3_KE_F005_ota_img_V1.1.0.13.img",
-     "notes": [
-      "V1.1.0.13 firmware update instructions:",
-      "1. UI 10 countries language translation optimisation.",
-      "2. Add AI sensitivity adjustment function.",
-      "3. Shield camera shooting position option, default starting position of each layer.",
-      "4. Repair the frequent connection of websocke to Creative Cloud when no camera is connected."
-     ]
-    },
-    {
-     "version": "1.1.0.12",
-     "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.12.img",
-     "size": 118559722,
-     "released": "2024-01-12",
-     "url": "https://file2-cdn.creality.com/file/6b62fa75180a982ec44dc4e1f29f8c3d/Ender-3_V3_KE_F005_ota_img_V1.1.0.12.img",
-     "notes": [
-      "V1.1.0.12 firmware update instructions:",
-      "1.Add root permission feature.",
-      "2.Add camera night vision switch feature and click sound effect.",
-      "3.Supports model object exclusion feature, object exclusion can be set in Creality Print.",
-      "4.Optimize UI operation logic.",
-      "5.Fix other known bugs."
-     ]
-    },
-    {
-     "version": "1.1.0.9",
-     "file": "Ender-3_V3_KE_F005_ota_img_V1.1.0.9.img",
-     "size": 113439050,
-     "released": "2023-10-16",
-     "url": "https://file2-cdn.creality.com/file/c1f808458f0c27871eb20f9e905b8211/Ender-3_V3_KE_F005_ota_img_V1.1.0.9.img",
-     "notes": [
-      "V1.1.0.9 firmware update instructions:",
-      "1.Optimize printing remaining time display.",
-      "2.Add startup data collection function.",
-      "3.Added file rename functionality and file name length limit.",
-      "4.Solve model preview bug.",
-      "5.Fix web camera disconnection problem.",
-      "6.Fix boot network configuration bug."
-     ]
-    }
-   ]
-  },
-  {
-   "key": "F003",
-   "name": "CR-10 SE",
-   "firmwares": [
-    {
-     "version": "1.1.0.28",
-     "file": "CR-10_SE_F003_ota_img_V1.1.0.28.img",
-     "size": 118829466,
-     "released": "2025-09-27",
-     "url": "https://file2-cdn.creality.com/file/5360f2a381a044afb7efde31b9ddf5a4/CR-10_SE_F003_ota_img_V1.1.0.28.img",
-     "notes": [
-      "1.1.0.28 Firmware Update Notes:",
-      "1. Optimization of known issues."
-     ]
-    },
-    {
-     "version": "1.1.0.27",
-     "file": "CR-10_SE_F003_ota_img_V1.1.0.27.img",
-     "size": 118568506,
-     "released": "2024-03-15",
-     "url": "https://file2-cdn.creality.com/file/bfeb940e85acfe2ab4779cc959b8e6be/CR-10_SE_F003_ota_img_V1.1.0.27.img",
-     "notes": [
-      "1.Repair the printing, after the broken material prompted to click to change the material, click on the feed, and prompted \"printing, do not allow the operation\".",
-      "2. Add expert mode function.",
-      "3. Add expert mode translation and pictures.",
-      "4. Fix the Russian translation of the prompt of the page flip button on the boot page.",
-      "5. Fix the translation error of the title \"Feed\" on the feed page.",
-      "6. Block LIDAR function and switch in setting page.",
-      "7. Shield the camera shooting position option, and default the starting position of each layer.",
-      "8. Add AI sensitivity adjustment function.",
-      "9. Add root privilege function.",
-      "10.Optimise the logic of zero return, only alarm when power failure.",
-      "11. Repair the hot bed PID setting target temperature is not effective.",
-      "12. Get the Z-axis offset value to keep three decimal places.",
-      "13. Save the Z-axis offset data only when exiting the Z-axis offset page.",
-      "14. Z-axis offset and flow rate values are not allowed to be set when calibrating before printing.",
-      "15. The key403 and key404 errors are only reported during a power failure."
-     ]
-    },
-    {
-     "version": "1.1.0.23",
-     "file": "CR-10_SE_F003_ota_img_V1.1.0.23.img",
-     "size": 113437530,
-     "released": "2023-11-01",
-     "url": "https://file2-cdn.creality.com/file/0355630fa22a78338501846c98523719/CR-10_SE_F003_ota_img_V1.1.0.23.img",
-     "notes": [
-      "1.Optimize system interface sliding sensitivity.",
-      "2.Added the function of printing detailed historical information for records.",
-      "3.Optimize printing interface layout and functions.",
-      "4.Camera optimization, support 1080P.",
-      "5.Add memory remaining capacity prompt.",
-      "6.Add time-lapse video deletion function.",
-      "7.Fix other known bug."
-     ]
-    },
-    {
-     "version": "1.1.0.21",
-     "file": "CR-10 SE_ota_img_V1.1.0.21.img",
-     "size": 113507354,
-     "released": "2023-09-27",
-     "url": "https://file2-cdn.creality.com/file/e37d64e73b3966e048a4b97b1d5de01b/F003_ota_img_V1.1.0.21.img",
-     "notes": [
-      "1.Fixing the problem of error report for renewed fights.",
-      "2.Fix Creality slicing anomaly problem.",
-      "3.On-boot self-test optimization.",
-      "4.Fix the abnormal problem of model water injection chart.",
-      "5.Unable to upload logs and export logs when adding printing.",
-      "6.Optimize the problem of resuming the wrong layer after power outage.",
-      "7.Optimize the judgment of nozzle and hot bed heating detection during self-test.",
-      "8.Fix the abnormal display of QR code on the binding Chuangxiang Cloud interface.",
-      "9.Optimize camera driver.",
-      "10.Bind the Chuangxiang Cloud interface to add the Chuangxiang Cloud server region selection function.",
-      "11. Optimize camera driver",
-      "12.Fix the abnormal problem of power failure.",
-      "13.Adjust lidar calibration coordinates.",
-      "14.Optimized the deletion display function of the folder interface.",
-      "15.Added pop-up prompts for abnormal AI brushed."
-     ]
-    }
-   ]
-  },
-  {
-   "key": "F004",
-   "name": "Ender-5 Max",
-   "firmwares": [
-    {
-     "version": "1.2.0.24",
-     "file": "F004_ota_img_V1.2.0.24.img",
-     "size": 111060106,
-     "released": "2026-07-01",
-     "url": "https://file2-cdn.creality.com/file/4a200e17b7eeddd9f521f0bf3f96f187/F004_ota_img_V1.2.0.24.img",
-     "notes": [
-      "V1.2.0.24 Firmware Update Notes:",
-      "1.Add heated-bed overtemperature skip.",
-      "2.Add energy-saving mode: disable bed heating above a certain print height.",
-      "3.Optimize layer compression issue for max-size prints.",
-      "4.Fixed known issues to further enhance user experience and product stability."
-     ]
-    },
-    {
-     "version": "1.2.0.21",
-     "file": "F004_ota_img_V1.2.0.21.img",
-     "size": 135652794,
-     "released": "2025-07-23",
-     "url": "https://file2-cdn.creality.com/file/fec90a04284a2207073c7a5357628764/F004_ota_img_V1.2.0.21.img",
-     "notes": [
-      "V1.2.0.21 Firmware Update Notes:",
-      "1. Add object exclusion function.",
-      "2. There is no translation of the speed of the moving axis interface.",
-      "3. Improve the temperature of the nozzle to room temperature after the completion of feeding and unwinding.",
-      "4. Improve the problem that the printer does not have consumables after the 2001 error is reported after the fast switch is turned on.",
-      "5. Open root permissions."
-     ]
-    },
-    {
-     "version": "1.2.0.20",
-     "file": "F004_ota_img_V1.2.0.20.img",
-     "size": 117342666,
-     "released": "2025-04-29",
-     "url": "https://file2-cdn.creality.com/file/18abd5dd216cc942c6e297b1527bde84/F004_ota_img_V1.2.0.20.img",
-     "notes": [
-      "V1.2.0.20 Firmware Update Notes:",
-      "1. Optimize the speed adjustment interface of the firmware side, there is no translation in other languages, and the display is Chinese.",
-      "2. Optimize the distance between the nozzle and the hot bed after wiping the nozzle.",
-      "3. In the expert mode, the manual Z-axis compensation can realize the problem of \"only one time effect\" or \"always take effect\" option.",
-      "4. Solve the problem that the camera turns on AI to detect the temperature of the hot bed and the nozzle is not leveled and printed according to the temperature set in the slice.",
-      "5. Optimize the wiping and spraying action to prevent the problem of the nozzle scraping the hot bed during the process of returning to zero.",
-      "6. Add hidden network function in the network.",
-      "7. Optimize the firmware to adapt to the model files generated by the current mainstream slicing software.",
-      "8. After the slicing software is paused, the pause point will always be executed."
-     ]
-    },
-    {
-     "version": "1.2.0.10",
-     "file": "F004_ota_img_V1.2.0.10.img",
-     "size": 117325690,
-     "released": "2025-04-03",
-     "url": "https://file2-cdn.creality.com/file/0f5abfea65e0bc48bccfd1f5b5e16bbf/F004_ota_img_V1.2.0.10.img",
-     "notes": [
-      "V1.2.0.10 Firmware Update Notes:",
-      "1. Solve the problem of virtual layer in power failure and material failure.",
-      "2. Solve the problem that the hot bed board does not rise at the bottom.",
-      "3. Cancel the printing and lower the hot bed to the bottom of the hot bed when the printing is completed.",
-      "4. Fixed the issue that some devices could not connect to Creality Cloud APP."
-     ]
-    },
-    {
-     "version": "1.2.0.09",
-     "file": "F004_ota_img_V1.2.0.09.img",
-     "size": 117325002,
-     "released": "2025-04-03",
-     "url": "https://file2-cdn.creality.com/file/0b922bb5b5c302b8eb87740961adc47b/F004_ota_img_V1.2.0.09.img",
-     "notes": [
-      "Factory Firmware."
-     ]
-    }
-   ]
-  }
- ]
+  ]
 }

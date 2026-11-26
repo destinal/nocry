@@ -400,6 +400,20 @@ public:
             setBusy(false);
             pollState();
             lastResult = o;
+            // firmware for several printer types on a board that does not say which it is:
+            // ask, then plan again with the answer
+            const QString need = o.value("need_choice").toString();
+            if (o.value("ok").toBool() && !need.isEmpty()) {
+                const QString pick = askBoardChoice(need, o.value("choices").toArray());
+                if (!pick.isEmpty()) {
+                    (need == "model" ? pendingModel : pendingBoard) = pick;
+                    startInstall(os, keepData, false);
+                    return;
+                }
+                if (onIdle)
+                    onIdle();
+                return;
+            }
             QString fwName = o.value("firmware_name").toString();
             if (fwName.isEmpty())
                 fwName = o.value("firmware_board").toString();
@@ -437,10 +451,11 @@ public:
             if (onIdle)
                 onIdle();
         });
-        w->setFuture(QtConcurrent::run([p, keepData, execute, safety] {
+        const QByteArray mdl = pendingModel.toUtf8(), brd = pendingBoard.toUtf8();
+        w->setFuture(QtConcurrent::run([p, keepData, execute, safety, mdl, brd] {
             if (keepData == 2)
                 return takeJson(nocry_install_slot_json(p.constData(), execute, safety.constData()));
-            return takeJson(nocry_install_json(p.constData(), keepData, execute, safety.constData()));
+            return takeJson(nocry_install2_json(p.constData(), keepData, execute, safety.constData(), mdl.constData(), brd.constData()));
         }));
     }
 
@@ -684,6 +699,7 @@ public:
 
     QTabWidget *tabWidget = nullptr;
     void openInstallDialog() { chooseInstall(); }
+    QString autoModel, autoBoard;   // self-tests: answers for the printer type / mainboard questions
     void openShellHelp() { showShellHelp(); }
     void openBootHelp() { showBootHelp(); }
     void fetchBoardLog() { showBoardLog(); }
@@ -988,7 +1004,10 @@ private:
         mc->setMaxLength(17);
         auto *mdl = new QComboBox;
         mdl->setEditable(true);
-        const QList<QPair<QString, QString>> known = {{"Nebula Pad", tr("Retail Nebula Pad")}, {"F005", tr("Ender-3 V3 KE")}, {"F003", tr("CR-10 SE")}, {"F004", tr("Ender-5 Max")}};
+        const QList<QPair<QString, QString>> known = {
+            {"Nebula Pad", tr("Retail Nebula Pad")}, {"F005", tr("Ender-3 V3 KE")}, {"F003", tr("CR-10 SE")}, {"F004", tr("Ender-5 Max")},
+            {"CR-K1", tr("K1")}, {"CR-K1 Max", tr("K1 Max")}, {"K1C", tr("K1C")}, {"K1 SE", tr("K1 SE")},
+            {"F001", tr("Ender-3 V3")}, {"F002", tr("Ender-3 V3 Plus")}};
         for (const auto &k : known)
             mdl->addItem(k.first == k.second ? k.first : QStringLiteral("%1 — %2").arg(k.first, k.second), k.first);
         int idx = mdl->findData(modelId);
@@ -1074,8 +1093,51 @@ private:
 
     QByteArray dataDir() const { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toUtf8(); }
 
-    // The firmware's id for this board's current model ("NEBULA", "F005"...), "" if unknown.
-    QString deviceModelKey() const { return modelId == "Nebula Pad" ? QStringLiteral("NEBULA") : modelId; }
+    // The firmware list this board's current model belongs to ("NEBULA", "F005", "CR4CU220812S11"...).
+    QString deviceModelKey() const
+    {
+        if (modelId == "Nebula Pad")
+            return QStringLiteral("NEBULA");
+        if (modelId == "F001" || modelId == "F002")
+            return QStringLiteral("F001");
+        if (modelId.startsWith("CR-K1") || modelId.startsWith("K1") || modelId.startsWith("K2 SE") || modelId.startsWith("GS-"))
+            return QStringLiteral("CR4CU220812S11");      // one firmware line for the K1 family
+        return modelId;
+    }
+
+    // "Which printer is this board in?" / "Which mainboard is it?" Returns the chosen value, "" if cancelled.
+    QString askBoardChoice(const QString &what, const QJsonArray &choices)
+    {
+        const QString preset = what == "model" ? autoModel : autoBoard;
+        if (!preset.isEmpty())
+            return preset;
+        if (quiet || choices.isEmpty())
+            return QString();
+        QDialog d(this);
+        d.setWindowTitle(what == "model" ? tr("Printer type") : tr("Mainboard"));
+        auto *v = new QVBoxLayout(&d);
+        auto *l = new QLabel(what == "model"
+            ? tr("This firmware is for several printers, and the board does not say which one it is in.\n\nWhich printer is this board for? The firmware loads that printer's settings; with the wrong choice the printer will not work properly.")
+            : tr("The board does not say which mainboard version it is.\n\nThe version is printed on the board (for example CR4CU220812S11). Which one is it?"));
+        l->setWordWrap(true);
+        l->setMinimumWidth(420);
+        v->addWidget(l);
+        auto *box = new QComboBox;
+        for (const auto &c : choices) {
+            const QJsonObject o = c.toObject();
+            const QString val = o.value("value").toString(), name = o.value("name").toString();
+            box->addItem(val == name ? val : QStringLiteral("%1  (%2)").arg(name, val), val);
+        }
+        box->setCurrentIndex(-1);
+        v->addWidget(box);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        bb->button(QDialogButtonBox::Ok)->setEnabled(false);
+        connect(box, &QComboBox::currentIndexChanged, &d, [bb](int i) { bb->button(QDialogButtonBox::Ok)->setEnabled(i >= 0); });
+        connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        v->addWidget(bb);
+        return d.exec() == QDialog::Accepted ? box->currentData().toString() : QString();
+    }
 
     void chooseInstall()
     {
@@ -1238,9 +1300,13 @@ private:
         if (d.exec() != QDialog::Accepted)
             return;
         if (fromFile->isChecked()) {
+            pendingModel.clear();
+            pendingBoard.clear();
             startInstall(path->text().trimmed(), other->isChecked() ? 2 : keep->isChecked() ? 1 : 0, false);
         } else {
             const QJsonObject f = models.at(modelBox->currentIndex()).toObject().value("firmwares").toArray().at(versionBox->currentIndex()).toObject();
+            pendingModel.clear();
+            pendingBoard.clear();
             startDownload(f, other->isChecked() ? 2 : keep->isChecked() ? 1 : 0);
         }
     }
@@ -1688,7 +1754,7 @@ private:
         auto *v = new QVBoxLayout(&d);
         auto *which = new QComboBox;
         which->addItem(tr("Nebula Pad (retail, Ender-3 V3 KE, CR-10 SE, Ender-5 Max)"), QStringLiteral("nebula"));
-        which->addItem(tr("K1 series mainboard (not supported yet)"), QStringLiteral("k1"));
+        which->addItem(tr("K1 family mainboard (K1, K1 Max, K1C, K1 SE, Ender-3 V3)"), QStringLiteral("k1"));
         v->addWidget(which);
         auto *pic = new QLabel;
         pic->setAlignment(Qt::AlignCenter);
@@ -1773,6 +1839,8 @@ private:
     QLabel *shellLine;
     QPushButton *shellButton;
     QPushButton *boardLogButton, *bootHelpButton;
+    // printer type / mainboard the user chose for the install in progress ("" = let nocry decide)
+    QString pendingModel, pendingBoard;
     QWidget *udevBanner = nullptr;
     QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton;
     QJsonObject shell;
@@ -1981,6 +2049,9 @@ int main(int argc, char **argv)
         const int keep = args[si + 2].toInt();
         w.quiet = true;
         w.autoConfirm = qEnvironmentVariableIsSet("NOCRY_TEST_TARGET");
+        // optional: answers for the printer type and mainboard questions
+        w.autoModel = qEnvironmentVariable("NOCRY_TEST_MODEL");
+        w.autoBoard = qEnvironmentVariable("NOCRY_TEST_BOARD");
         w.onIdle = [&w, shot] {
             QTimer::singleShot(300, [&w, shot] {
                 w.grab().save(shot);

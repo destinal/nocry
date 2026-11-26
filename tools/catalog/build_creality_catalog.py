@@ -117,22 +117,30 @@ def group(records, printers_by_id):
     return sorted(models.values(), key=lambda m: m["model"].lower())
 
 
-# Models nocry can install, keyed by the firmware's ota_board_name. The Nebula Pad is the
-# accessory "type 24"; the others are printers found by their internal name.
-NOCRY_MODELS = [("NEBULA", "Retail Nebula Pad"), ("F005", "Ender-3 V3 KE"), ("F003", "CR-10 SE"), ("F004", "Ender-5 Max")]
+# Firmware lines nocry can install, keyed by the firmware's ota_board_name (same table as
+# MODELS in host/core/src/catalog.rs): (key, name, printers' internal names, file name prefix).
+# The Nebula Pad is the accessory "type 24"; the others are found under their printers.
+NOCRY_MODELS = [("NEBULA", "Retail Nebula Pad", [], ""), ("F005", "Ender-3 V3 KE", ["F005"], ""),
+                ("F003", "CR-10 SE", ["F003"], ""), ("F004", "Ender-5 Max", ["F004"], ""),
+                ("CR4CU220812S11", "K1 series (K1, K1 Max, K1C, K1 SE)", ["CR-K1", "CR-K1 Max", "K1C", "K1 SE"], "CR4CU220812S11_"),
+                ("F001", "Ender-3 V3 series (V3, V3 Plus)", ["F001", "F002"], "F001_")]
 
 
 def nocry_catalog(cat):
     out = {"built": cat["built"], "models": []}
     allm = [m for s in cat["series"] for m in s["models"]]
-    for key, name in NOCRY_MODELS:
-        m = next((m for m in allm if (key == "NEBULA" and m["model_id"] == "type-24") or m["internal_name"] == key), None)
-        if not m:
-            continue
-        fws = [{"version": f["version"], "file": f["file"], "size": f["size_bytes"], "released": f["released"],
-                "url": f["download_url"], "notes": f["notes"]}
-               for f in m["firmwares"] if f["file"].endswith(".img") and "_ota_" in f["file"]]
-        out["models"].append({"key": key, "name": name, "firmwares": fws})
+    for key, name, printers, prefix in NOCRY_MODELS:
+        ms = [m for m in allm if (key == "NEBULA" and m["model_id"] == "type-24") or m["internal_name"] in printers]
+        fws, seen = [], set()
+        for m in ms:
+            for f in m["firmwares"]:
+                if f["file"].endswith(".img") and "_ota_" in f["file"] and f["file"].startswith(prefix) and f["download_url"] not in seen:
+                    seen.add(f["download_url"])
+                    fws.append({"version": f["version"], "file": f["file"], "size": f["size_bytes"], "released": f["released"],
+                                "url": f["download_url"], "notes": f["notes"]})
+        if fws:
+            fws.sort(key=lambda f: f["released"], reverse=True)
+            out["models"].append({"key": key, "name": name, "firmwares": fws})
     return out
 
 

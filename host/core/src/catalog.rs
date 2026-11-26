@@ -15,19 +15,45 @@ use std::path::{Path, PathBuf};
 
 const BUILTIN: &str = include_str!("../data/catalog.json");
 const API: &str = "https://admin.crealitycloud.com";
-/// (ota_board_name, product name, where the API lists it)
-const MODELS: &[(&str, &str, Source)] = &[
-    ("NEBULA", "Retail Nebula Pad", Source::Type(24)),
-    ("F005", "Ender-3 V3 KE", Source::Series("2")),
-    ("F003", "CR-10 SE", Source::Series("1")),
-    ("F004", "Ender-5 Max", Source::Series("2")),
+/// A list of firmware in the catalog: one per firmware line (`boards::LINES`).
+struct Listing {
+    /// the firmware's ota_board_name
+    key: &'static str,
+    name: &'static str,
+    source: Source,
+    /// printers (internal names) whose records carry this line's files
+    printers: &'static [&'static str],
+    /// file names of this line start with this ("" = any)
+    file_prefix: &'static str,
+}
+
+const MODELS: &[Listing] = &[
+    Listing { key: "NEBULA", name: "Retail Nebula Pad", source: Source::Type(24), printers: &[], file_prefix: "" },
+    Listing { key: "F005", name: "Ender-3 V3 KE", source: Source::Series("2"), printers: &["F005"], file_prefix: "" },
+    Listing { key: "F003", name: "CR-10 SE", source: Source::Series("1"), printers: &["F003"], file_prefix: "" },
+    Listing { key: "F004", name: "Ender-5 Max", source: Source::Series("2"), printers: &["F004"], file_prefix: "" },
+    // one firmware for the whole K1 family, listed under each of its printers
+    Listing {
+        key: "CR4CU220812S11",
+        name: "K1 series (K1, K1 Max, K1C, K1 SE)",
+        source: Source::Series("9"),
+        printers: &["CR-K1", "CR-K1 Max", "K1C", "K1 SE"],
+        file_prefix: "CR4CU220812S11_",
+    },
+    Listing {
+        key: "F001",
+        name: "Ender-3 V3 series (V3, V3 Plus)",
+        source: Source::Series("2"),
+        printers: &["F001", "F002"],
+        file_prefix: "F001_",
+    },
 ];
 
 #[derive(Clone, Copy)]
 enum Source {
     /// accessory firmware type
     Type(u32),
-    /// printer series id; the model is matched by its internal name
+    /// printer series id; the printers are matched by their internal names
     Series(&'static str),
 }
 
@@ -208,8 +234,8 @@ pub fn refresh(data_dir: &Path) -> Result<Catalog> {
     crate::say!("asking Creality for the current firmware list");
     let mut series: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
     let mut models = vec![];
-    for (key, name, src) in MODELS {
-        let recs: Vec<Value> = match src {
+    for Listing { key, name, source, printers, file_prefix } in MODELS {
+        let recs: Vec<Value> = match source {
             Source::Type(t) => search(json!({ "type": t }))?,
             Source::Series(id) => {
                 if !series.contains_key(id) {
@@ -218,7 +244,7 @@ pub fn refresh(data_dir: &Path) -> Result<Catalog> {
                 series[id]
                     .iter()
                     .filter(|r| {
-                        r.get("subType").and_then(|x| x.as_array()).is_some_and(|a| a.iter().any(|x| s(x, "internalName") == *key))
+                        r.get("subType").and_then(|x| x.as_array()).is_some_and(|a| a.iter().any(|x| printers.contains(&s(x, "internalName").as_str())))
                     })
                     .cloned()
                     .collect()
@@ -227,7 +253,7 @@ pub fn refresh(data_dir: &Path) -> Result<Catalog> {
         let mut fws: Vec<(i64, Firmware)> = vec![];
         for r in &recs {
             let (file, url) = (s(r, "name"), s(r, "downloadUrl"));
-            if !file.ends_with(".img") || !file.contains("_ota_") || !url.starts_with("https://") {
+            if !file.ends_with(".img") || !file.contains("_ota_") || !url.starts_with("https://") || !file.starts_with(file_prefix) {
                 continue;
             }
             if fws.iter().any(|(_, f)| f.url == url) {
