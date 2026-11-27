@@ -125,7 +125,9 @@ Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (ker
 - Until the touch interface exists, `S45nocry-rescue` starts the board's own Wi-Fi network (`nocry-rescue`, WPA2, the password is the same word, board at 192.168.77.1) and `nocry-banner` shows network, address and pairing code on the screen. The Wi-Fi password only gets a computer onto the network; driving the board needs the code.
 - The image is 14.6 MiB with only this chip's Wi-Fi firmware.
 
-Missing: discovery in nocry (the board announces `_nocry._tcp`, nocry does not look yet), the network option in the window, and the first run of all this on a board.
+- First run on a board (Nebula Pad, the TCP connection tunnelled over USB with `adb forward`): slots and loader read correctly, a 32 MiB read through the link is identical to the same read over USB (10.9 MB/s against 35 MB/s), a wrong code is refused.
+
+Missing: discovery in nocry (the board announces `_nocry._tcp`, nocry does not look yet), the network option in the window, and a run over the board's Wi-Fi instead of the tunnel.
 
 ## Open points
 

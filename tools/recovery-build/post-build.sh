@@ -19,7 +19,10 @@ if [ -e "$T/usr/sbin/wpa_supplicant" ]; then
   # started by S45nocry-rescue with our own settings, not by the packages' scripts
   rm -f "$T/etc/init.d/S80dnsmasq" "$T/etc/init.d/S50mdnsd" "$T/etc/mdns.d/ssh.service"
   # of the Broadcom firmware collection only this board's chip is needed
-  find "$T/lib/firmware/brcm" -type f ! -name 'brcmfmac43430-sdio.bin' ! -name 'brcmfmac43430-sdio.AP6212.txt' ! -name 'brcmfmac43430-sdio.clm_blob' -delete 2>/dev/null || true
-  find "$T/lib/firmware" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
-  rm -rf "$T/lib/firmware/cypress"
+  # (in linux-firmware the brcm/ names of this chip are links into cypress/)
+  for d in brcm cypress; do
+    find "$T/lib/firmware/$d" \( -type f -o -type l \) ! -name '*43430-sdio.bin' ! -name '*43430-sdio.clm_blob' \
+      ! -name 'brcmfmac43430-sdio.AP6212.txt' -delete 2>/dev/null || true
+  done
+  [ -e "$T/lib/firmware/brcm/brcmfmac43430-sdio.bin" ] || { echo "post-build: the Wi-Fi firmware is missing" >&2; exit 1; }
 fi
