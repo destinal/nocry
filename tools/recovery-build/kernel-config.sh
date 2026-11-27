@@ -17,7 +17,8 @@ $C -e USB_GADGET -e USB_LIBCOMPOSITE -e USB_CONFIGFS -e USB_CONFIGFS_F_FS -e USB
 # FunctionFS device at boot (configfs `mkdir functions/ffs.adb` then fails with EBUSY)
 $C -d USB_FUNCTIONFS -d USB_FUNCTIONFS_GENERIC -d USB_FUNCTIONFS_ETH -d USB_FUNCTIONFS_RNDIS
 # filesystems useful for repair
-$C -e SQUASHFS -e SQUASHFS_XZ -e EXT4_FS -e EXT2_FS -e VFAT_FS -e DEVTMPFS -e DEVTMPFS_MOUNT -e CONFIGFS_FS -e TMPFS
+# every compression a firmware's system uses: Creality gzip or lzo, NebulaOS zstd (the rescue pages read the version from it)
+$C -e SQUASHFS -e SQUASHFS_XZ -e SQUASHFS_ZLIB -e SQUASHFS_LZO -e SQUASHFS_ZSTD -e EXT4_FS -e EXT2_FS -e VFAT_FS -e DEVTMPFS -e DEVTMPFS_MOUNT -e CONFIGFS_FS -e TMPFS
 # no eFuse access, no display stack
 $C -d INGENIC_EFUSE_X2000 -d INGENIC_EFUSE_WRITABLE
 $C -d FB_INGENIC -d STAGE_CREALITY_LCD -d LOGO -d TRUE_COLOR_LOGO

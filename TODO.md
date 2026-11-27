@@ -33,6 +33,21 @@ Last updated: 2026-11-27.
 - [ ] **Board images from CI:** workflow `board-images` builds all of them, nocry-rescue included, on changes to their sources and publishes them as the `board-images` pre-release; `tools/get-images.sh` downloads that. Open: confirm the first run passes and the download works from a fresh clone; let the release workflow reuse it and ship nocry-rescue.
 - [ ] **Board images on macOS:** `tools/build-images.sh` builds everything from a clone; verified on Linux only. Try it on a Mac with Docker Desktop (emulated containers, case-sensitive work volume) and fix what breaks.
 - [ ] **Rescue joins a Wi-Fi network:** works on the Nebula from the set-up page (2026-11-27), and nocry on a PC found and read the board over the home network. Still to try: a saved network of the installed firmware; the join from nocry ("Board's Wi-Fi…") and finding the board again; the fallback after a wrong password on the fixed image; whether the driver setting or a mistyped password explained the first failures; speed at a realistic distance from the router.
+- [ ] **Rescue web pages** (pairing code once, Wi-Fi, slots, copy, resets, jobs with progress): work on the Nebula. Next, in this order:
+  - [ ] **Install firmware from the page** (downloaded by the board, or uploaded from the browser). Needs nocry's install logic on the board rather than a second implementation: build the Rust core for the board's processor (mipsel is not a ready-made target) and make it stream firmware instead of holding it in memory (the board has about 230 MB of RAM); stage downloads on the data partition.
+  - [ ] the rescue functions below, on the pages too
+- [ ] **Rescue functions for both the desktop app and the web pages** (asked for 2026-11-27; what each has today in brackets):
+  - [ ] Remove system modifications only: blank the settings overlay, keep files [web: yes; desktop: factory reset can keep files, but it is not offered as its own, clearly named action]
+  - [ ] Check and repair the data file system (e2fsck) [neither]
+  - [ ] File browser for the data partition: see what fills it, download, delete; replace a broken `printer.cfg` [neither]
+  - [ ] Save before wiping: download configuration and files, the identity record, or a backup [desktop: full and per-partition backup; web: none]
+  - [ ] "Why didn't it start?": the nocryboot note, the kernel log of the last start, the firmware's own logs, bundled into one file [desktop: board log only; web: the note only]
+  - [ ] Storage health: the eMMC's own wear report [neither]
+  - [ ] Write the Wi-Fi network just joined into the installed firmware's settings [neither]
+  - [ ] Restart: into the firmware, into the other slot once, into USB boot mode [neither]
+  - [ ] Screen and touch test [neither; only meaningful on the board]
+  - [ ] Identity: show and repair [desktop: yes; web: shows the printer type only]
+  - [ ] Boot loader and boot picture [desktop: yes; web: none]
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.

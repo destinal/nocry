@@ -62,7 +62,7 @@ set_mac() {
 }
 
 radio_down() {
-    killall -q udhcpc dnsmasq nocry-webd 2>/dev/null
+    killall -q udhcpc dnsmasq 2>/dev/null
     wpa_cli -p $CTRL -i $IF terminate >/dev/null 2>&1
     i=0; while pidof wpa_supplicant >/dev/null && [ $i -lt 20 ]; do sleep 0.2; i=$((i+1)); done
     killall -q wpa_supplicant 2>/dev/null
@@ -108,11 +108,9 @@ CONF
     wpa_supplicant -B -i $IF -D nl80211 -c $RUN/nocry-ap.conf >/dev/null 2>&1
     ip addr add $AP_ADDR/24 dev $IF 2>/dev/null
     ip link set $IF up
-    # every name resolves to the board, so a phone that joins is shown the set-up page by itself
+    # every name resolves to the board, so a phone that joins is shown the board's pages (nocry-webd) by itself
     dnsmasq --interface=$IF --bind-interfaces --dhcp-range=192.168.77.10,192.168.77.50,12h \
         --dhcp-leasefile=$RUN/nocry-leases --pid-file=$RUN/nocry-dnsmasq.pid --address=/#/$AP_ADDR
-    # in a session of its own: it must outlive whoever asked for the network (a shell, the service)
-    setsid nocry-webd --address $AP_ADDR >/dev/null 2>/dev/console </dev/null &
     state ap "$AP_SSID" "$AP_ADDR" "$1"
     announce
     log "own network $AP_SSID open at $AP_ADDR"

@@ -150,6 +150,25 @@ A join answers at once and happens two seconds later, because over Wi-Fi it cuts
 
 Limits: 2.4 GHz only; WPA2 passphrases (8 to 63 characters, no double quote) or open networks; the list of networks is the one taken at start, because this chip does not scan while it is an access point (a name can be typed). A chosen network is not remembered across a restart: rescue runs from memory and writes nothing.
 
+### The web pages
+
+`webd/nocry-webd.c` serves pages at the board's address on whatever network it is on, for someone with a phone or laptop and no nocry on it. On the board's own network every name resolves to the board, so most devices show them by themselves.
+
+1. **Pairing code, once.** The first page asks only for the code on the board's screen. The browser then holds a session (a random token in a `SameSite=Strict`, `HttpOnly` cookie) until the board restarts. A wrong code costs two seconds; five in a row lock sign-in for a minute.
+2. **Wi-Fi first.** While the board is on its own network, "Put the board on your Wi-Fi" is the first and highlighted card.
+3. **Firmware:** what each slot holds (read from the slot's own system: Creality's `etc/ota_info` or NebulaOS's `os-release`), which one starts, a note when the nocryboot loader recorded a failed start; "Start slot X" and "Copy to slot Y".
+4. **Reset:** "Remove system modifications" (blanks the settings overlay `rootfs_data` only; files and printer configuration stay) and "Factory reset" (that and `userdata`).
+
+Every change asks first on a page of its own and says what it costs. Copy and the resets run as a job on the board with a progress bar (the page reloads itself every three seconds, no JavaScript) and a Cancel that says what stopping half-way leaves before it stops.
+
+How it is built: the pages do no work themselves. `/usr/sbin/nocry-rescue-do` (shell) does the checks and runs jobs, and everything that touches the storage goes through the service's own commands with `nocry-fbd --exec <command>` (one command, answer as text, critical regions stay locked): `set_active`, `nocry-pcopy` (partition to partition, for slots), `nocry-zero`. So comparing, verified writing and the rules about what may be written exist once. Tools are started with their arguments as they are, never through a shell; actions are POST only.
+
+Plain HTTP: on a network shared with others the code and the session can be overheard. A browser will not take an encrypted page from a board without a warning on every visit; nocry on a computer has its own encrypted link.
+
+Not on the pages yet: installing firmware (needs nocry's own install logic on the board, see the to-do list), backups, the boot loader.
+
+Tested: every page and action on a PC with stand-in tools (sign-in, forged and missing sessions, odd characters, confirmations, a job and its Cancel); on the Nebula Pad over the home network, sign-in and a copy of slot A to slot B through the page (512 MiB in about 20 s), checked afterwards with nocry.
+
 **On the Nebula Pad (2026-11-27):**
 
 - No saved network on the test board (its data partition was blank), so it opened its own network; the set-up page came up on a phone by itself.

@@ -95,8 +95,17 @@ static int pkt_read(char *buf, size_t max)
 	}
 	return read(ep_out, buf, max);
 }
+static int exec_mode, exec_failed;	/* --exec: one command from the command line, answers as text */
 static int pkt_write(const char *buf, size_t n)
 {
+	if (exec_mode) {
+		/* "OKAY..." / "FAIL..." / "INFO..." as a line; DATA cannot be answered in this mode */
+		if (n >= 4 && !memcmp(buf, "FAIL", 4)) exec_failed = 1;
+		if (n >= 4 && !memcmp(buf, "DATA", 4)) { exec_failed = 1; fprintf(stdout, "FAIL this command needs a data phase; not available with --exec\n"); return -1; }
+		fwrite(buf, 1, 4, stdout); fputc(' ', stdout); fwrite(buf + 4, 1, n - 4, stdout); fputc('\n', stdout);
+		fflush(stdout);
+		return 0;
+	}
 	if (stdio_mode) {
 		u32 l = n;
 		return wr_full(1, &l, 4) || wr_full(1, buf, n) ? -1 : 0;
@@ -422,7 +431,7 @@ static void getvar_one(const char *v, char *out)
 	else if (!strcmp(v, "unlocked")) strcpy(out, "yes");
 	else if (!strcmp(v, "critical-unlocked")) strcpy(out, critical_unlocked ? "yes" : "no");
 	else if (!strcmp(v, "nocry-ext")) {
-		strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy,zero");
+		strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy,zero,pcopy");
 		if (!access(WIFI_TOOL, X_OK)) strcat(out, ",wifi");	/* the rescue system only */
 	}
 	else if (!strcmp(v, "slot-count")) strcpy(out, "2");
@@ -671,6 +680,37 @@ static void cmd_nocry_zero(char *arg)
 	else OKAY("%llx", (unsigned long long)written);
 }
 
+/* nocry-pcopy:<from partition>:<to partition>:<off>:<size> (hex, 512-aligned): as nocry-copy, but
+ * from one partition to the same place in another; for copying a firmware slot without the right
+ * to write the whole disk. Answer: OKAY<bytes written, hex>. */
+static void cmd_nocry_pcopy(char *arg)
+{
+	static u8 *cbuf; struct region rs, rd; char why[80], *f[4]; u64 off, size, src, dst, written = 0; int i, e = 0;
+	for (i = 0, f[0] = arg; i < 3; i++) {
+		f[i + 1] = f[i] ? strchr(f[i], ':') : NULL;
+		if (!f[i + 1]) { FAIL("usage: nocry-pcopy:<from>:<to>:<off>:<size>"); return; }
+		*f[i + 1]++ = 0;
+	}
+	if (region_find(f[0], &rs, why) || region_find(f[1], &rd, why)) { FAIL("%s", why); return; }
+	if (need_critical(&rd)) return;
+	off = strtoull(f[2], NULL, 16); size = strtoull(f[3], NULL, 16);
+	if (!size || (off | size) % 512) { FAIL("offset and size must be non-zero multiples of 512"); return; }
+	if (off > rs.nblk * 512 || size > rs.nblk * 512 - off || off > rd.nblk * 512 || size > rd.nblk * 512 - off) { FAIL("range exceeds a partition"); return; }
+	src = rs.lba * 512 + off; dst = rd.lba * 512 + off;
+	if (src < dst + size && dst < src + size) { FAIL("source and destination overlap"); return; }
+	if (!cbuf && !(cbuf = xalign(MIB))) { FAIL("out of memory"); return; }
+	while (size && !e) {
+		size_t k = size > MIB ? MIB : size;
+		if (dread(src, cbuf, k) || dread(dst, vbuf, k)) e = -EIO;
+		else if (memcmp(cbuf, vbuf, k)) { e = dwrite_verified(dst, cbuf, k); written += k; }
+		src += k; dst += k; size -= k;
+	}
+	fdatasync(disk);
+	if (e == -EILSEQ) FAIL("verify failed: the destination does not read back what was written");
+	else if (e) FAIL("read or write error");
+	else OKAY("%llx", (unsigned long long)written);
+}
+
 static void cmd_nocry_hash(char *arg)
 {
 	struct region r; u64 off, size, chunk, nch; struct span sp; pthread_t th; u8 *b; size_t n;
@@ -858,6 +898,7 @@ static void dispatch(char *c)
 	else if (!strncmp(c, "nocry-hash:", 11)) cmd_nocry_hash(c + 11);
 	else if (!strncmp(c, "nocry-copy:", 11)) cmd_nocry_copy(c + 11);
 	else if (!strncmp(c, "nocry-zero:", 11)) cmd_nocry_zero(c + 11);
+	else if (!strncmp(c, "nocry-pcopy:", 12)) cmd_nocry_pcopy(c + 12);
 	else if (!strncmp(c, "nocry-secure-erase:", 19)) cmd_nocry_secure_erase(c + 19);
 	else if (!strcmp(c, "nocry-dmesg")) cmd_nocry_dmesg();
 	else if (!strncmp(c, "nocry-wifi:", 11)) cmd_nocry_wifi(c + 11);
@@ -919,7 +960,12 @@ int main(int argc, char **argv)
 	static char cmd[CMD_MAX + 1];
 	struct stat st; u64 bytes = 0; int i, n;
 
-	if (argc >= 3 && !strcmp(argv[1], "--stdio")) { stdio_mode = 1; dev = argv[2]; }
+	/* nocry-fbd --exec COMMAND [DEVICE]: run one command (no data phase) and print its answer.
+	 * The rescue system's own tools use the service's commands this way instead of doing the
+	 * same work a second time; critical regions stay locked. */
+	const char *one = NULL;
+	if (argc >= 3 && !strcmp(argv[1], "--exec")) { exec_mode = stdio_mode = 1; one = argv[2]; if (argc >= 4) dev = argv[3]; }
+	else if (argc >= 3 && !strcmp(argv[1], "--stdio")) { stdio_mode = 1; dev = argv[2]; }
 	else { if (argc >= 2) dev = argv[1]; if (argc >= 3) ffs = argv[2]; }
 	disk = open(dev, O_RDWR | O_DIRECT);
 	if (disk < 0) disk = open(dev, O_RDWR);
@@ -935,6 +981,11 @@ int main(int argc, char **argv)
 	(void)ffs;
 	if (!stdio_mode) return 1;
 #endif
+	if (one) {
+		snprintf(cmd, sizeof(cmd), "%s", one);
+		dispatch(cmd);
+		return exec_failed ? 1 : 0;
+	}
 	fprintf(stderr, "nocry-fbd: %s, %llu bytes, ready\n", dev, (unsigned long long)bytes);
 	for (;;) {
 		n = pkt_read(cmd, CMD_MAX);

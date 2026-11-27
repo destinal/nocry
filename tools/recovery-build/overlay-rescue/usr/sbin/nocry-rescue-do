@@ -1,0 +1,157 @@
+#!/bin/sh
+# nocry-rescue-do: what the rescue system's web pages can do to the board, in one place
+# (docs/nocry-rescue.md). Everything that touches the storage goes through nocry-fbd's own
+# commands (nocry-fbd --exec), so reading, comparing and verified writing are not done twice.
+#
+#   nocry-rescue-do status          the board and its two firmware slots, as key=value lines
+#   nocry-rescue-do switch a|b      make that slot the one that starts
+#   nocry-rescue-do copy a|b        copy that slot's firmware over the other slot       (a job)
+#   nocry-rescue-do reset mods|all  blank the settings overlay, or it and all files     (a job)
+#   nocry-rescue-do job             the running or last job: state=, what=, done=, total=, message=
+#   nocry-rescue-do cancel          ask the running job to stop at its next safe point
+#
+# A job runs on its own (it outlives the page that started it), one at a time, and records its
+# progress in /run/nocry-job. Stopping one leaves what its `risk=` line says.
+
+DISK=${NOCRY_DISK:-/dev/mmcblk0}
+FBD=${NOCRY_FBD:-/usr/sbin/nocry-fbd}
+RUN=${NOCRY_RUN:-/run}
+JOB=$RUN/nocry-job
+LOCK=$RUN/nocry-job.lock
+STOP=$RUN/nocry-job.stop
+STEP=1000000        # 16 MiB per command (hex), so progress and Cancel are never far away
+
+fb() { "$FBD" --exec "$1" "$DISK" 2>/dev/null; }                 # prints "OKAY ..." / "FAIL ..."
+ok() { r=$(fb "$1"); case "$r" in OKAY*) echo "${r#OKAY }"; return 0 ;; *) echo "${r#FAIL }"; return 1 ;; esac; }
+
+part() {    # device node of the partition named $1 (a real board), or nothing (a test image)
+    for u in /sys/class/block/mmcblk0p*/uevent; do
+        grep -q "^PARTNAME=$1\$" "$u" 2>/dev/null && { echo "/dev/$(basename "$(dirname "$u")")"; return 0; }
+    done
+    return 1
+}
+size() { s=$(ok "getvar:partition-size:$1") || return 1; printf '%d' "$s"; }    # bytes
+sfx() { [ "$1" = b ] && echo 2; }
+
+# first bytes of a partition as hex: head NAME OFFSET COUNT
+head_hex() { p=$(part "$1") || return 1; dd if="$p" bs=1 skip="$2" count="$3" 2>/dev/null | hexdump -v -e '/1 "%02x"'; }
+
+# What a slot holds. Prints: complete=yes|no, firmware=<name and version, or what is missing>
+slot() {
+    x=$(sfx "$1"); miss=
+    [ "$(head_hex "rtos$x" 8 4)" = 52544f53 ] || miss="$miss start program,"
+    [ "$(head_hex "kernel$x" 0 4)" = 27051956 ] || miss="$miss kernel,"
+    [ "$(head_hex "rootfs$x" 0 4)" = 68737173 ] || miss="$miss system,"
+    if [ -n "$miss" ]; then
+        echo "$1_complete=no"; echo "$1_firmware=incomplete (no${miss%,})"; return
+    fi
+    echo "$1_complete=yes"
+    name="unrecognised firmware"
+    m=$RUN/nocry-slot; mkdir -p $m
+    if p=$(part "rootfs$x") && mount -t squashfs -o ro "$p" $m 2>/dev/null; then
+        if [ -f $m/etc/ota_info ]; then
+            b=$(sed -n 's/^ota_board_name=//p' $m/etc/ota_info | tr -d '\r'); v=$(sed -n 's/^ota_version=//p' $m/etc/ota_info | tr -d '\r')
+            case "$b" in
+                NEBULA) b="Retail Nebula Pad" ;; F005) b="Ender-3 V3 KE" ;; F003) b="CR-10 SE" ;; F004) b="Ender-5 Max" ;;
+                CR4CU220812S1?) b="K1 series" ;; F001) b="Ender-3 V3 series" ;;
+            esac
+            name="Creality $b $v"
+        elif grep -q '^ID=nebulaos' $m/usr/lib/os-release 2>/dev/null; then
+            name="NebulaOS $(sed -n 's/^VERSION_ID=//p' $m/usr/lib/os-release | tr -d '"\r')"
+        fi
+        umount $m 2>/dev/null
+    fi
+    echo "$1_firmware=$name"
+}
+
+status() {
+    a=$(ok getvar:current-slot) || a=
+    echo "active=$a"
+    slot a; slot b
+    # the identity record: model and mainboard only; serial number and MAC stay off the page
+    if p=$(part sn_mac); then
+        rec=$(dd if="$p" bs=512 count=1 2>/dev/null | tr -d '\000')
+        echo "model=$(echo "$rec" | cut -d';' -f3)"; echo "mainboard=$(echo "$rec" | cut -d';' -f4)"
+    fi
+    # what the nocryboot loader noted about the last starts (second sector of ota)
+    if p=$(part ota); then echo "note=$(dd if="$p" bs=512 skip=1 count=1 2>/dev/null | tr -d '\000' | head -1 | tr -cd 'a-zA-Z0-9:=_-')"; fi
+}
+
+job_state() {   # job_state STATE WHAT DONE TOTAL MESSAGE
+    printf 'state=%s\nwhat=%s\ndone=%s\ntotal=%s\nmessage=%s\nrisk=%s\n' "$1" "$2" "$3" "$4" "$5" "$RISK" > $JOB.new && mv $JOB.new $JOB
+}
+
+# run_job NAME FUNCTION ARGS...: takes the lock, runs in the background on its own
+run_job() {
+    mkdir $LOCK 2>/dev/null || { echo "another operation is still running" >&2; exit 1; }
+    rm -f $STOP
+    what=$1; shift
+    job_state running "$what" 0 1 ""
+    (
+        trap 'rmdir $LOCK 2>/dev/null' EXIT
+        if "$@"; then job_state done "$what" "$DONE" "$TOTAL" "$MSG"
+        elif [ -e $STOP ]; then job_state cancelled "$what" "$DONE" "$TOTAL" "$MSG"
+        else job_state failed "$what" "$DONE" "$TOTAL" "$MSG"; fi
+        rm -f $STOP
+    ) </dev/null >/dev/null 2>&1 &
+}
+
+# one fbd command per 16 MiB over a partition: over NAME SIZE COMMAND-PREFIX (offset and size are appended)
+DONE=0; TOTAL=1; MSG=; RISK=
+over() {
+    off=0
+    while [ $off -lt "$2" ]; do
+        [ -e $STOP ] && { MSG="stopped before it was finished"; return 1; }
+        n=$(( $2 - off )); [ $n -gt $((0x$STEP)) ] && n=$((0x$STEP))
+        r=$(ok "$3:$(printf '%x' $off):$(printf '%x' $n)") || { MSG="$1: $r"; return 1; }
+        off=$((off + n)); DONE=$((DONE + n))
+        job_state running "$what" "$DONE" "$TOTAL" "$1"
+    done
+}
+
+do_copy() {     # do_copy FROM(a|b)
+    f=$(sfx "$1"); if [ "$1" = a ]; then t=2; else t=; fi
+    TOTAL=0
+    for p in rtos kernel rootfs; do
+        s=$(size "$p$f") && d=$(size "$p$t") || { MSG="cannot read the size of $p"; return 1; }
+        [ "$s" = "$d" ] || { MSG="$p$f and $p$t differ in size; the slot cannot be copied"; return 1; }
+        TOTAL=$((TOTAL + s))
+    done
+    for p in rtos kernel rootfs; do
+        over "$p$t" "$(size "$p$f")" "nocry-pcopy:$p$f:$p$t" || return 1
+    done
+    MSG="copied and verified"
+}
+
+do_reset() {    # do_reset mods|all
+    parts="rootfs_data"; [ "$1" = all ] && parts="rootfs_data userdata"
+    TOTAL=0; for p in $parts; do s=$(size "$p") || { MSG="no $p partition"; return 1; }; TOTAL=$((TOTAL + s)); done
+    for p in $parts; do over "$p" "$(size "$p")" "nocry-zero:$p" || return 1; done
+    MSG="erased and verified"
+}
+
+case "$1" in
+  status) status ;;
+  switch)
+    case "$2" in a|b) ;; *) echo "slot must be a or b" >&2; exit 2 ;; esac
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; exit 1; }
+    slot "$2" | grep -q "^$2_complete=yes" || { echo "slot $2 has no complete firmware; the board would not start from it" >&2; exit 1; }
+    r=$(ok "set_active:$2") || { echo "$r" >&2; exit 1; } ;;
+  copy)
+    case "$2" in a|b) ;; *) echo "slot must be a or b" >&2; exit 2 ;; esac
+    slot "$2" | grep -q "^$2_complete=yes" || { echo "slot $2 has no complete firmware to copy" >&2; exit 1; }
+    if [ "$2" = a ]; then o=B; else o=A; fi
+    RISK="Slot $o is left with an incomplete copy and cannot be started until the copy is run again."
+    run_job "Copying slot $(echo "$2" | tr ab AB) to slot $o" do_copy "$2" ;;
+  reset)
+    case "$2" in
+      mods) RISK="The settings overlay is left partly erased. The printer may not start properly until this is run to the end."
+            run_job "Removing system modifications" do_reset mods ;;
+      all)  RISK="Settings and files are left partly erased: what is gone stays gone. The printer may not start properly until this is run to the end."
+            run_job "Factory reset" do_reset all ;;
+      *) echo "usage: nocry-rescue-do reset mods|all" >&2; exit 2 ;;
+    esac ;;
+  job) cat $JOB 2>/dev/null || echo "state=none" ;;
+  cancel) [ -d $LOCK ] && : > $STOP ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
