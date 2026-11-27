@@ -263,6 +263,14 @@ impl Fastboot {
         u64::from_str_radix(r.trim(), 16).with_context(|| format!("nocry-copy: bad answer {r:?}"))
     }
 
+    /// nocry-zero (nocry-fbd 0.4+): fills `size` bytes of <name> at `off` with zeros on the board
+    /// itself. Parts that already are zeros are not written; written parts are read back by the
+    /// board. Returns the bytes written.
+    pub fn zero(&mut self, name: &str, off: u64, size: u64) -> Result<u64> {
+        let r = self.command_timeout(&format!("nocry-zero:{name}:{off:x}:{size:x}"), Duration::from_secs(300))?;
+        u64::from_str_radix(r.trim(), 16).with_context(|| format!("nocry-zero: bad answer {r:?}"))
+    }
+
     /// nocry-hash (nocry-fbd only): one digest per `chunk` bytes, computed on the board.
     pub fn hash(&mut self, algo: Hash, name: &str, off: u64, size: u64, chunk: u64) -> Result<Vec<Vec<u8>>> {
         let n = self.expect_data(&format!("nocry-hash:{}:{name}:{off:x}:{size:x}:{chunk:x}", algo.name()))?;

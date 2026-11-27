@@ -417,7 +417,7 @@ static void getvar_one(const char *v, char *out)
 	else if (!strcmp(v, "secure")) strcpy(out, "no");
 	else if (!strcmp(v, "unlocked")) strcpy(out, "yes");
 	else if (!strcmp(v, "critical-unlocked")) strcpy(out, critical_unlocked ? "yes" : "no");
-	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy");
+	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy,zero");
 	else if (!strcmp(v, "slot-count")) strcpy(out, "2");
 	else if (!strcmp(v, "current-slot")) { int s = current_slot(); if (s >= 0) strcpy(out, s ? "b" : "a"); }
 	else if (!strncmp(v, "has-slot:", 9))
@@ -641,6 +641,29 @@ static void cmd_nocry_copy(char *arg)
 	else OKAY("%llx", (unsigned long long)written);
 }
 
+/* nocry-zero:<name>:<off>:<size> (hex, 512-aligned): fills the range with zeros on the board, so
+ * the computer does not have to send them. Megabytes that already read as zeros are not written;
+ * each one written is read back and compared. Answer: OKAY<bytes written, hex>. */
+static void cmd_nocry_zero(char *arg)
+{
+	struct region r; u64 off, size, written = 0; int e = 0;
+	if (parse_span(arg, &r, &off, &size, 1)) return;
+	if (need_critical(&r)) return;
+	if (!size || size % 512) { FAIL("size must be a non-zero multiple of 512"); return; }
+	memset(zbuf, 0, MIB);
+	off += r.lba * 512;
+	while (size && !e) {
+		size_t k = size > MIB ? MIB : size;
+		if (dread(off, vbuf, k)) e = -EIO;
+		else if (memcmp(vbuf, zbuf, k)) { e = dwrite_verified(off, zbuf, k); written += k; }
+		off += k; size -= k;
+	}
+	fdatasync(disk);
+	if (e == -EILSEQ) FAIL("verify failed: the range does not read back as zeros");
+	else if (e) FAIL("read or write error");
+	else OKAY("%llx", (unsigned long long)written);
+}
+
 static void cmd_nocry_hash(char *arg)
 {
 	struct region r; u64 off, size, chunk, nch; struct span sp; pthread_t th; u8 *b; size_t n;
@@ -766,6 +789,7 @@ static void dispatch(char *c)
 	else if (!strncmp(c, "nocry-write:", 12)) cmd_nocry_write(c + 12);
 	else if (!strncmp(c, "nocry-hash:", 11)) cmd_nocry_hash(c + 11);
 	else if (!strncmp(c, "nocry-copy:", 11)) cmd_nocry_copy(c + 11);
+	else if (!strncmp(c, "nocry-zero:", 11)) cmd_nocry_zero(c + 11);
 	else if (!strncmp(c, "nocry-secure-erase:", 19)) cmd_nocry_secure_erase(c + 19);
 	else if (!strcmp(c, "nocry-dmesg")) cmd_nocry_dmesg();
 	else if (!strncmp(c, "nocry-put:", 10)) cmd_nocry_put(c + 10);

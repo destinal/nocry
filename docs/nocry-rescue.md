@@ -134,6 +134,8 @@ Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (ker
 
 - **Copying a slot** went through the computer (read slot A, send it back for slot B), which over Wi-Fi is the whole firmware twice through a slow link. `nocry-fbd` 0.4 has `nocry-copy`: the board copies, nocry asks for 16 MiB at a time, shows progress and compares the board's checksums of both sides. Tested on a PC against a disk image through `nocry-netd`: 512 MiB of slot in 0.6 s, both slots byte-identical, a repeat writes nothing. With an older service nocry copies the old way.
 
+- **Erasing** sent the zeros from the computer. `nocry-zero` makes the board write them; it is used at the one place every write goes through, so partition erase, erase all, factory reset and the blank parts of an installation all benefit. Tested on a PC against a disk image: two partitions filled with random data, erased through `nocry-netd`, both read back as zeros.
+
 Missing: a run over the board's Wi-Fi instead of the tunnel (the development PC has no Wi-Fi adapter), and the model and serial number tail in the announcement so two boards can be told apart in the list.
 
 ## Open points

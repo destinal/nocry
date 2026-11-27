@@ -237,6 +237,8 @@ pub struct Target {
     pub path: PathBuf,
     pub size: u64,
     pub is_dev: bool,
+    /// the board service's extension list (fastboot only), asked once
+    ext: std::cell::OnceCell<String>,
 }
 
 #[cfg(target_os = "linux")]
@@ -291,7 +293,7 @@ impl Target {
             format!("opening {} (on Linux, are you in the 'disk' group / did you re-login?)", path.display())
         })?;
         let size = f.seek(SeekFrom::End(0))?;
-        Ok(Target { b: Backend::File(f), writable: write, path: path.to_path_buf(), size, is_dev })
+        Ok(Target { b: Backend::File(f), writable: write, path: path.to_path_buf(), size, is_dev, ext: Default::default() })
     }
 
     /// The recovery's fastboot service (no disk device on the host).
@@ -322,6 +324,7 @@ impl Target {
             path: PathBuf::from(format!("{kind}:{sn}")),
             size,
             is_dev: true,
+            ext: ext.into(),
         })
     }
 
@@ -396,10 +399,12 @@ impl Target {
 
     /// Whether the board's service has the copy command.
     pub fn can_copy_on_board(&self) -> bool {
-        match &self.b {
-            Backend::Fb(fb) => fb.borrow_mut().getvar("nocry-ext").unwrap_or_default().split(',').any(|e| e == "copy"),
-            _ => false,
-        }
+        self.has_ext("copy")
+    }
+
+    /// Whether the board's service lists the extension `name` (always false for a file or disk).
+    fn has_ext(&self, name: &str) -> bool {
+        self.is_fastboot() && self.ext.get().is_some_and(|e| e.split(',').any(|x| x == name))
     }
 
     /// Hash of `data` as chunk_hashes would report it.
@@ -427,6 +432,17 @@ impl Target {
         }
         match &self.b {
             Backend::File(f) => write_all_at(f, data, off).with_context(|| format!("writing {what}")),
+            // zeros are not sent: the board fills the range itself (nocry-fbd 0.4+)
+            Backend::Fb(fb) if off % 512 == 0 && data.len() % 512 == 0 && self.has_ext("zero") && data.iter().all(|&b| b == 0) => {
+                let mut at = off;
+                let end = off + data.len() as u64;
+                while at < end {
+                    let n = FB_STEP.min(end - at);
+                    fb.borrow_mut().zero("mmc0", at, n).with_context(|| format!("writing {what}"))?;
+                    at += n;
+                }
+                Ok(())
+            }
             Backend::Fb(fb) => {
                 // the service writes whole sectors: merge unaligned edges with what is there
                 let start = off & !511;
