@@ -60,7 +60,7 @@ Last updated: 2026-11-27.
 
 ## Done recently
 
-- [ ] **v0.2.0-beta.1** (tagged 2026-11-27): nocry-rescue on the board with touch interface and web pages, nocryboot 0.2 (hold the screen), NebulaOS catalog, boards over Wi-Fi, wording pass. Earlier pre-releases removed on the owner's request.
+- [x] **Released v0.2.0-beta.1** (2026-11-27): nocry-rescue on the board with touch interface and web pages, nocryboot 0.2 (hold the screen), NebulaOS catalog, boards over Wi-Fi, wording pass. Earlier pre-releases removed on the owner's request.
 - [x] **Released v0.1.0-alpha.4** (2026-11-27): nocryboot, loader installer, firmware on trial, nocry boot logo, K1 family. The packages themselves have not been run on a board.
 
 - [x] nocryboot SPL: built from public source, matched against Creality's in the emulator, installed on both test boards (2026-11-26).
