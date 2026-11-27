@@ -150,6 +150,13 @@ A join answers at once and happens two seconds later, because over Wi-Fi it cuts
 
 Limits: 2.4 GHz only; WPA2 passphrases (8 to 63 characters, no double quote) or open networks; the list of networks is the one taken at start, because this chip does not scan while it is an access point (a name can be typed). A chosen network is not remembered across a restart: rescue runs from memory and writes nothing.
 
+**On the Nebula Pad (2026-11-27):**
+
+- No saved network on the test board (its data partition was blank), so it opened its own network; the set-up page came up on a phone by itself.
+- Joining failed at first with "association rejected, status 16" and then a deauthentication ("previous authentication not valid"). With `brcmfmac.feature_disable=0x82000` on the kernel command line the same network was joined in five seconds. That value turns off the driver's use of the chip firmware's own WPA handshake (FWSUP) and SAE, so wpa_supplicant does the handshake. It is now in the rescue device tree. One caveat: the failed attempts were made with a 9-byte password and the successful one with an 8-byte one, so a mistyped password in the failed attempts cannot be ruled out; the setting is the documented cure for exactly these symptoms on this chip family and stays either way.
+- With this driver a wrong password and a radio failure look the same from outside (the firmware reports both as status 16), which is why the script only says "turned away".
+- As a client the board was found by mDNS from a PC on the same network, and a 32 MiB read through the encrypted link ran at 1.5 to 2.8 MB/s, against 0.1 to 0.3 MB/s when the board was the access point. The chip's calibration file made no clear difference: the generic AP6212 one from linux-firmware gave 2.0 MB/s, Creality's `nvram_azw372.txt` (which NebulaOS also uses) 1.5 to 2.8 MB/s, with the board 30 cm from the router (signal -12 dBm, probably too strong to be a fair test). The generic one stays.
+
 Tested on a PC: the set-up page server (escaping, wrong code, odd characters in names and passwords), the service commands and nocry's side against a stand-in Wi-Fi tool, the script's text handling with the board's own shell tools. Not yet run on a board.
 
 Missing: a run over the board's Wi-Fi instead of the tunnel (the development PC has no Wi-Fi adapter), and the model and serial number tail in the announcement so two boards can be told apart in the list.

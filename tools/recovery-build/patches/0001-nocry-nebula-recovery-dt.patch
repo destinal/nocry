@@ -478,10 +478,10 @@ index 000000000..571f91aa1
 +&mscaler1 { status = "disabled"; };
 diff --git a/module_drivers/dts/x2000/nocry_nebula_rescue.dts b/module_drivers/dts/x2000/nocry_nebula_rescue.dts
 new file mode 100644
-index 000000000..f37a8e7ab
+index 000000000..0427ed883
 --- /dev/null
 +++ b/module_drivers/dts/x2000/nocry_nebula_rescue.dts
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,145 @@
 +/*
 + * nocry-rescue: the nocry recovery device tree for Creality "Nebula" boards plus what a
 + * touchscreen recovery needs: display, backlight, touch bus, Wi-Fi.
@@ -497,6 +497,16 @@ index 000000000..f37a8e7ab
 +
 +/ {
 +	model = "nocry-rescue (Creality Nebula, Ingenic X2000E)";
++
++	/*
++	 * As nocry_nebula.dts, plus brcmfmac.feature_disable: the Wi-Fi chip's firmware offers to
++	 * do the WPA handshake itself (FWSUP, 0x2000; SAE, 0x80000), and with this chip's firmware
++	 * joining a network then fails ("association rejected, status 16", then a deauthentication).
++	 * With both turned off wpa_supplicant does the handshake, which works.
++	 */
++	chosen {
++		bootargs = "console=ttyS2,115200n8 mem=232M@0x0 earlycon=nocrymem keep_bootcon ignore_loglevel panic=0 rdinit=/init brcmfmac.feature_disable=0x82000";
++	};
 +
 +	reserved-memory {
 +		#address-cells = <1>;

@@ -5,6 +5,7 @@
 #                                   else open the board's own network
 #   nocry-wifi ap                   open the board's own network "nocry"
 #   nocry-wifi join SSID [PASSWORD] join a network; back to the own network if that fails
+#   nocry-wifi rejoin               join the last network again
 #   nocry-wifi scan                 networks in range, strongest first: "signal<TAB>lock<TAB>name"
 #   nocry-wifi status               mode=ap|client|none, ssid=, address=, source=
 #   nocry-wifi saved                where a saved network was found, and its names
@@ -221,6 +222,11 @@ case "$1" in
     rm -f $RUN/nocry-sta.conf
     start_ap "failed:$2"
     exit 1 ;;
+  rejoin)     # the network chosen or found last, again (after the radio was restarted)
+    [ -s $RUN/nocry-sta.conf ] || { echo "no network was joined before" >&2; exit 2; }
+    locked
+    join_conf $RUN/nocry-sta.conf "$(sed -n 's/^ssid=//p' $STATE)" "$(sed -n 's/^source=//p' $STATE)" && exit 0
+    start_ap "failed:rejoin"; exit 1 ;;
   scan) do_scan ;;
   status) cat $STATE 2>/dev/null || echo "mode=none" ;;
   saved)
