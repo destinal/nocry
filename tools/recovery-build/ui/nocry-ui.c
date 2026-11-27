@@ -1140,7 +1140,19 @@ static void where_screen(void)
 	dim(text(content, usb_fw[0] ? "The file is verified first. Nothing is written until you confirm." : "The image is downloaded and verified first. Nothing is written until you confirm."));
 }
 static void fw_cb(lv_event_t *e) { fw_pick = (int)(intptr_t)lv_event_get_user_data(e); usb_fw[0] = 0; go(where_screen); }
-#define FROM_DRIVE "To install from a flash drive: insert it, then Home > USB drive."
+/* the other source: the firmware files on a flash drive if one is mounted; if none is plugged in, say so */
+static int usb_mounted(void);
+static void usb_fw_screen(void);
+static void usb_screen(void);
+static void usb_instead_cb(lv_event_t *e)
+{
+	char *st = run_file("nocry-usb.state"); int disk = *kv(st, "disk") != 0;
+	(void)e;
+	free(st);
+	if (usb_mounted()) go(usb_fw_screen);
+	else if (disk) go(usb_screen);		/* a drive is there but not mounted: that screen says why, and can format it */
+	else remark("No flash drive", "Insert a USB flash drive (FAT32, exFAT or NTFS) with the firmware file on it, then tap this again. The USB-A sockets are off while a computer is connected to the Micro-USB socket.");
+}
 static void fw_list_done(int rc, char *out);
 static void refresh_cb(lv_event_t *e)
 {
@@ -1155,11 +1167,11 @@ static void fw_list_done(int rc, char *out)
 	if (rc || !*out) {
 		text(content, rc && *out ? out : "No firmware is listed for this board's model. Refreshing the catalog needs internet access over Wi-Fi.");
 		wide(button(content, LV_SYMBOL_REFRESH "  Fetch catalog", refresh_cb, NULL));
-		dim(text(content, FROM_DRIVE));
+		wide(grey(button(content, LV_SYMBOL_USB "  Install from a flash drive", usb_instead_cb, NULL)));
 		return;
 	}
 	list = scroll_list();
-	lv_obj_clear_flag(entry(list, LV_SYMBOL_USB "  Flash drive instead?", "Insert it, then Home > USB drive", NULL, NULL), LV_OBJ_FLAG_CLICKABLE);
+	entry(list, LV_SYMBOL_USB "  Install from a flash drive", "firmware files on the USB drive", usb_instead_cb, NULL);
 	for (line = strtok_r(out, "\n", &save); line && fw_count < 40; line = strtok_r(NULL, "\n", &save)) {
 		struct fw *f = &fws[fw_count]; char *c[6], l1[100], l2[100]; int n = 0;
 		for (c[n++] = line; n < 6 && (line = strchr(line, '\t')); c[n++] = line) *line++ = 0;
@@ -1385,7 +1397,7 @@ static void usb_draw(void)
 			wide(red(button(content, "Format drive...", go_cb, (void *)format_screen)));
 		} else {
 			text(content, "No flash drive.");
-			dim(text(content, "Supported: FAT32, exFAT, NTFS. The USB-A sockets are off while a computer is connected to the USB-C socket."));
+			dim(text(content, "Supported: FAT32, exFAT, NTFS. The USB-A sockets are off while a computer is connected to the Micro-USB socket."));
 		}
 		free(st); return;
 	}

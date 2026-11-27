@@ -17,7 +17,7 @@
 # The drive is mounted at /run/nocry-usb. File systems tried: FAT (12/16/32), exFAT, NTFS
 # (Linux's ntfs3; a volume Windows did not shut down cleanly mounts read-only), ext2/3/4.
 #
-# Which role: the board has one controller. A computer on the USB-C socket supplies 5 V
+# Which role: the board has one controller. A computer on the Micro-USB socket supplies 5 V
 # there, which the board sees on a pin of its own (PD17, "vbus_detect"); then the board is
 # the device. Without it the board is the host and switches the 5 V of the A sockets on
 # (PC9 and PC10, as Creality's firmware does at every start). What this decides and why is
@@ -37,7 +37,7 @@ state() { { printf '%s\n' "$@"; disk_lines; } > $STATE.new && mv $STATE.new $STA
 # --- which role ---------------------------------------------------------------------------
 SWITCH=
 find_switch() { [ -n "$SWITCH" ] || SWITCH=$(find $SYS/devices -name sw_switch_hsotg 2>/dev/null | head -1); [ -n "$SWITCH" ]; }
-# is a computer supplying 5 V on the USB-C socket? prints yes, no or unknown
+# is a computer supplying 5 V on the Micro-USB socket? prints yes, no or unknown
 pc_power() {
     l=$(grep vbus_detect $SYS/kernel/debug/gpio 2>/dev/null | head -1)
     [ -n "$l" ] || { echo unknown; return; }
@@ -73,10 +73,10 @@ role_tick() {
     [ -n "$STUCK" ] && return
     pc=$(pc_power)
     case "$pc" in
-      no)  set_role host "no computer on USB-C" ;;
+      no)  set_role host "no computer on Micro-USB" ;;
       yes) if [ "$ROLE" = host ] && [ "$(attached)" -gt 0 ]; then :      # something is plugged into an A socket: keep it
-           else set_role device "a computer supplies USB-C"; fi ;;
-      *)   [ -n "$NOPIN" ] || log "the USB-C power pin cannot be read: the board stays a USB device"; NOPIN=1 ;;
+           else set_role device "a computer supplies Micro-USB"; fi ;;
+      *)   [ -n "$NOPIN" ] || log "the Micro-USB power pin cannot be read: the board stays a USB device"; NOPIN=1 ;;
     esac
 }
 
