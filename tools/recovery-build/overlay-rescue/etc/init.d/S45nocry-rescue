@@ -1,57 +1,54 @@
 #!/bin/sh
-# nocry-rescue, until the touch interface exists: bring up the board's own Wi-Fi network,
-# start the service nocry on a PC talks to, and show on the screen how to reach it.
-#   Wi-Fi network "nocry-rescue" (WPA2, password "nocry-rescue"), board at 192.168.77.1
-#   nocry --net 192.168.77.1 --code <the code on the screen> ...
-# The Wi-Fi password only gets a computer onto this network; driving the board needs the
-# pairing code, which changes at every start and after three wrong tries.
+# nocry-rescue, until the touch interface exists: get the board onto a network, start the
+# service nocry on a computer talks to, and show on the screen how to reach it.
+#
+# Network (all of it in /usr/sbin/nocry-wifi):
+#   1. the Wi-Fi network the installed firmware has saved, if there is one and it is in reach;
+#   2. otherwise the board's own network "nocry-rescue" (WPA2, password "nocry-rescue"),
+#      board at 192.168.77.1, with a set-up page at http://192.168.77.1 for choosing a network.
+# The own network's password only gets a device onto that network. Driving the board, or
+# changing its network, needs the pairing code on the screen, which changes at every start
+# and after three wrong tries.
 
-SSID=nocry-rescue
-PASS=nocry-rescue
-ADDR=192.168.77.1
 CODE=/run/nocry-pair-code
+STATE=/run/nocry-wifi.state
+
+val() { sed -n "s/^$1=//p" $STATE 2>/dev/null; }
 
 show() {
-    c=$(cat $CODE 2>/dev/null)
-    nocry-banner "#nocry-rescue" "" \
-        "Wi-Fi network   $SSID" "password        $PASS" "address         $ADDR" "" \
-        "pairing code" "#${c%???} ${c#???}"
+    c=$(cat $CODE 2>/dev/null); code="#${c%???} ${c#???}"
+    case "$(val mode)" in
+      ap)
+        nocry-banner "#nocry-rescue" "" \
+            "Wi-Fi network   $(val ssid)" "password        nocry-rescue" \
+            "set-up page     http://$(val address)" "" "pairing code" "$code" ;;
+      client)
+        nocry-banner "#nocry-rescue" "" \
+            "on Wi-Fi        $(val ssid)" "address         $(val address)" "" "pairing code" "$code" ;;
+      joining)
+        nocry-banner "#nocry-rescue" "" "joining Wi-Fi   $(val ssid)" "" "one moment..." ;;
+      none)
+        nocry-banner "#nocry-rescue" "" "no Wi-Fi found" "connect by USB" "" "pairing code" "$code" ;;
+      *)
+        nocry-banner "#nocry-rescue" "" "starting..." ;;
+    esac
 }
 
 start() {
     mkdir -p /run /var/run/wpa_supplicant
-    nocry-banner "#nocry-rescue" "" "starting..."
+    show
     nocry-netd --code-file $CODE 2>/dev/console &
-    # the access point
-    i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
-    if [ -e /sys/class/net/wlan0 ]; then
-        cat > /run/nocry-ap.conf <<CONF
-ctrl_interface=/var/run/wpa_supplicant
-network={
-    ssid="$SSID"
-    mode=2
-    frequency=2437
-    key_mgmt=WPA-PSK
-    proto=RSN
-    pairwise=CCMP
-    psk="$PASS"
-}
-CONF
-        wpa_supplicant -B -i wlan0 -D nl80211 -c /run/nocry-ap.conf >/dev/null 2>&1
-        ip addr add $ADDR/24 dev wlan0 2>/dev/null
-        ip link set wlan0 up
-        dnsmasq --interface=wlan0 --bind-interfaces --dhcp-range=192.168.77.10,192.168.77.50,12h \
-            --dhcp-leasefile=/run/nocry-leases --pid-file=/run/nocry-dnsmasq.pid
-        mdnsd 2>/dev/null
-    else
-        SSID="(no Wi-Fi found)"; PASS="-"; ADDR="-"
-    fi
-    # keep the screen in step with the pairing code
-    ( last=; while :; do c=$(cat $CODE 2>/dev/null); [ "$c" != "$last" ] && { last=$c; show; }; sleep 2; done ) &
+    nocry-wifi auto >/dev/null 2>&1 &
+    # keep the screen in step with the network and the pairing code
+    ( last=; while :; do
+          now="$(cat $CODE 2>/dev/null)|$(cat $STATE 2>/dev/null)"
+          [ "$now" != "$last" ] && { last=$now; show; }
+          sleep 1
+      done ) &
 }
 
 case "$1" in
   start) start ;;
-  stop) killall nocry-netd wpa_supplicant dnsmasq mdnsd 2>/dev/null ;;
+  stop) killall nocry-netd nocry-webd wpa_supplicant dnsmasq mdnsd udhcpc 2>/dev/null ;;
 esac
 exit 0

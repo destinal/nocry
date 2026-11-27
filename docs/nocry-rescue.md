@@ -136,6 +136,22 @@ Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (ker
 
 - **Erasing** sent the zeros from the computer. `nocry-zero` makes the board write them; it is used at the one place every write goes through, so partition erase, erase all, factory reset and the blank parts of an installation all benefit. Tested on a PC against a disk image: two partitions filled with random data, erased through `nocry-netd`, both read back as zeros.
 
+### Getting onto a network
+
+All of it is in `/usr/sbin/nocry-wifi` on the board (`overlay-rescue`). The board has one radio: it is either a client of a network or its own access point.
+
+1. **The installed firmware's saved network.** At start rescue mounts `userdata` read-only and looks for a wpa_supplicant configuration with a network in it: `nebulaos/network/wpa_supplicant.conf` (NebulaOS), `nebulaos/wpa_supplicant.conf` (older NebulaOS), `wpa_supplicant.conf` (Creality's firmware). Its `network={}` blocks are used as they are, in memory only. The Wi-Fi address is set to the one in the identity record first, as Creality's firmware does, so a router sees the same device.
+2. **The board's own network** when there is nothing saved or it cannot be joined: `nocry-rescue`, WPA2, the password is the same word, board at 192.168.77.1. It is the fallback for everything, so a wrong password cannot lock anyone out.
+3. **Choosing a network** from the own network:
+   - **The set-up page** (`webd/nocry-webd.c`, http://192.168.77.1): for a phone or laptop without nocry. The access point resolves every name to the board, so most devices show the page by themselves after joining. It lists the networks in range and asks for the password and the pairing code on the screen. The code is asked because the access point's password is public; a wrong one costs two seconds. Plain HTML, no JavaScript, one request per connection, and the Wi-Fi tool is started with its arguments as they are (no shell).
+   - **nocry:** `nocry wifi` (status and networks), `nocry wifi --join NAME --password P`, `nocry wifi --own`; in the window, "Board's Wi-Fi…" beside the state line. Service commands `nocry-wifi:status|scan|saved|ap|join:<name hex>[:<password hex>]`, offered only by the rescue system (`wifi` in `nocry-ext`).
+
+A join answers at once and happens two seconds later, because over Wi-Fi it cuts the connection the request came through. If the network is not joined and an address obtained within about 45 seconds, the board reopens its own network and says why (`source=failed:<name>`). After a join requested over the network, nocry looks for the board on the networks the computer is on (mDNS, and the own network's fixed address) for three minutes and pairs again with the same code, which stays valid while rescue runs.
+
+Limits: 2.4 GHz only; WPA2 passphrases (8 to 63 characters, no double quote) or open networks; the list of networks is the one taken at start, because this chip does not scan while it is an access point (a name can be typed). A chosen network is not remembered across a restart: rescue runs from memory and writes nothing.
+
+Tested on a PC: the set-up page server (escaping, wrong code, odd characters in names and passwords), the service commands and nocry's side against a stand-in Wi-Fi tool, the script's text handling with the board's own shell tools. Not yet run on a board.
+
 Missing: a run over the board's Wi-Fi instead of the tunnel (the development PC has no Wi-Fi adapter), and the model and serial number tail in the announcement so two boards can be told apart in the list.
 
 ## Open points

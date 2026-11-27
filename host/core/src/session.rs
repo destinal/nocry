@@ -472,6 +472,130 @@ pub fn connect_network_board(addr: &str, code: &str) -> Result<(String, String)>
     Ok((product, version))
 }
 
+/// What the board's Wi-Fi is doing (nocry-rescue), and what it could join.
+#[derive(Debug, Clone, Default)]
+pub struct WifiStatus {
+    /// "ap" (its own network), "client" (on a network), "joining", "none"
+    pub mode: String,
+    pub ssid: String,
+    pub address: String,
+    /// why it is where it is: "saved" (the installed firmware's network), "chosen",
+    /// "fallback" (nothing saved), "failed:<name>" (could not join <name>)
+    pub source: String,
+    /// networks in range, strongest first: (name, signal in dBm, needs a password)
+    pub networks: Vec<(String, i32, bool)>,
+    /// where the installed firmware keeps its network ("" = it has none), and the names in it
+    pub saved_from: String,
+    pub saved_names: String,
+    /// nocry reaches the board over the network (so changing the network cuts the connection)
+    pub over_network: bool,
+}
+
+static LAST_CODE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The board's service: over the network when paired, else a recovery running on USB.
+fn open_service() -> Result<fastboot::Fastboot> {
+    let mut fb = match network_board() {
+        Some((addr, code)) => fastboot::Fastboot::open_net(&addr, &code)?,
+        None => {
+            let f = usb::running_recovery(SOCS)?.into_iter().next().context("no board running the rescue system is connected")?;
+            fastboot::Fastboot::open(&f)?
+        }
+    };
+    fb.info = Box::new(|_| {});
+    if !fb.getvar("nocry-ext").unwrap_or_default().split(',').any(|e| e == "wifi") {
+        bail!("the system running on this board has no Wi-Fi control (it is the plain recovery, or an older nocry-rescue)");
+    }
+    Ok(fb)
+}
+
+pub fn wifi_status() -> Result<WifiStatus> {
+    let mut fb = open_service()?;
+    let field = |text: &str, key: &str| text.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('='))).unwrap_or("").to_string();
+    let st = fb.wifi_query("status")?;
+    let saved = fb.wifi_query("saved")?;
+    let networks = fb
+        .wifi_query("scan")?
+        .lines()
+        .filter_map(|l| {
+            let mut p = l.splitn(3, '\t');
+            let (sig, lock, name) = (p.next()?, p.next()?, p.next()?);
+            (!name.is_empty()).then(|| (name.to_string(), sig.trim().parse().unwrap_or(-100), lock != "open"))
+        })
+        .collect();
+    Ok(WifiStatus {
+        mode: field(&st, "mode"),
+        ssid: field(&st, "ssid"),
+        address: field(&st, "address"),
+        source: field(&st, "source"),
+        networks,
+        saved_from: field(&saved, "from"),
+        saved_names: field(&saved, "names"),
+        over_network: fb.is_net(),
+    })
+}
+
+fn hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Tell the board to join `ssid` (empty password: an open network), or with `ssid` None to open
+/// its own network again. The board changes two seconds after answering; over the network that
+/// ends the connection, so the pairing is dropped here and `refind_network_board` picks the
+/// board up again where it reappears. If the join fails the board goes back to its own network.
+pub fn wifi_change(ssid: Option<&str>, password: &str) -> Result<()> {
+    let cmd = match ssid {
+        None => "ap".to_string(),
+        Some(name) => {
+            let name = name.trim_matches(|c| c == '\r' || c == '\n');
+            if name.is_empty() || name.len() > 32 {
+                bail!("a Wi-Fi network name has 1 to 32 characters");
+            }
+            if !password.is_empty() && !(8..=63).contains(&password.len()) {
+                bail!("a Wi-Fi password has 8 to 63 characters (leave it empty for an open network)");
+            }
+            if password.contains('"') || password.bytes().any(|b| b < 0x20) {
+                bail!("a password with a double quote or control characters is not supported");
+            }
+            if password.is_empty() { format!("join:{}", hex(name)) } else { format!("join:{}:{}", hex(name), hex(password)) }
+        }
+    };
+    let mut fb = open_service()?;
+    fb.wifi_change(&cmd)?;
+    if let Some((_, code)) = network_board() {
+        *LAST_CODE.lock().unwrap() = Some(code);
+        set_network_board(None);
+    }
+    Ok(())
+}
+
+/// After `wifi_change` over the network: look for the board until it answers on a network this
+/// computer is on (its new one, or its own again if the join failed) and pair with the code used
+/// before, which stays valid while the rescue system runs. Cancellable. Returns its address.
+pub fn refind_network_board(wait: Duration) -> Result<String> {
+    let code = LAST_CODE.lock().unwrap().clone().context("no earlier network connection to pick up again")?;
+    let start = std::time::Instant::now();
+    std::thread::sleep(Duration::from_secs(4)); // the board has not moved yet
+    let mut last_err = String::new();
+    while start.elapsed() < wait {
+        crate::events::check_cancelled()?;
+        for b in crate::discover::discover(Duration::from_millis(2500)) {
+            crate::events::check_cancelled()?;
+            let addr = if b.port == crate::net::PORT { b.address.clone() } else { format!("{}:{}", b.address, b.port) };
+            match connect_network_board(&addr, &code) {
+                Ok(_) => return Ok(addr),
+                Err(e) => last_err = format!("{e:#}"),
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    bail!(
+        "the board was not found on a network this computer is on within {} s{}",
+        wait.as_secs(),
+        if last_err.is_empty() { String::new() } else { format!(" (last answer: {last_err})") }
+    )
+}
+
 /// Whether the network board still accepts connections (no pairing: one TCP connect).
 pub fn network_board_reachable() -> bool {
     use std::net::ToSocketAddrs;

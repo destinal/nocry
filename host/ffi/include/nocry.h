@@ -137,6 +137,18 @@ char *nocry_net_discover_json(int wait_ms);
  * {"ok":true,"connected":bool,"address","product","service"} or {"ok":false,"error":"..."} */
 char *nocry_net_connect_json(const char *address, const char *code);
 
+/* The Wi-Fi of a board running nocry-rescue (over the network, or its recovery service on USB).
+ * action 0: report {"ok":true,"mode":"ap|client|joining|none","ssid","address","source":"saved|chosen|
+ *   fallback|failed:<name>","networks":[{"ssid","signal":dBm,"secured":bool}],"saved_from","saved_names",
+ *   "over_network":bool}
+ * action 1: join ssid with password ("" or NULL: open network); action 2: open the board's own network.
+ *   The board answers, then changes two seconds later; it returns to its own network if a join fails.
+ *   When nocry was connected over the network, that pairing is dropped: call action 3 next.
+ *   {"ok":true,"changing":true,"over_network":bool}
+ * action 3: look for the board on the networks this computer is on (up to 3 minutes, cancellable) and pair
+ *   again with the code used before. {"ok":true,"address":"..."} */
+char *nocry_wifi_json(int action, const char *ssid, const char *password);
+
 /* Ask the running operation to stop at its next safe point (callable from any thread). */
 void nocry_cancel(void);
 

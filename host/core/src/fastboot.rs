@@ -287,6 +287,23 @@ impl Fastboot {
         self.command_timeout(&format!("nocry-secure-erase:{name}:{off:x}:{size:x}"), Duration::from_secs(600))
     }
 
+    /// nocry-wifi (nocry-rescue): `status`, `scan` or `saved`; the Wi-Fi tool's answer as text.
+    pub fn wifi_query(&mut self, what: &str) -> Result<String> {
+        let n = self.expect_data(&format!("nocry-wifi:{what}"))?;
+        let mut all = Vec::with_capacity(n);
+        self.read_data(n, |b| {
+            all.extend_from_slice(b);
+            Ok(())
+        })?;
+        Ok(String::from_utf8_lossy(&all).to_string())
+    }
+
+    /// nocry-wifi (nocry-rescue): `ap`, or `join:<name hex>[:<password hex>]`. The board answers
+    /// at once and changes its network two seconds later.
+    pub fn wifi_change(&mut self, what: &str) -> Result<()> {
+        self.command_timeout(&format!("nocry-wifi:{what}"), Duration::from_secs(15)).map(|_| ())
+    }
+
     /// nocry-dmesg (nocry-fbd 0.2+): the recovery system's kernel log.
     pub fn dmesg(&mut self) -> Result<String> {
         let n = self.expect_data("nocry-dmesg")?;

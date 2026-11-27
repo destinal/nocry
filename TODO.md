@@ -32,6 +32,7 @@ Last updated: 2026-11-27.
 - [ ] **NebulaOS on hardware:** nocry lists and installs NebulaOS (`docs/nebulaos.md`), tested on a disk image only. Start it on a board from a nocry install, with the factory loader and with nocryboot. Later: a start trial that works with NebulaOS (it has no settings overlay for nocry's report script).
 - [ ] **Board images from CI:** workflow `board-images` builds all of them, nocry-rescue included, on changes to their sources and publishes them as the `board-images` pre-release; `tools/get-images.sh` downloads that. Open: confirm the first run passes and the download works from a fresh clone; let the release workflow reuse it and ship nocry-rescue.
 - [ ] **Board images on macOS:** `tools/build-images.sh` builds everything from a clone; verified on Linux only. Try it on a Mac with Docker Desktop (emulated containers, case-sensitive work volume) and fix what breaks.
+- [ ] **Rescue joins a Wi-Fi network** (saved network of the installed firmware, set-up page on its own network, `nocry wifi`, "Board's Wi-Fi…"): written and tested on a PC; needs a run on the Nebula: saved network found and joined, set-up page from a phone, join from nocry and finding the board again, fallback after a wrong password, sending speed as a client.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.

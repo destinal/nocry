@@ -88,6 +88,53 @@ pub extern "C" fn nocry_board_state_json() -> *mut c_char {
     })
 }
 
+fn wifi_json(w: &session::WifiStatus) -> String {
+    let nets: Vec<String> = w
+        .networks
+        .iter()
+        .map(|(n, s, l)| format!("{{\"ssid\":\"{}\",\"signal\":{s},\"secured\":{l}}}", esc(n)))
+        .collect();
+    format!(
+        "{{\"ok\":true,\"mode\":\"{}\",\"ssid\":\"{}\",\"address\":\"{}\",\"source\":\"{}\",\"networks\":[{}],\
+         \"saved_from\":\"{}\",\"saved_names\":\"{}\",\"over_network\":{}}}",
+        esc(&w.mode), esc(&w.ssid), esc(&w.address), esc(&w.source), nets.join(","), esc(&w.saved_from), esc(&w.saved_names), w.over_network
+    )
+}
+
+fn fail_json(e: &anyhow::Error) -> String {
+    let m = format!("{e:#}");
+    format!("{{\"ok\":false,\"cancelled\":{},\"error\":\"{}\"}}", m.contains("cancelled"), esc(&m))
+}
+
+/// # Safety
+/// Pointers must be NULL or valid NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_wifi_json(action: c_int, ssid: *const c_char, password: *const c_char) -> *mut c_char {
+    let text = |p: *const c_char| if p.is_null() { String::new() } else { CStr::from_ptr(p).to_string_lossy().into_owned() };
+    let (ssid, password) = (text(ssid), text(password));
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| -> anyhow::Result<String> {
+        match action {
+            0 => Ok(wifi_json(&session::wifi_status()?)),
+            1 | 2 => {
+                let over = session::network_board().is_some();
+                session::wifi_change(if action == 1 { Some(ssid.as_str()) } else { None }, &password)?;
+                Ok(format!("{{\"ok\":true,\"changing\":true,\"over_network\":{over}}}"))
+            }
+            3 => {
+                let addr = session::refind_network_board(std::time::Duration::from_secs(180))?;
+                Ok(format!("{{\"ok\":true,\"address\":\"{}\"}}", esc(&addr)))
+            }
+            _ => anyhow::bail!("unknown action"),
+        }
+    });
+    out(match r {
+        Ok(Ok(j)) => j,
+        Ok(Err(e)) => fail_json(&e),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
 /// The network board is asked whether it is still there at most every few seconds: the
 /// front end polls the state every second.
 fn network_alive() -> bool {

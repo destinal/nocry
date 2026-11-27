@@ -9,6 +9,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QRadioButton>
 #include <QDate>
 #include <QDateTime>
@@ -40,6 +41,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTextDocumentFragment>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -141,6 +143,11 @@ public:
         netButton = new QPushButton(tr("Connect over the network…"));
         netButton->setToolTip(tr("For a board that shows the nocry rescue screen: work on it over Wi-Fi, without a USB cable."));
         hintRow->addWidget(netButton, 0, Qt::AlignTop);
+        wifiButton = new QPushButton(tr("Board's Wi-Fi…"));
+        wifiButton->setToolTip(tr("For a board running the nocry rescue system: see which Wi-Fi network it is on, or make it join another."));
+        wifiButton->setVisible(false);
+        hintRow->addWidget(wifiButton, 0, Qt::AlignTop);
+        connect(wifiButton, &QPushButton::clicked, this, [this] { startWifi(); });
         connect(netButton, &QPushButton::clicked, this, [this] {
             if (networkAddress.isEmpty())
                 chooseNetwork();
@@ -968,6 +975,7 @@ public:
     QString autoModel, autoBoard;   // self-tests: answers for the printer type / mainboard questions
     void openShellHelp() { showShellHelp(); }
     void openNetworkDialog() { chooseNetwork(); }
+    void openWifiDialog() { startWifi(); }
     // self-tests: press Cancel if it is on offer; show the question an install's Cancel asks
     bool cancelOffered() const { return busy && cancelButton->isVisible() && cancelButton->isEnabled() && !cancelRisk.isEmpty(); }
     bool testCancel()
@@ -1330,6 +1338,200 @@ private:
         code->setFocus();
         if (d.exec() == QDialog::Accepted)
             networkConnected(networkAddress);
+    }
+
+    // The Wi-Fi of a board running nocry-rescue: what it is on, and joining another network.
+    void startWifi()
+    {
+        if (busy)
+            return;
+        setBusy(true);
+        stateHint->setText(tr("Asking the board about its Wi-Fi."));
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w] {
+            const QJsonObject o = w->result();
+            w->deleteLater();
+            setBusy(false);
+            pollState();
+            lastResult = o;
+            if (!o.value("ok").toBool()) {
+                log->appendPlainText(tr("Wi-Fi: %1").arg(o.value("error").toString()));
+                if (!quiet)
+                    QMessageBox::warning(this, tr("Board's Wi-Fi"), o.value("error").toString());
+            } else {
+                chooseWifi(o);
+            }
+            if (onIdle)
+                onIdle();
+        });
+        w->setFuture(QtConcurrent::run([] { return takeJson(nocry_wifi_json(0, nullptr, nullptr)); }));
+    }
+
+    static QString wifiSummary(const QJsonObject &o)
+    {
+        const QString mode = o.value("mode").toString(), ssid = o.value("ssid").toString(), addr = o.value("address").toString(), src = o.value("source").toString();
+        QString t;
+        if (mode == "client")
+            t = tr("The board is on the Wi-Fi network <b>%1</b>, address %2.").arg(ssid.toHtmlEscaped(), addr.toHtmlEscaped());
+        else if (mode == "ap")
+            t = tr("The board is running its own Wi-Fi network <b>%1</b> (address %2).").arg(ssid.toHtmlEscaped(), addr.toHtmlEscaped());
+        else if (mode == "joining")
+            t = tr("The board is joining <b>%1</b> right now.").arg(ssid.toHtmlEscaped());
+        else
+            t = tr("The board has no working Wi-Fi.");
+        if (src == "saved")
+            t += tr(" It joined the network the installed firmware had saved.");
+        else if (src.startsWith("failed:"))
+            t += tr("<br><b>It could not join %1</b>: wrong password, or the network is out of range.").arg(src.mid(7).toHtmlEscaped());
+        else if (mode == "ap" && !o.value("saved_from").toString().isEmpty())
+            t += tr(" The installed firmware's saved network (%1) could not be joined.").arg(o.value("saved_names").toString().toHtmlEscaped());
+        return t;
+    }
+
+    void chooseWifi(const QJsonObject &o)
+    {
+        log->appendPlainText(QTextDocumentFragment::fromHtml(wifiSummary(o)).toPlainText());
+        if (quiet)
+            return;
+        const bool overNet = o.value("over_network").toBool();
+        QDialog d(this);
+        d.setWindowTitle(tr("Board's Wi-Fi"));
+        auto *v = new QVBoxLayout(&d);
+        v->setSizeConstraint(QLayout::SetFixedSize);
+        auto *sum = new QLabel(wifiSummary(o));
+        sum->setWordWrap(true);
+        sum->setMinimumWidth(480);
+        v->addWidget(sum);
+        v->addWidget(new QLabel(tr("Make it join this network (2.4 GHz only):")));
+        auto *list = new QListWidget;
+        list->setMinimumHeight(140);
+        for (const auto &nv : o.value("networks").toArray()) {
+            const QJsonObject n = nv.toObject();
+            const int sig = n.value("signal").toInt();
+            auto *it = new QListWidgetItem(tr("%1 — %2%3").arg(n.value("ssid").toString(), sig >= -60 ? tr("strong") : sig >= -72 ? tr("medium") : tr("weak"),
+                                                                n.value("secured").toBool() ? QString() : tr(", open")));
+            it->setData(Qt::UserRole, n.value("ssid").toString());
+            list->addItem(it);
+        }
+        v->addWidget(list);
+        if (list->count() == 0)
+            list->addItem(tr("(the board found no networks when it started; type the name below)"));
+        auto *form = new QFormLayout;
+        auto *name = new QLineEdit;
+        name->setMaxLength(32);
+        auto *pass = new QLineEdit;
+        pass->setEchoMode(QLineEdit::Password);
+        pass->setMaxLength(63);
+        pass->setPlaceholderText(tr("leave empty for an open network"));
+        auto *showPass = new QCheckBox(tr("Show"));
+        auto *passRow = new QHBoxLayout;
+        passRow->addWidget(pass, 1);
+        passRow->addWidget(showPass);
+        form->addRow(tr("Network name:"), name);
+        form->addRow(tr("Password:"), passRow);
+        v->addLayout(form);
+        auto *note = new QLabel(overNet
+            ? tr("The board then leaves the network it is on, so this connection ends. Put this computer on the chosen network too: nocry looks for the board there and connects again by itself. "
+                 "If the board cannot join, it goes back to its own network within a minute.")
+            : tr("If the board cannot join, it goes back to its own network within a minute. Its screen shows where it is."));
+        note->setWordWrap(true);
+        note->setMinimumWidth(480);
+        v->addWidget(note);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        QPushButton *join = bb->addButton(tr("Join"), QDialogButtonBox::AcceptRole);
+        QPushButton *own = nullptr;
+        if (o.value("mode").toString() == "client")
+            own = bb->addButton(tr("Back to its own network"), QDialogButtonBox::ActionRole);
+        v->addWidget(bb);
+        connect(list, &QListWidget::currentItemChanged, &d, [name](QListWidgetItem *it) {
+            if (it && it->data(Qt::UserRole).isValid())
+                name->setText(it->data(Qt::UserRole).toString());
+        });
+        connect(showPass, &QCheckBox::toggled, &d, [pass](bool on) { pass->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password); });
+        auto valid = [join, name, pass] {
+            const int n = pass->text().toUtf8().size();
+            join->setEnabled(!name->text().isEmpty() && (n == 0 || (n >= 8 && n <= 63)));
+        };
+        connect(name, &QLineEdit::textChanged, &d, valid);
+        connect(pass, &QLineEdit::textChanged, &d, valid);
+        valid();
+        int action = 0;
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        connect(join, &QPushButton::clicked, &d, [&] { action = 1; d.accept(); });
+        if (own)
+            connect(own, &QPushButton::clicked, &d, [&] { action = 2; d.accept(); });
+        if (d.exec() != QDialog::Accepted || !action)
+            return;
+        changeWifi(action, name->text(), pass->text());
+    }
+
+    // action 1: join `ssid`; 2: the board's own network. Over the network, then find the board again.
+    void changeWifi(int action, const QString &ssid, const QString &password)
+    {
+        if (busy)
+            return;
+        setBusy(true);
+        const QString where = action == 1 ? ssid : QStringLiteral("nocry-rescue");
+        stateHint->setText(action == 1 ? tr("Telling the board to join %1.").arg(ssid) : tr("Telling the board to open its own network."));
+        log->appendPlainText(stateHint->text());
+        const QByteArray s = ssid.toUtf8(), p = password.toUtf8();
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, where] {
+            const QJsonObject o = w->result();
+            w->deleteLater();
+            lastResult = o;
+            if (!o.value("ok").toBool()) {
+                setBusy(false);
+                pollState();
+                log->appendPlainText(tr("Wi-Fi: %1").arg(o.value("error").toString()));
+                if (!quiet)
+                    QMessageBox::warning(this, tr("Board's Wi-Fi"), o.value("error").toString());
+                return;
+            }
+            if (!o.value("over_network").toBool()) {       // by USB: the cable stays, nothing to find again
+                setBusy(false);
+                pollState();
+                const QString msg = tr("The board is changing its Wi-Fi to %1. That takes up to a minute; its screen shows the result, and \"Board's Wi-Fi…\" shows it here.").arg(where);
+                log->appendPlainText(msg);
+                if (!quiet)
+                    QMessageBox::information(this, tr("Board's Wi-Fi"), msg);
+                return;
+            }
+            // over the network: the connection is gone; look for the board where it comes up
+            networkAddress.clear();
+            stateTitle->setText(tr("Looking for the board…"));
+            stateHint->setText(tr("Put this computer on the Wi-Fi network %1. nocry connects again by itself when it sees the board (up to 3 minutes).").arg(where));
+            progressLabel->setText(tr("Looking for the board on the network"));
+            allowCancel();
+            auto *f = new QFutureWatcher<QJsonObject>(this);
+            connect(f, &QFutureWatcher<QJsonObject>::finished, this, [this, f, where] {
+                const QJsonObject r = f->result();
+                f->deleteLater();
+                setBusy(false);
+                lastResult = r;
+                if (r.value("ok").toBool()) {
+                    const QString a = r.value("address").toString();
+                    const bool fellBack = a.startsWith("192.168.77.") && where != "nocry-rescue";
+                    const QString msg = fellBack
+                        ? tr("The board is back on its own network (%1): it could not join %2. Check the password and that the network is a 2.4 GHz one in range, then try again.").arg(a, where)
+                        : tr("Connected again: the board is at %1.").arg(a);
+                    log->appendPlainText(msg);
+                    networkConnected(a);
+                    if (!quiet)
+                        fellBack ? QMessageBox::warning(this, tr("Board's Wi-Fi"), msg) : QMessageBox::information(this, tr("Board's Wi-Fi"), msg);
+                } else {
+                    pollState();
+                    const QString msg = wasCancelled(r)
+                        ? tr("Stopped looking. The board keeps running; use \"Connect over the network…\" when this computer is on its network. The pairing code on its screen is unchanged.")
+                        : tr("%1\n\nThe board keeps running. Its screen shows which network it is on and its address; use \"Connect over the network…\" from a computer on that network.").arg(r.value("error").toString());
+                    log->appendPlainText(msg);
+                    if (!quiet && !wasCancelled(r))
+                        QMessageBox::warning(this, tr("Board's Wi-Fi"), msg);
+                }
+            });
+            f->setFuture(QtConcurrent::run([] { return takeJson(nocry_wifi_json(3, nullptr, nullptr)); }));
+        });
+        w->setFuture(QtConcurrent::run([action, s, p] { return takeJson(nocry_wifi_json(action, s.constData(), p.constData())); }));
     }
 
     void updateButtons()
@@ -1947,6 +2149,8 @@ private:
         if (net)
             networkAddress = o.value("address").toString();
         netButton->setVisible(s == "none" || net);
+        wifiButton->setVisible(netUp || s == "recovery");
+        wifiButton->setEnabled(!busy);
         netButton->setText(net ? tr("Disconnect") : tr("Connect over the network…"));
         if (s == "none" && infoLoaded) {
             for (auto *l : {model, serial, mac, board, slot, otherSlot, storage})
@@ -2380,7 +2584,7 @@ private:
     bool infoLoaded = false, infoStale = false, autoBlocked = false, recoveryRunning = false;
     QLabel *shellLine;
     QPushButton *shellButton;
-    QPushButton *boardLogButton, *bootHelpButton, *netButton;
+    QPushButton *boardLogButton, *bootHelpButton, *netButton, *wifiButton;
     QString networkAddress;     // the board paired over the network ("" = USB)
     // printer type / mainboard the user chose for the install in progress ("" = let nocry decide)
     QString pendingModel, pendingBoard;
@@ -2587,6 +2791,24 @@ int main(int argc, char **argv)
             }
             QTimer::singleShot(200, [] { QApplication::quit(); });
         });
+    }
+    // --selftest-wifi ADDRESS CODE shot.png: pair, open the Board's Wi-Fi dialog, save a picture of it
+    const int swf = args.indexOf("--selftest-wifi");
+    if (swf >= 0 && swf + 3 < args.size()) {
+        const QString a = args[swf + 1], c = args[swf + 2], shot = args[swf + 3];
+        QTimer::singleShot(400, [&w, a, c] {
+            if (!w.testConnect(a, c))
+                QApplication::exit(3);
+        });
+        QTimer::singleShot(4000, [&w] { w.openWifiDialog(); });
+        QTimer::singleShot(7000, [shot] {
+            if (QWidget *d = QApplication::activeModalWidget()) {
+                d->grab().save(shot);
+                d->close();
+            }
+            QTimer::singleShot(300, [] { QApplication::quit(); });
+        });
+        QTimer::singleShot(30000, [] { QApplication::exit(2); });
     }
     // --selftest-net-dialog shot.png: open the network dialog, save a picture of it after the search
     const int snd = args.indexOf("--selftest-net-dialog");

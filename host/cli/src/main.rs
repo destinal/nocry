@@ -44,6 +44,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// The Wi-Fi of a board running nocry-rescue: show what it is on and what is in range.
+    /// --join makes it join a network (it returns to its own network if that fails);
+    /// --own opens its own network "nocry-rescue" again
+    Wifi {
+        #[arg(long)]
+        join: Option<String>,
+        /// password of the network to join (omit for an open network)
+        #[arg(long, default_value = "")]
+        password: String,
+        #[arg(long, conflicts_with = "join")]
+        own: bool,
+    },
     /// Look for boards running nocry-rescue on the local network
     Discover,
     /// List boards in USB boot mode and running nocry stage2s
@@ -528,6 +540,38 @@ fn main() -> Result<()> {
             for s in &p.support {
                 println!("supports {:?} ({}){}", s.model, nocry_core::boards::product_name(&s.model),
                     if s.mainboards.is_empty() { String::new() } else { format!(" on {}", s.mainboards.join(", ")) });
+            }
+        }
+        Cmd::Wifi { join, password, own } => {
+            if join.is_none() && !own {
+                let w = nocry_core::session::wifi_status()?;
+                match w.mode.as_str() {
+                    "ap" => println!("the board is on its own network {} at {}", w.ssid, w.address),
+                    "client" => println!("the board is on {} at {}", w.ssid, w.address),
+                    m => println!("Wi-Fi: {m}"),
+                }
+                if let Some(n) = w.source.strip_prefix("failed:") {
+                    println!("it could not join {n} (wrong password, or out of range)");
+                }
+                if !w.saved_from.is_empty() {
+                    println!("the installed firmware has a saved network: {}", w.saved_names);
+                }
+                println!("in range (when the rescue system started):");
+                for (name, sig, lock) in &w.networks {
+                    println!("  {sig:4} dBm  {}  {name}", if *lock { "password" } else { "open    " });
+                }
+            } else {
+                let over_net = nocry_core::session::network_board().is_some();
+                nocry_core::session::wifi_change(join.as_deref(), &password)?;
+                match &join {
+                    Some(n) => println!("the board is joining {n}; if it cannot, its own network nocry-rescue comes back within a minute"),
+                    None => println!("the board is opening its own network nocry-rescue"),
+                }
+                if over_net {
+                    println!("looking for the board (put this computer on the same network)...");
+                    let addr = nocry_core::session::refind_network_board(Duration::from_secs(180))?;
+                    println!("found it at {addr}; use --net {addr} with the same code");
+                }
             }
         }
         Cmd::Discover => {

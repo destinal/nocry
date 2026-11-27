@@ -15,7 +15,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 if [ -e "$T/usr/sbin/wpa_supplicant" ]; then
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -Wno-deprecated-declarations -o "$T/usr/sbin/nocry-netd" "$HERE/netd/nocry-netd.c" -lcrypto
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-banner" "$HERE/screen/nocry-banner.c"
-  "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-netd" "$T/usr/sbin/nocry-banner"
+  "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-webd" "$HERE/webd/nocry-webd.c"
+  "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-netd" "$T/usr/sbin/nocry-banner" "$T/usr/sbin/nocry-webd"
+  chmod 755 "$T/usr/sbin/nocry-wifi" "$T/etc/init.d/S45nocry-rescue"
   # started by S45nocry-rescue with our own settings, not by the packages' scripts
   rm -f "$T/etc/init.d/S80dnsmasq" "$T/etc/init.d/S50mdnsd" "$T/etc/mdns.d/ssh.service"
   # of the Broadcom firmware collection only this board's chip is needed

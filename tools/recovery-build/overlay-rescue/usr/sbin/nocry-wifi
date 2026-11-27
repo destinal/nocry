@@ -1,0 +1,206 @@
+#!/bin/sh
+# nocry-wifi: the rescue system's Wi-Fi, in one place (docs/nocry-rescue.md).
+#
+#   nocry-wifi auto                 at start: join the network the installed firmware saved,
+#                                   else open the board's own network
+#   nocry-wifi ap                   open the board's own network "nocry-rescue"
+#   nocry-wifi join SSID [PASSWORD] join a network; back to the own network if that fails
+#   nocry-wifi scan                 networks in range, strongest first: "signal<TAB>lock<TAB>name"
+#   nocry-wifi status               mode=ap|client|none, ssid=, address=, source=
+#   nocry-wifi saved                where a saved network was found, and its names
+#
+# The board has one radio: it is either its own access point or a client, never both. The own
+# network is the fallback for everything, so a wrong password cannot lock anyone out.
+# State for the screen and the web page is in /run/nocry-wifi.state; a password is only ever
+# written to /run (memory) and to nothing that survives a restart.
+
+IF=wlan0
+AP_SSID=nocry-rescue
+AP_PASS=nocry-rescue
+AP_ADDR=192.168.77.1
+RUN=/run
+STATE=$RUN/nocry-wifi.state
+CTRL=/var/run/wpa_supplicant
+LOCK=$RUN/nocry-wifi.lock
+
+log() { echo "nocry-wifi: $*" > /dev/console 2>/dev/null; echo "nocry-wifi: $*" >&2; }
+
+state() {   # state MODE SSID ADDRESS SOURCE
+    printf 'mode=%s\nssid=%s\naddress=%s\nsource=%s\n' "$1" "$2" "$3" "$4" > $STATE.new && mv $STATE.new $STATE
+}
+
+part() {    # device of the partition named $1
+    for u in /sys/class/block/mmcblk0p*/uevent; do
+        grep -q "^PARTNAME=$1\$" "$u" 2>/dev/null && { echo "/dev/$(basename "$(dirname "$u")")"; return 0; }
+    done
+    return 1
+}
+
+# The address the printer's own firmware uses for Wi-Fi is the one in its identity record, so a
+# router sees the same device in rescue as in normal use.
+set_mac() {
+    p=$(part sn_mac) || return 0
+    mac=$(dd if="$p" bs=512 count=1 2>/dev/null | tr -d '\000' | cut -d';' -f2 | tr 'A-F' 'a-f')
+    case "$mac" in
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+        *) return 0 ;;
+    esac
+    m=$(echo "$mac" | sed 's/../&:/g; s/:$//')
+    [ "$(cat /sys/class/net/$IF/address 2>/dev/null)" = "$m" ] && return 0
+    ip link set $IF down 2>/dev/null
+    ip link set $IF address "$m" 2>/dev/null || log "could not set the Wi-Fi address"
+}
+
+radio_down() {
+    killall -q udhcpc dnsmasq nocry-webd 2>/dev/null
+    wpa_cli -p $CTRL -i $IF terminate >/dev/null 2>&1
+    i=0; while pidof wpa_supplicant >/dev/null && [ $i -lt 20 ]; do sleep 0.2; i=$((i+1)); done
+    killall -q wpa_supplicant 2>/dev/null
+    ip addr flush dev $IF 2>/dev/null
+    ip link set $IF down 2>/dev/null
+}
+
+announce() { killall -q mdnsd 2>/dev/null; mdnsd 2>/dev/null; }
+
+do_scan() {
+    # the radio has to be up; in access-point mode this chip may refuse to scan, then the list
+    # taken before the access point was opened is used
+    ip link set $IF up 2>/dev/null
+    iw dev $IF scan 2>/dev/null | awk '
+        function flush() { if (ssid != "") print sig "\t" (lock ? "lock" : "open") "\t" ssid }
+        /^BSS / { flush(); ssid = ""; sig = -100; lock = 0 }
+        /^\tsignal:/ { sig = int($2) }
+        /^\tSSID: / { ssid = substr($0, 8) }
+        /^\tRSN:|^\tWPA:/ { lock = 1 }
+        /capability:.*Privacy/ { lock = 1 }
+        END { flush() }' | sort -t "$(printf '\t')" -k3,3 -k1,1nr | awk -F '\t' '!seen[$3]++' | sort -t "$(printf '\t')" -k1,1nr > $RUN/nocry-scan.new
+    if [ -s $RUN/nocry-scan.new ]; then mv $RUN/nocry-scan.new $RUN/nocry-scan; else rm -f $RUN/nocry-scan.new; fi
+    cat $RUN/nocry-scan 2>/dev/null
+}
+
+start_ap() {
+    radio_down
+    set_mac
+    [ -e /sys/class/net/$IF ] || { state none "" "" ""; return 1; }
+    [ -s $RUN/nocry-scan ] || do_scan >/dev/null     # while the radio is still free to scan
+    cat > $RUN/nocry-ap.conf <<CONF
+ctrl_interface=$CTRL
+network={
+    ssid="$AP_SSID"
+    mode=2
+    frequency=2437
+    key_mgmt=WPA-PSK
+    proto=RSN
+    pairwise=CCMP
+    psk="$AP_PASS"
+}
+CONF
+    wpa_supplicant -B -i $IF -D nl80211 -c $RUN/nocry-ap.conf >/dev/null 2>&1
+    ip addr add $AP_ADDR/24 dev $IF 2>/dev/null
+    ip link set $IF up
+    # every name resolves to the board, so a phone that joins is shown the set-up page by itself
+    dnsmasq --interface=$IF --bind-interfaces --dhcp-range=192.168.77.10,192.168.77.50,12h \
+        --dhcp-leasefile=$RUN/nocry-leases --pid-file=$RUN/nocry-dnsmasq.pid --address=/#/$AP_ADDR
+    nocry-webd --address $AP_ADDR 2>/dev/console &
+    state ap "$AP_SSID" "$AP_ADDR" "$1"
+    announce
+    log "own network $AP_SSID open at $AP_ADDR"
+}
+
+# join_conf FILE NAME SOURCE: FILE is a complete wpa_supplicant configuration
+join_conf() {
+    radio_down
+    set_mac
+    state joining "$2" "" "$3"
+    wpa_supplicant -B -i $IF -D nl80211 -c "$1" >/dev/null 2>&1 || return 1
+    i=0
+    while [ $i -lt 30 ]; do
+        s=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^wpa_state=//p')
+        [ "$s" = COMPLETED ] && break
+        sleep 1; i=$((i+1))
+    done
+    [ "$s" = COMPLETED ] || { log "could not join $2 (wrong password, or out of range)"; return 1; }
+    ssid=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^ssid=//p')
+    udhcpc -i $IF -n -q -t 8 -T 2 >/dev/null 2>&1 || { log "joined $ssid but got no address from it"; return 1; }
+    udhcpc -i $IF -b -S >/dev/null 2>&1     # keep the lease alive
+    addr=$(ip -4 addr show dev $IF | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
+    [ -n "$addr" ] || return 1
+    state client "${ssid:-$2}" "$addr" "$3"
+    announce
+    log "joined ${ssid:-$2}, address $addr"
+}
+
+hex() { printf '%s' "$1" | hexdump -v -e '/1 "%02x"'; }
+
+# The installed firmware's saved networks, as a wpa_supplicant configuration on stdout.
+# Creality's firmware: /usr/data/wpa_supplicant.conf; NebulaOS: /usr/data/nebulaos/network/.
+saved_conf() {
+    p=$(part userdata) || return 1
+    mkdir -p $RUN/nocry-data
+    mount -t ext4 -o ro,noload "$p" $RUN/nocry-data 2>/dev/null || return 1
+    found=
+    for f in nebulaos/network/wpa_supplicant.conf nebulaos/wpa_supplicant.conf wpa_supplicant.conf; do
+        g=$RUN/nocry-data/$f
+        if [ -f "$g" ] && grep -q 'ssid=' "$g"; then found=$f; break; fi
+    done
+    if [ -n "$found" ]; then
+        echo "ctrl_interface=$CTRL"
+        # only the network blocks: the rest (update_config, country, control socket) is the firmware's business
+        awk '/^[ \t]*network=\{/ { on = 1 } on { print } on && /^[ \t]*\}/ { on = 0 }' "$g"
+    fi
+    umount $RUN/nocry-data 2>/dev/null
+    [ -n "$found" ] && echo "$found" > $RUN/nocry-wifi.saved-from
+    [ -n "$found" ]
+}
+
+names() { sed -n 's/^[ \t]*ssid="\(.*\)"[ \t]*$/\1/p' "$1" | tr '\n' ',' | sed 's/,$//'; }
+
+locked() {  # one change at a time; a second caller waits for the first
+    i=0; while ! mkdir $LOCK 2>/dev/null && [ $i -lt 90 ]; do sleep 1; i=$((i+1)); done
+    trap 'rmdir $LOCK 2>/dev/null' EXIT
+}
+
+mkdir -p $RUN $CTRL
+case "$1" in
+  auto)
+    locked
+    i=0; while [ ! -e /sys/class/net/$IF ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
+    [ -e /sys/class/net/$IF ] || { state none "" "" ""; log "no Wi-Fi found"; exit 1; }
+    set_mac; do_scan >/dev/null
+    if saved_conf > $RUN/nocry-sta.conf 2>/dev/null; then
+        n=$(names $RUN/nocry-sta.conf)
+        log "the installed firmware has a saved network ($n); joining it"
+        join_conf $RUN/nocry-sta.conf "$n" saved && exit 0
+    fi
+    rm -f $RUN/nocry-sta.conf
+    start_ap fallback ;;
+  ap)
+    locked; rm -f $RUN/nocry-sta.conf; start_ap chosen ;;
+  join)
+    [ -n "$2" ] || { echo "usage: nocry-wifi join SSID [PASSWORD]" >&2; exit 2; }
+    n=${#3}
+    if [ $n -ne 0 ] && { [ $n -lt 8 ] || [ $n -gt 63 ]; }; then echo "a Wi-Fi password has 8 to 63 characters" >&2; exit 2; fi
+    case "$3" in *'"'*) echo "a password with a double quote is not supported here" >&2; exit 2 ;; esac
+    locked
+    {
+        echo "ctrl_interface=$CTRL"
+        echo "network={"
+        echo "    ssid=$(hex "$2")"         # as hex: any character in a name is safe
+        echo "    scan_ssid=1"
+        if [ $n -eq 0 ]; then echo "    key_mgmt=NONE"; else echo "    key_mgmt=WPA-PSK"; echo "    psk=\"$3\""; fi
+        echo "}"
+    } > $RUN/nocry-sta.conf
+    chmod 600 $RUN/nocry-sta.conf
+    if join_conf $RUN/nocry-sta.conf "$2" chosen; then exit 0; fi
+    rm -f $RUN/nocry-sta.conf
+    start_ap "failed:$2"
+    exit 1 ;;
+  scan) do_scan ;;
+  status) cat $STATE 2>/dev/null || echo "mode=none" ;;
+  saved)
+    if saved_conf > $RUN/nocry-saved.tmp 2>/dev/null; then
+        echo "from=$(cat $RUN/nocry-wifi.saved-from)"; echo "names=$(names $RUN/nocry-saved.tmp)"
+    else echo "from="; fi
+    rm -f $RUN/nocry-saved.tmp ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

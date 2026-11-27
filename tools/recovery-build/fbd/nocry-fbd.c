@@ -35,6 +35,7 @@
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <linux/fs.h>
 #include <openssl/evp.h>
 #ifndef FBD_NO_FFS
@@ -53,6 +54,9 @@ typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t
 #define DL_MAX		(64 * MIB)
 #define FETCH_MAX	0x40000000u
 #define CMD_MAX		4096
+#ifndef WIFI_TOOL
+#define WIFI_TOOL	"/usr/sbin/nocry-wifi"	/* nocry-rescue only */
+#endif
 
 static int stdio_mode, ep_out = -1, ep_in = -1, disk = -1;
 static u64 disk_blocks;
@@ -417,7 +421,10 @@ static void getvar_one(const char *v, char *out)
 	else if (!strcmp(v, "secure")) strcpy(out, "no");
 	else if (!strcmp(v, "unlocked")) strcpy(out, "yes");
 	else if (!strcmp(v, "critical-unlocked")) strcpy(out, critical_unlocked ? "yes" : "no");
-	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy,zero");
+	else if (!strcmp(v, "nocry-ext")) {
+		strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy,zero");
+		if (!access(WIFI_TOOL, X_OK)) strcat(out, ",wifi");	/* the rescue system only */
+	}
 	else if (!strcmp(v, "slot-count")) strcpy(out, "2");
 	else if (!strcmp(v, "current-slot")) { int s = current_slot(); if (s >= 0) strcpy(out, s ? "b" : "a"); }
 	else if (!strncmp(v, "has-slot:", 9))
@@ -722,6 +729,67 @@ static void cmd_nocry_secure_erase(char *arg)
 	OKAY("%s", method);
 }
 
+/* nocry-wifi:<verb>[:<hex>...] (nocry-rescue only): the board's Wi-Fi, through /usr/sbin/nocry-wifi.
+ *   status | scan | saved      answer: DATA with the tool's output
+ *   ap                         open the board's own network
+ *   join:<name hex>[:<password hex>]   join a network; the own network comes back if that fails
+ * ap and join answer OKAY at once and act two seconds later, on their own: when the command
+ * arrives over Wi-Fi, the change cuts the connection it came through. */
+static int unhex(const char *h, char *out, size_t max)
+{
+	size_t n = strlen(h), i; unsigned v;
+	if (n % 2 || n / 2 >= max) return -1;
+	for (i = 0; i < n / 2; i++) {
+		if (sscanf(h + 2 * i, "%2x", &v) != 1 || !v) return -1;
+		out[i] = v;
+	}
+	out[n / 2] = 0;
+	return 0;
+}
+static void cmd_nocry_wifi(char *arg)
+{
+	char *a1 = strchr(arg, ':'), *a2 = NULL, name[40] = "", pass[70] = "";
+	if (access(WIFI_TOOL, X_OK)) { FAIL("this system has no Wi-Fi control (not nocry-rescue)"); return; }
+	if (a1) { *a1++ = 0; a2 = strchr(a1, ':'); if (a2) *a2++ = 0; }
+	if (!strcmp(arg, "status") || !strcmp(arg, "scan") || !strcmp(arg, "saved")) {
+		char cmd[256], *b = malloc(16384); size_t n = 0, k; FILE *f;
+		snprintf(cmd, sizeof(cmd), WIFI_TOOL " %.8s 2>/dev/null", arg);
+		if (!b || !(f = popen(cmd, "r"))) { free(b); FAIL("cannot run the Wi-Fi tool"); return; }
+		while (n < 16384 && (k = fread(b + n, 1, 16384 - n, f)) > 0) n += k;
+		pclose(f);
+		if (!n) { b[0] = '\n'; n = 1; }
+		if (!resp("DATA", "%08x", (u32)n) && !data_write((u8 *)b, n)) OKAY("");
+		free(b);
+		return;
+	}
+	if (!strcmp(arg, "join")) {
+		size_t pl;
+		if (!a1 || unhex(a1, name, sizeof(name)) || !name[0] || strlen(name) > 32) { FAIL("bad network name"); return; }
+		if (a2 && unhex(a2, pass, sizeof(pass))) { FAIL("bad password"); return; }
+		pl = strlen(pass);
+		if (pl && (pl < 8 || pl > 63)) { FAIL("a Wi-Fi password has 8 to 63 characters"); return; }
+		if (strchr(pass, '"')) { FAIL("a password with a double quote is not supported"); return; }
+	} else if (strcmp(arg, "ap")) { FAIL("usage: nocry-wifi:status|scan|saved|ap|join:<name hex>[:<password hex>]"); return; }
+	fflush(NULL);
+	switch (fork()) {
+	case -1: FAIL("cannot start the Wi-Fi tool"); return;
+	case 0:
+		setsid();
+		if (fork() == 0) {
+			int fd; for (fd = 0; fd < 256; fd++) close(fd);
+			if (open("/dev/null", O_RDWR) == 0 && dup(0) == 1 && dup(0) == 2) { /* quiet, detached */ }
+			sleep(2);
+			if (!strcmp(arg, "ap")) execl(WIFI_TOOL, WIFI_TOOL, "ap", (char *)NULL);
+			else if (pass[0]) execl(WIFI_TOOL, WIFI_TOOL, "join", name, pass, (char *)NULL);
+			else execl(WIFI_TOOL, WIFI_TOOL, "join", name, (char *)NULL);
+		}
+		_exit(0);
+	default:
+		wait(NULL);
+	}
+	OKAY("");
+}
+
 static void cmd_nocry_dmesg(void)
 {
 	int n = klogctl(10 /* SYSLOG_ACTION_SIZE_BUFFER */, NULL, 0);
@@ -792,6 +860,7 @@ static void dispatch(char *c)
 	else if (!strncmp(c, "nocry-zero:", 11)) cmd_nocry_zero(c + 11);
 	else if (!strncmp(c, "nocry-secure-erase:", 19)) cmd_nocry_secure_erase(c + 19);
 	else if (!strcmp(c, "nocry-dmesg")) cmd_nocry_dmesg();
+	else if (!strncmp(c, "nocry-wifi:", 11)) cmd_nocry_wifi(c + 11);
 	else if (!strncmp(c, "nocry-put:", 10)) cmd_nocry_put(c + 10);
 	else if (!strncmp(c, "set_active:", 11)) cmd_set_active(c + 11);
 	else if (!strcmp(c, "flashing unlock_critical")) { critical_unlocked = 1; INFO("critical regions (mmc0, gpt, bootloader, sn_mac) writable until reboot"); OKAY(""); }
