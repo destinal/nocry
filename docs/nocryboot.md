@@ -103,6 +103,8 @@ A factory loader is kept before it is replaced: on the board itself, at 0xf0000 
 
 Every write is read back. There is one copy of the loader on the eMMC: if a new one does not start, the board stays dark until the BOOT button brings it into USB boot mode, from where `nocry loader --factory` works.
 
+First use on a board (2026-11-27): the window's Boot loader dialog installed nocryboot 0.1 on a Nebula Pad that had just been erased and reinstalled (so it carried the factory loader of the rebuild package, built Dec 29 2023). Read back afterwards: loader identical to the shipped image, kept factory copy identical to the one saved on the PC, and the board cold-boots.
+
 The loader carries a text nocry reads, `nocryboot-loader <version> <family>`; it is also the first line it prints on the console.
 
 ### Next
