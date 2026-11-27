@@ -107,11 +107,18 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 - **Touch controller: answers** at I2C address 0x48 on bus 4 (commands 0xC0/0xD0/0xE0 return X, Y, pressure). A bus scan shows nothing because the chip does not acknowledge empty probes.
 - **Wi-Fi chip: found** ("new high speed SDIO card", BCM43430/1) once PA1 is driven low (it is active low) and the 32 kHz clock pin PE23 is switched to its function. It asks for `brcm/brcmfmac43430-sdio.bin` (+ `.AP6212` board file), which the initramfs does not carry yet.
 
+Same day, with the system image that carries the firmware and tools:
+
+- **Wi-Fi firmware loads** (`brcmfmac43430-sdio.bin`, version 7.45.98.118; it uses the `AP6212` board file), `wlan0` appears, and a scan lists the networks in range.
+- **Access-point mode is supported and starts:** `wpa_supplicant` with `mode=2` brings up a WPA2 network on channel 6, `dnsmasq` hands out addresses. Whether a client can join and reach the board is the next check.
+- The interface comes up with the chip's own MAC address; rescue should set the one from `sn_mac`, as the firmware does.
+- A press on the screen reads as pressure 1400 to 1750 with a stable position; no touch reads as pressure 0.
+
 Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (kernel + initramfs). With the Wi-Fi firmware, wpa_supplicant, iw, dnsmasq and mdnsd added it is 19.6 MiB, before any interface program and with all of linux-firmware's Broadcom files still in (only two are needed).
 
 ## Open points
 
-- Whether brcmfmac's access-point mode works with this chip's firmware in practice.
+- Access-point mode: a client joining and reaching the board is still to be seen.
 - NS2009: kernel driver or user-space reader; calibration.
 - Size: measure after step 1; the 20 to 40 MiB estimate decides how long the loader's checksum takes.
 - Bluetooth is not used.
