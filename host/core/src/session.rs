@@ -963,9 +963,11 @@ pub fn install(
     picture: PictureChoice,
 ) -> Result<InstallReport> {
     let pkg = restore::Package::load(os)?;
-    // NebulaOS brings its own start program for its own kernel; nocry's boot logo program
-    // has only been proven with Creality's firmware, so it is never put in its place.
-    let picture = if pkg.ota_board.as_deref() == Some(crate::boards::NEBULAOS) { PictureChoice::Firmware } else { picture };
+    // NebulaOS brings its own start program for its own kernel; nocry's boot logo program has
+    // only been proven with Creality's firmware, so it is not put in its place by default.
+    // Someone who asks for it by name gets it (and is told it is untested).
+    let picture = if pkg.ota_board.as_deref() == Some(crate::boards::NEBULAOS) && picture == PictureChoice::Default { PictureChoice::Firmware } else { picture };
+    let asked = picture == PictureChoice::Nocry;
     let line = pkg.ota_board.as_deref().and_then(crate::boards::line);
     let mut r = InstallReport {
         firmware_board: pkg.ota_board.clone().unwrap_or_default(),
@@ -1070,7 +1072,7 @@ pub fn install(
     // show up as work, or callers that stop at "nothing to write" would never get to it.
     let picture_only = r.bytes_to_write == 0
         && match (nocry_picture, fam, crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)) {
-            (true, Some(f), Ok(g)) => apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &["a"], false)?,
+            (true, Some(f), Ok(g)) => apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &["a"], false, asked)?,
             _ => false,
         };
     if picture_only {
@@ -1082,7 +1084,7 @@ pub fn install(
     }
     if picture_only {
         let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)?;
-        r.executed = apply_picture(&t, &g, None, fam.unwrap(), crate::picture::Kind::Nocry, &["a"], true)?;
+        r.executed = apply_picture(&t, &g, None, fam.unwrap(), crate::picture::Kind::Nocry, &["a"], true, asked)?;
         return Ok(r);
     }
     if r.bytes_to_write == 0 {
@@ -1110,7 +1112,7 @@ pub fn install(
     plan.execute(&t)?;
     if let (true, Some(f)) = (nocry_picture, fam) {
         let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)?;
-        apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &["a"], true)?;
+        apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &["a"], true, asked)?;
     }
     r.executed = true;
     say!("installation complete and verified");
@@ -1425,6 +1427,8 @@ fn apply_picture(
     want: crate::picture::Kind,
     slots: &[&str],
     execute: bool,
+    // nocry's logo was asked for by name, not chosen by a default
+    asked: bool,
 ) -> Result<bool> {
     use crate::picture as P;
     let mut changed = false;
@@ -1436,8 +1440,11 @@ fn apply_picture(
         if want == P::Kind::Nocry && info.kind == P::Kind::Firmware {
             let rootfs = if *slot == "b" { "rootfs2" } else { "rootfs" };
             if restore::firmware_in(t, g, rootfs).is_some_and(|(b, _)| b == crate::boards::NEBULAOS) {
-                say!("slot {s}: NebulaOS keeps its own start program (nocry's boot logo is not proven with it)");
-                continue;
+                if !asked {
+                    say!("slot {s}: NebulaOS keeps its own start program (nocry's boot logo is not proven with it; ask for it by name to try)");
+                    continue;
+                }
+                say!("slot {s}: holds NebulaOS, with which nocry's boot logo has not been tested. If the screen stays dark after power-on, bring the firmware's logo back");
             }
         }
         match (want, info.kind) {
@@ -1506,7 +1513,7 @@ pub fn set_picture(
             PictureChoice::Default if picture_proven(fam) => P::Kind::Nocry,
             PictureChoice::Default => P::Kind::Firmware,
         };
-        changed = apply_picture(&t, &g, images, fam, kind, &["a", "b"], execute)?;
+        changed = apply_picture(&t, &g, images, fam, kind, &["a", "b"], execute, w == PictureChoice::Nocry)?;
     }
     Ok(PictureStatus {
         a: picture_of(&t, &g, "rtos")?.0,
@@ -2185,9 +2192,11 @@ pub fn install_other_slot(
     picture: PictureChoice,
 ) -> Result<InstallReport> {
     let pkg = restore::Package::load(os)?;
-    // NebulaOS brings its own start program for its own kernel; nocry's boot logo program
-    // has only been proven with Creality's firmware, so it is never put in its place.
-    let picture = if pkg.ota_board.as_deref() == Some(crate::boards::NEBULAOS) { PictureChoice::Firmware } else { picture };
+    // NebulaOS brings its own start program for its own kernel; nocry's boot logo program has
+    // only been proven with Creality's firmware, so it is not put in its place by default.
+    // Someone who asks for it by name gets it (and is told it is untested).
+    let picture = if pkg.ota_board.as_deref() == Some(crate::boards::NEBULAOS) && picture == PictureChoice::Default { PictureChoice::Firmware } else { picture };
+    let asked = picture == PictureChoice::Nocry;
     let mut r = InstallReport {
         firmware_board: pkg.ota_board.clone().unwrap_or_default(),
         firmware_version: pkg.ota_version.clone().unwrap_or_default(),
@@ -2274,7 +2283,7 @@ pub fn install_other_slot(
     }
     let picture_only = r.bytes_to_write == 0
         && match (nocry_picture, fam) {
-            (true, Some(f)) => apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &[slot], false)?,
+            (true, Some(f)) => apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &[slot], false, asked)?,
             _ => false,
         };
     if picture_only {
@@ -2285,7 +2294,7 @@ pub fn install_other_slot(
         return Ok(r);
     }
     if picture_only {
-        r.executed = apply_picture(&t, &g, None, fam.unwrap(), crate::picture::Kind::Nocry, &[slot], true)?;
+        r.executed = apply_picture(&t, &g, None, fam.unwrap(), crate::picture::Kind::Nocry, &[slot], true, asked)?;
         return Ok(r);
     }
     if r.bytes_to_write == 0 {
@@ -2298,7 +2307,7 @@ pub fn install_other_slot(
     }
     m.end();
     if let (true, Some(f)) = (nocry_picture, fam) {
-        apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &[slot], true)?;
+        apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &[slot], true, asked)?;
     }
     r.executed = true;
     say!("firmware {} installed into slot {} and verified; the active slot was not changed", r.firmware_version, slot.to_uppercase());

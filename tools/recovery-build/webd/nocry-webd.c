@@ -958,7 +958,10 @@ static void serve(int s)
 						: (v1[0] == 'n' ? "Use the nocry boot logo?" : "Use the firmware's boot logo?"),
 				     loader ? "The boot loader is the first program the board runs. If this goes wrong the board does not start by itself, and the way back is USB boot mode: "
 					      "hold BOOT, tap RESET, and use nocry on a computer. The loader that is replaced is kept on the board. It takes a few seconds; do not switch the board off."
-					    : "The few seconds of screen after power-on change; nothing else does. The logo that is replaced is kept on the board.",
+					    : (v1[0] == 'n' ? "The few seconds of screen after power-on change; nothing else does. The logo that is replaced is kept on the board. "
+							      "nocry's logo is made for Creality's firmware. On a slot that holds NebulaOS it has not been tested: "
+							      "if the screen stays dark after power-on, come back here and choose the firmware's logo."
+							    : "Each slot gets back the boot logo its firmware came with, from the copy kept on the board."),
 				     loader ? "/boot/loader" : "/boot/logo", "what", v1, loader ? "Change the boot loader" : "Change the boot logo", loader);
 		} else {
 			char *out = run(doer, verb, v1, NULL, 4096, &st);
