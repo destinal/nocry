@@ -1,0 +1,17 @@
+# nocry-rescue: added to buildroot.defconfig for the rescue system (docs/nocry-rescue.md).
+BR2_TARGET_GENERIC_HOSTNAME="nocry-rescue"
+BR2_TARGET_GENERIC_ISSUE="nocry-rescue (RAM only)"
+# Wi-Fi: BCM43438 (brcmfmac built into the kernel; firmware from linux-firmware)
+BR2_PACKAGE_LINUX_FIRMWARE=y
+BR2_PACKAGE_LINUX_FIRMWARE_BRCM_BCM43XXX=y
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+BR2_PACKAGE_WPA_SUPPLICANT_AP_SUPPORT=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE=y
+BR2_PACKAGE_WPA_SUPPLICANT_WPA3=y
+BR2_PACKAGE_IW=y
+# access-point mode: addresses for whoever joins; discovery on the LAN
+BR2_PACKAGE_DNSMASQ=y
+BR2_PACKAGE_DNSMASQ_DHCP=y
+BR2_PACKAGE_MDNSD=y

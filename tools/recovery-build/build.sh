@@ -65,11 +65,20 @@ run "set -e; mkdir -p kout
   || { tail -30 "$WORK/kernel-build.log"; exit 1; }
 cp "$WORK/kout/nocry-recovery.uImage" "$OUT/"
 
-# --- RESCUE=1: also the nocry-rescue kernel (docs/nocry-rescue.md), same initramfs for now
+# --- RESCUE=1: also nocry-rescue (docs/nocry-rescue.md): its own kernel configuration and an
+# initramfs with the recovery's contents plus Wi-Fi firmware and network tools
 if [ "${RESCUE:-0}" = 1 ]; then
+  cat "$HERE/buildroot.defconfig" "$HERE/buildroot-rescue.fragment" > "$WORK/buildroot/configs/nocry_rescue_defconfig"
+  if ! cmp -s "$WORK/buildroot/configs/nocry_rescue_defconfig" "$WORK/buildroot/.nocry-rescue-defconfig-built" 2>/dev/null && [ -d "$WORK/buildroot/output-rescue" ]; then
+    echo "rescue defconfig changed: clean Buildroot build (~15 min)"
+    run "cd /br && make O=/br/output-rescue clean >/dev/null"
+  fi
+  run "cd /br && make -s O=/br/output-rescue NOCRY_RECOVERY=/nocry nocry_rescue_defconfig && make O=/br/output-rescue NOCRY_RECOVERY=/nocry -j\$(nproc) > /w/buildroot-rescue-build.log 2>&1" \
+    || { tail -30 "$WORK/buildroot-rescue-build.log"; exit 1; }
+  cp "$WORK/buildroot/configs/nocry_rescue_defconfig" "$WORK/buildroot/.nocry-rescue-defconfig-built"
   run "set -e; mkdir -p kout-rescue
     make -s -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue k1_defconfig
-    KSRC=/w/linux KOUT=/w/kout-rescue sh /nocry/kernel-config.sh /br/output/images/rootfs.cpio rescue
+    KSRC=/w/linux KOUT=/w/kout-rescue sh /nocry/kernel-config.sh /br/output-rescue/images/rootfs.cpio rescue
     make -s -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue olddefconfig
     make -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue -j\$(nproc) vmlinux > /w/kernel-rescue-build.log 2>&1
     cd kout-rescue

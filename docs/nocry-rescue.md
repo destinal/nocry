@@ -107,6 +107,8 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 - **Touch controller: answers** at I2C address 0x48 on bus 4 (commands 0xC0/0xD0/0xE0 return X, Y, pressure). A bus scan shows nothing because the chip does not acknowledge empty probes.
 - **Wi-Fi chip: found** ("new high speed SDIO card", BCM43430/1) once PA1 is driven low (it is active low) and the 32 kHz clock pin PE23 is switched to its function. It asks for `brcm/brcmfmac43430-sdio.bin` (+ `.AP6212` board file), which the initramfs does not carry yet.
 
+Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (kernel + initramfs). With the Wi-Fi firmware, wpa_supplicant, iw, dnsmasq and mdnsd added it is 19.6 MiB, before any interface program and with all of linux-firmware's Broadcom files still in (only two are needed).
+
 ## Open points
 
 - Whether brcmfmac's access-point mode works with this chip's firmware in practice.
