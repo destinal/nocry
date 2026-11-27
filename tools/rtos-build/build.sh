@@ -10,7 +10,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 OUT=${1:-$HERE/out}
 export DOCKER_DEFAULT_PLATFORM=${DOCKER_DEFAULT_PLATFORM:-linux/amd64}   # same compiler on every computer
-python3 -c "import PIL" 2>/dev/null || { echo "error: the boot pictures are made with Python's Pillow library; install it (pip3 install pillow, or the python3-pil package)" >&2; exit 1; }
+python3 -c "import PIL" 2>/dev/null || { echo "error: the boot logos are made with Python's Pillow library; install it (pip3 install pillow, or the python3-pil package)" >&2; exit 1; }
 IMG=nocry-uboot-build
 docker image inspect $IMG >/dev/null 2>&1 || docker build -q -t $IMG "$ROOT/tools/burner-build" >/dev/null
 mkdir -p "$OUT"

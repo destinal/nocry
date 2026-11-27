@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Packs boot pictures into the store nocry-rtos reads (format: rtos/pictures.c).
+"""Packs boot logos into the store nocry-rtos reads (format: rtos/pictures.c).
 
   mkpictures.py -o pictures.bin [--default FILE] [MODEL=FILE ...] [--from-stock ZERO.BIN]
 

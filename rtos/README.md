@@ -18,7 +18,7 @@ The hardware state it hands over was compared with the stock image's on the boar
 by register (1048 registers); what still differs is listed and explained in
 `docs/rtos-partition.md`.
 
-Boot picture: chosen by the model field of the board's `sn_mac` record, as the stock image
+Boot logo: chosen by the model field of the board's `sn_mac` record, as the stock image
 chooses its logo (`pictures.c`). The pictures are packed by `tools/rtos-build/mkpictures.py`
 and appended to the image by the build. nocry's own pictures (`rtos/pictures/`, drawn by
 `make_default_pictures.py`) are used by default; `PICTURES="--from-stock <zero.bin>"

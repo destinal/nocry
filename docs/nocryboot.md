@@ -5,7 +5,7 @@ nocryboot is the open boot loader for Creality's Ingenic X2000E boards (Nebula P
 | Part | Factory | nocryboot | State |
 |---|---|---|---|
 | First stage (SPL), eMMC byte 0x4400 | Creality build of Ingenic's U-Boot SPL, no source published | built from public source, `tools/nocryboot-build` | builds; matches the factory SPL in the emulator; boots a Nebula Pad when started from RAM (`nocry run-spl`, 2026-11-26, with the factory loader run the same way as control); installed on a Nebula Pad and on a K1 mainboard (CR4CU220812S12); both cold-boot from it (2026-11-26) |
-| Boot picture image (`rtos`, `rtos2`) | Ingenic FreeRTOS image, closed | `rtos/` (nocry-rtos) | runs on the Nebula Pad and a K1 mainboard |
+| Boot logo image (`rtos`, `rtos2`) | Ingenic FreeRTOS image, closed | `rtos/` (nocry-rtos) | runs on the Nebula Pad and a K1 mainboard |
 | Full U-Boot in the boot area | present, never started | not needed | – |
 
 ## First stage (SPL)
@@ -46,9 +46,9 @@ Not compared in the emulator: the two eMMC routines "send a command" and "read b
 
 ### Recovery door
 
-The factory loader hangs when the boot picture image of the chosen slot is missing or damaged, and has no way back to a PC except the BOOT button on the mainboard. nocryboot decides like this:
+The factory loader hangs when the boot logo image of the chosen slot is missing or damaged, and has no way back to a PC except the BOOT button on the mainboard. nocryboot decides like this:
 
-A slot is only started if all three of its parts are there: kernel (uImage header, Linux type, plausible load address and size), boot picture image (valid header; it also switches the display on, and Linux relies on that), root file system (squashfs signature). Only the first sector of each is looked at; nothing is checksummed, which would cost boot time.
+A slot is only started if all three of its parts are there: kernel (uImage header, Linux type, plausible load address and size), boot logo image (valid header; it also switches the display on, and Linux relies on that), root file system (squashfs signature). Only the first sector of each is looked at; nothing is checksummed, which would cost boot time.
 
 1. The slot the `ota` record names, if complete.
 2. Otherwise the other slot, if complete.
@@ -60,7 +60,7 @@ Whenever the SPL changes slot it rewrites the `ota` record. Creality's updater t
 
 #### Count of starts (trial)
 
-A slot that looks complete can still fail: a kernel that panics, a boot picture image that hangs. For that there is a count of starts, as in other two-slot systems. It only runs when armed, because stock firmware never reports success by itself.
+A slot that looks complete can still fail: a kernel that panics, a boot logo image that hangs. For that there is a count of starts, as in other two-slot systems. It only runs when armed, because stock firmware never reports success by itself.
 
 - **Arming** (`nocry slots --set b --try 3`): nocry stores a small start-up script in the firmware's settings area (`rootfs_data`, file `upper/etc/init.d/S98nocryboot`), writes `nocryboot:try=B:left=3` into the second sector of `ota`, and names the slot in the `ota` record. It refuses if the board's loader does not count, if the other slot is not complete (nothing to go back to), or if the settings area does not exist yet.
 - **Each start** of the slot on trial takes one off the count.
@@ -70,7 +70,7 @@ A slot that looks complete can still fail: a kernel that panics, a boot picture 
 
 Limits: a factory reset erases the settings area and with it the script; a trial armed before that will fail and go back. The script is shared by both slots (one settings area). The count is a single digit. The SPL writes only the first two sectors of `ota` (its write routine refuses anything else).
 
-State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ... --note ... --emmc FILE` for a sequence of starts). On a K1 mainboard (2026-11-26/27): the SPL counted two starts down on the eMMC, and the started stock system (1.3.2.20) then erased the note and logged it, so both the SPL's write and the success script work there. With slot A on trial for 2 starts and power cut early twice, the third start came up in slot B with the `ota` record rewritten to `ota:kernel2` and the note `nocryboot:failed=A`. `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. On a K1 mainboard with the first sector of `rtos2` zeroed and slot B named, this loader (started from RAM) started slot A, with video (2026-11-26); an earlier build that started slot B without its boot picture image gave a running system with a dark screen. The current build (door, whole-slot rule, count of starts) is installed on the K1 mainboard and on the Nebula Pad; both cold-boot from it (2026-11-27). The door, the fallback and the count have only been exercised on the K1.
+State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ... --note ... --emmc FILE` for a sequence of starts). On a K1 mainboard (2026-11-26/27): the SPL counted two starts down on the eMMC, and the started stock system (1.3.2.20) then erased the note and logged it, so both the SPL's write and the success script work there. With slot A on trial for 2 starts and power cut early twice, the third start came up in slot B with the `ota` record rewritten to `ota:kernel2` and the note `nocryboot:failed=A`. `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. On a K1 mainboard with the first sector of `rtos2` zeroed and slot B named, this loader (started from RAM) started slot A, with video (2026-11-26); an earlier build that started slot B without its boot logo image gave a running system with a dark screen. The current build (door, whole-slot rule, count of starts) is installed on the K1 mainboard and on the Nebula Pad; both cold-boot from it (2026-11-27). The door, the fallback and the count have only been exercised on the K1.
 
 ### Build and try
 
@@ -107,17 +107,17 @@ First use on a board (2026-11-27): the window's Boot loader dialog installed noc
 
 The loader carries a text nocry reads, `nocryboot-loader <version> <family>`; it is also the first line it prints on the console.
 
-## Boot picture
+## Boot logo
 
-The picture of the first seconds after power-on comes from the boot picture image in the slot's `rtos` partition, not from the loader. Every Creality firmware brings its own (the Creality logo); nocry's open one is `rtos/` (see `docs/rtos-partition.md`). Either works with either loader.
+The logo of the first seconds after power-on comes from the boot logo image in the slot's `rtos` partition, not from the loader. Every Creality firmware brings its own (the Creality logo); nocry's open one is `rtos/` (see `docs/rtos-partition.md`). Either works with either loader.
 
-- **Install firmware** in the window has a tick box, on by default: "Show the nocry boot picture when the printer powers on". Unticked, the firmware's own stays.
-- **Advanced, Boot picture…**, or `nocry picture [--nocry|--firmware] [--yes]`, switches every installed slot later.
-- The default only takes effect on the Nebula Pad family. On the K1 family nocry's image has run on the mainboard but never on one of its own screens, and a wrong panel setup would leave the screen dark in Linux too, so there the firmware's picture stays unless chosen explicitly (`nocry picture --nocry`, or the button, which warns).
+- **Install firmware** in the window has a tick box, on by default: "Show the nocry boot logo when the printer powers on". Unticked, the firmware's own stays.
+- **Advanced, Boot logo…**, or `nocry logo [--nocry|--firmware] [--yes]`, switches every installed slot later.
+- The default only takes effect on the Nebula Pad family. On the K1 family nocry's image has run on the mainboard but never on one of its own screens, and a wrong panel setup would leave the screen dark in Linux too, so there the firmware's picture stays unless chosen explicitly (`nocry logo --nocry`, or the button, which warns).
 
 The firmware's own image is kept when it is replaced, in the unused second half of the same 4 MiB partition: the image at 2 MiB, and in the sector before it a line `nocry:firmware-picture size=<n> sha256=<hex>`. Going back copies it to the start again and needs no firmware file. A firmware update done by the printer itself rewrites the start of the partition of the slot it updates, which brings Creality's picture back for that slot.
 
-State: tested on disk images of both boards (set, loader run in the emulator, back; install with and without the tick). First use on a board (2026-11-27): `nocry picture --nocry` on a Nebula Pad with nocryboot 0.1; it shows the nocry picture and then starts normally. Going back to the firmware's picture has not been done on a board yet.
+State: tested on disk images of both boards (set, loader run in the emulator, back; install with and without the tick). First use on a board (2026-11-27): `nocry logo --nocry` on a Nebula Pad with nocryboot 0.1; it shows the nocry picture and then starts normally. Going back to the firmware's picture has not been done on a board yet.
 
 ### Next
 

@@ -286,7 +286,7 @@ fn picture_choice(n: c_int) -> session::PictureChoice {
     }
 }
 
-/// Like nocry_install2_json, with the boot picture: 0 = nocry's where proven on the board
+/// Like nocry_install2_json, with the boot logo: 0 = nocry's where proven on the board
 /// family's screens, 1 = nocry's, 2 = the firmware's own.
 /// # Safety
 /// All pointers must be NULL or valid NUL-terminated UTF-8 strings.
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn nocry_copy_slot_json(from: *const c_char, safety_dir: *
     }))
 }
 
-/// The boot picture of the firmware slots. `want`: -1 = report, 0 = nocry's where proven,
+/// The boot logo of the firmware slots. `want`: -1 = report, 0 = nocry's where proven,
 /// 1 = nocry's, 2 = the firmware's own. Applies to every slot that holds firmware.
 /// {"ok":true,"a":"nocry|firmware|none","b":...,"a_kept":bool,"b_kept":bool,"proven":bool,"available":bool,"changed":bool}
 #[no_mangle]
@@ -685,7 +685,7 @@ pub unsafe extern "C" fn nocry_install_slot_json(os_path: *const c_char, execute
     nocry_install_slot2_json(os_path, execute, safety_dir, 2)
 }
 
-/// Like nocry_install_slot_json, with the boot picture choice (see nocry_install3_json).
+/// Like nocry_install_slot_json, with the boot logo choice (see nocry_install3_json).
 /// # Safety
 /// `os_path` must be a valid NUL-terminated path; `safety_dir` NULL or likewise.
 #[no_mangle]

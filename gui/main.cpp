@@ -242,7 +242,7 @@ public:
         irow->addWidget(identityButton);
         irow->addWidget(eraseAllButton);
         irow->addWidget(loaderButton);
-        pictureButton = new QPushButton(tr("Boot picture…"));
+        pictureButton = new QPushButton(tr("Boot logo…"));
         pictureButton->setToolTip(tr("Choose the picture shown for the first seconds after power-on: nocry's or the firmware's own"));
         irow->addWidget(pictureButton);
         irow->addStretch(1);
@@ -636,24 +636,24 @@ public:
         w->setFuture(QtConcurrent::run(job));
     }
 
-    // The boot picture of the installed slots. want -1: read and offer the choice; 1: nocry's; 2: the firmware's own.
+    // The boot logo of the installed slots. want -1: read and offer the choice; 1: nocry's; 2: the firmware's own.
     void startPicture(int want)
     {
         if (want >= 0) {
-            runAdvanced(want == 1 ? tr("Setting the nocry boot picture") : tr("Bringing the firmware's boot picture back"),
+            runAdvanced(want == 1 ? tr("Setting the nocry boot logo") : tr("Bringing the firmware's boot logo back"),
                 [want] { return takeJson(nocry_picture_json(want, 1)); },
                 [want](const QJsonObject &o) {
                     if (!o.value("changed").toBool())
                         return tr("Nothing had to be changed.");
-                    return want == 1 ? tr("The printer now shows the nocry picture when it powers on. The firmware's own picture is kept on the board.")
-                                     : tr("The printer now shows the firmware's own picture (the Creality logo) when it powers on.");
+                    return want == 1 ? tr("The printer now shows the nocry logo when it powers on. The firmware's own logo is kept on the board.")
+                                     : tr("The printer now shows the firmware's own logo (Creality's) when it powers on.");
                 });
             return;
         }
         if (busy)
             return;
         setBusy(true);
-        log->appendPlainText(tr("Reading the boot picture…"));
+        log->appendPlainText(tr("Reading the boot logo…"));
         auto *w = new QFutureWatcher<QJsonObject>(this);
         connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w] {
             const QJsonObject o = w->result();
@@ -661,9 +661,9 @@ public:
             setBusy(false);
             lastResult = o;
             if (!o.value("ok").toBool()) {
-                log->appendPlainText(tr("Boot picture: %1").arg(o.value("error").toString()));
+                log->appendPlainText(tr("Boot logo: %1").arg(o.value("error").toString()));
                 if (!quiet)
-                    QMessageBox::critical(this, tr("Boot picture"), o.value("error").toString());
+                    QMessageBox::critical(this, tr("Boot logo"), o.value("error").toString());
             } else if (!quiet) {
                 const int act = choosePicture(o);
                 if (act > 0) {
@@ -691,11 +691,11 @@ public:
         const bool anyFirmware = a == "firmware" || b == "firmware";
         const bool canBack = (a == "nocry" && o.value("a_kept").toBool()) || (b == "nocry" && o.value("b_kept").toBool());
         QDialog d(this);
-        d.setWindowTitle(tr("Boot Picture"));
+        d.setWindowTitle(tr("Boot Logo"));
         auto *v = new QVBoxLayout(&d);
-        auto *intro = new QLabel(tr("For the first seconds after power-on, before the printer's software is up, the board shows a picture. "
+        auto *intro = new QLabel(tr("For the first seconds after power-on, before the printer's software is up, the board shows a logo. "
                                    "It comes from a small program stored with each firmware slot, which also switches the screen on.\n\n"
-                                   "nocry has an open one that shows the nocry picture with the printer model. Creality's own is kept on the board when it is replaced, "
+                                   "nocry has an open one that shows the nocry logo with the printer model. Creality's own is kept on the board when it is replaced, "
                                    "so you can go back at any time. A firmware update from the printer itself brings Creality's back for the slot it updates."));
         intro->setWordWrap(true);
         intro->setMinimumWidth(560);
@@ -706,18 +706,18 @@ public:
         f->addRow(tr("Slot B:"), new QLabel(name("b")));
         v->addLayout(f);
         if (!o.value("available").toBool())
-            v->addWidget(new QLabel(tr("This copy of nocry has no boot picture for this board family.")));
+            v->addWidget(new QLabel(tr("This copy of nocry has no boot logo for this board family.")));
         else if (!o.value("proven").toBool()) {
-            auto *l = new QLabel(tr("Warning: nocry's boot picture has not been tested on this board family's own screens. If it does not set the screen up correctly, "
-                                    "the screen can stay dark even after the printer has started. You can then bring the firmware's picture back from USB boot mode."));
+            auto *l = new QLabel(tr("Warning: nocry's boot logo has not been tested on this board family's own screens. If it does not set the screen up correctly, "
+                                    "the screen can stay dark even after the printer has started. You can then bring the firmware's logo back from USB boot mode."));
             l->setWordWrap(true);
             v->addWidget(l);
         }
         int choice = 0;
         auto *row = new QHBoxLayout;
-        auto *useNocry = new QPushButton(tr("Use the nocry picture"));
+        auto *useNocry = new QPushButton(tr("Use the nocry logo"));
         useNocry->setEnabled(o.value("available").toBool() && anyFirmware);
-        auto *useFw = new QPushButton(tr("Use the firmware's picture"));
+        auto *useFw = new QPushButton(tr("Use the firmware's logo"));
         useFw->setEnabled(canBack);
         row->addWidget(useNocry);
         row->addWidget(useFw);
@@ -785,7 +785,7 @@ public:
         QDialog d(this);
         d.setWindowTitle(tr("Boot Loader"));
         auto *v = new QVBoxLayout(&d);
-        auto *intro = new QLabel(tr("The boot loader is the first program the board runs from its storage. It starts the boot picture and then the firmware.\n\n"
+        auto *intro = new QLabel(tr("The boot loader is the first program the board runs from its storage. It starts the boot logo and then the firmware.\n\n"
                                    "nocryboot is an open replacement for Creality's. Unlike the factory loader it does not hang when a firmware slot is damaged: "
                                    "it starts the other slot, and if neither can be started it puts the board in USB boot mode by itself, so nocry can repair it "
                                    "without the BOOT button. It can also try newly installed firmware for a few starts and go back if it never comes up."));
@@ -1858,9 +1858,9 @@ private:
         v->addWidget(keep);
         v->addWidget(other);
         v->addSpacing(8);
-        auto *pic = new QCheckBox(tr("Show the nocry boot picture when the printer powers on (untick to keep the Creality logo)"));
-        pic->setToolTip(tr("The picture of the first seconds after power-on comes from a small program stored with the firmware. nocry can put its own open one there.\n"
-                           "Creality's is kept on the board and can be brought back at any time (Advanced, Boot picture).\n"
+        auto *pic = new QCheckBox(tr("Show the nocry boot logo when the printer powers on (untick to keep the Creality logo)"));
+        pic->setToolTip(tr("The logo of the first seconds after power-on comes from a small program stored with the firmware. nocry can put its own open one there.\n"
+                           "Creality's is kept on the board and can be brought back at any time (Advanced, Boot logo).\n"
                            "On K1-family boards Creality's stays for now: nocry's has not been tested on their screens yet."));
         pic->setChecked(true);
         v->addWidget(pic);
@@ -1929,10 +1929,10 @@ private:
         };
         auto update = [&] {
             const bool lst = fromList->isChecked();
-            // NebulaOS starts through its own program; nocry's boot picture is not used with it
+            // NebulaOS starts through its own program; nocry's boot logo is not used with it
             const bool nebulaos = lst && modelBox->currentIndex() >= 0 && models.at(modelBox->currentIndex()).toObject().value("key").toString() == "NEBULAOS";
             pic->setEnabled(!nebulaos);
-            pic->setToolTip(nebulaos ? tr("NebulaOS shows its own boot picture.") : QString());
+            pic->setToolTip(nebulaos ? tr("NebulaOS shows its own boot logo.") : QString());
             listBox->setEnabled(lst);
             fileBox->setEnabled(!lst);
             bb->button(QDialogButtonBox::Ok)->setEnabled(lst ? versionBox->count() > 0 : QFileInfo::exists(path->text().trimmed()));
@@ -2064,7 +2064,7 @@ private:
 
     // Offer Cancel for the operation under way. `risk` says what stopping half-way leaves behind;
     // when it is not empty the user has to confirm it first. Operations that take seconds and
-    // must not be cut short (boot loader, boot picture, identity) offer no Cancel at all.
+    // must not be cut short (boot loader, boot logo, identity) offer no Cancel at all.
     void allowCancel(const QString &risk = QString())
     {
         cancelRisk = risk;
@@ -2588,7 +2588,7 @@ private:
     QString networkAddress;     // the board paired over the network ("" = USB)
     // printer type / mainboard the user chose for the install in progress ("" = let nocry decide)
     QString pendingModel, pendingBoard;
-    int pendingPicture = 2;     // boot picture choice for the install under way (see nocry_install3_json)
+    int pendingPicture = 2;     // boot logo choice for the install under way (see nocry_install3_json)
     QWidget *udevBanner = nullptr;
     QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton, *loaderButton, *pictureButton;
     QJsonObject shell;
@@ -2838,7 +2838,7 @@ int main(int argc, char **argv)
         });
         QTimer::singleShot(90000, [] { QApplication::exit(2); });
     }
-    // --selftest-picture shot.png: open the Boot Picture dialog (needs NOCRY_TEST_TARGET, an image file)
+    // --selftest-picture shot.png: open the Boot Logo dialog (needs NOCRY_TEST_TARGET, an image file)
     const int spi = args.indexOf("--selftest-picture");
     if (spi > 0 && spi + 1 < args.size() && qEnvironmentVariableIsSet("NOCRY_TEST_TARGET")) {
         const QString shot = args[spi + 1];

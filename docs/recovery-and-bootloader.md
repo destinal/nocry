@@ -48,7 +48,7 @@ own stage2 images do).
 ### 4. The rtos has no hidden shell
 The rtos "console thread" is log output plus crash/assert helpers (`dump_mem32`, `dump_stack`,
 `dump_buffer`), not an interactive command interface. ("At marker 0x%02x, recovery action %d" is
-a libjpeg message, not a board function.) Its only job is the boot picture and the hand-over.
+a libjpeg message, not a board function.) Its only job is the boot logo and the hand-over.
 
 ## What the rtos is built from (deviations from stock FreeRTOS)
 
@@ -72,7 +72,7 @@ drivers (one 480x272 panel vs. the K1's four 480x800 panels).
 The pieces for an open replacement already exist in this repo. `tools/burner-build` builds the SPL
 and U-Boot stages from GPL source (k1-debian/u-boot) — that is how nocry's own fastboot, USB-disk
 and recovery stage2 images are made, loaded over bootrom USB boot. `rtos/` is an open replacement
-for the rtos image (boot picture + hand-over), working on the Nebula and built for the K1.
+for the rtos image (boot logo + hand-over), working on the Nebula and built for the K1.
 
 A full on-eMMC open boot chain would add:
 - an **SPL** of our own that does DDR bring-up and the rtos/kernel hand-over (the stock one's job),

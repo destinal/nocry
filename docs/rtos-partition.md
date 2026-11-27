@@ -14,7 +14,7 @@ boot area, and the "identity copy" was simply the `sn_mac` partition.
 - There is no U-Boot prompt stage in a normal start. The **SPL** (first-stage loader, in the
   boot area at 0x4400) loads the **rtos image** onto the second CPU core, waits for it to
   finish, then loads the Linux kernel itself and starts it.
-- The rtos image is a small **FreeRTOS** program whose only job is the boot picture: it
+- The rtos image is a small **FreeRTOS** program whose only job is the boot logo: it
   sets up the display, reads the model from `sn_mac`, shows the matching Creality logo,
   turns the backlight on and reports the panel type back to the SPL.
 - A slot whose rtos partition has no valid header makes the SPL **hang** before Linux.
@@ -140,7 +140,7 @@ string with a list built into the image. Retail 1.1.0.30:
 
 The Ender-3 V3 KE 1.1.0.12 image has the same list plus `F003` and `F005`. Consequence for
 nocry: the model field and the installed firmware's rtos image must agree, or the board
-shows the mountain picture during start. It still starts; only the boot picture is wrong.
+shows the mountain picture during start. It still starts; only the boot logo is wrong.
 Each image carries 8 JPEGs; not all are used by a given build.
 
 ## What the stock image does to the hardware

@@ -115,14 +115,14 @@ index cc3a5c7e1..5244b2f1b 100644
  obj-$(CONFIG_STAGE_KD035HVFMD057) += panel-kd035hvfmd057.o
 diff --git a/module_drivers/drivers/video/fbdev/ingenic/displays/panel-nocry-nebula.c b/module_drivers/drivers/video/fbdev/ingenic/displays/panel-nocry-nebula.c
 new file mode 100644
-index 000000000..0fa444a78
+index 000000000..2fbf1f457
 --- /dev/null
 +++ b/module_drivers/drivers/video/fbdev/ingenic/displays/panel-nocry-nebula.c
 @@ -0,0 +1,254 @@
 +/*
 + * panel-nocry-nebula.c: the 480x272 RGB565 panel of Creality's Nebula Pad (nocry).
 + *
-+ * Timings as Creality's boot picture program sets them (docs/rtos-partition.md in nocry):
++ * Timings as Creality's boot logo program sets them (docs/rtos-partition.md in nocry):
 + * sync 20, porches 20/20 both ways, pixel clock about 10.7 MHz, clock inverted.
 + * Based on panel-st7282.c.
 + *

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * nocry-rtos: the boot picture.
+ * nocry-rtos: the boot logo.
  *
  * Pictures are not compiled in. tools/rtos-build/mkpictures.py packs them into a store that
  * the build appends to the image; each has a model name, and the one whose name equals the

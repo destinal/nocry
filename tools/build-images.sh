@@ -4,7 +4,7 @@
 #
 #   tools/burner-build/out      first and second stage for USB boot mode (SPL, U-Boot)
 #   tools/nocryboot-build/out   the nocryboot loader for the eMMC
-#   tools/rtos-build/out        the boot picture program, for both board families
+#   tools/rtos-build/out        the boot logo program, for both board families
 #   tools/recovery-build/out    the recovery Linux; with --rescue also nocry-rescue
 #
 # None of these are in git: they are compiled for the board's processor from upstream U-Boot,
@@ -34,8 +34,8 @@ docker info >/dev/null 2>&1 || { echo "error: Docker is installed but not runnin
 step() { printf '\n== %s\n' "$1"; }
 step "USB boot stages (SPL, U-Boot)";        "$HERE/burner-build/build.sh"
 step "nocryboot loader";                     "$HERE/nocryboot-build/build.sh"
-step "boot picture program (Nebula Pad)";    "$HERE/rtos-build/build.sh"
-step "boot picture program (K1 family)";     VARIANT=k1 "$HERE/rtos-build/build.sh"
+step "boot logo program (Nebula Pad)";    "$HERE/rtos-build/build.sh"
+step "boot logo program (K1 family)";     VARIANT=k1 "$HERE/rtos-build/build.sh"
 step "recovery Linux$([ $RESCUE = 1 ] && echo ' and nocry-rescue')"
 RESCUE=$RESCUE "$HERE/recovery-build/build.sh" ${WORK:+"$WORK"}
 printf '\nAll board images are built. nocry built from this tree (host/, gui/) finds them by itself.\n'

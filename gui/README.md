@@ -78,6 +78,6 @@ While anything runs, the bar under the tabs is shown: moving until the operation
 |---|---|
 | Backup, partition backup, firmware download, the checks before an install or restore | stops at once; nothing on the board was changed |
 | Install, install to the other slot, restore a backup, copy a slot, factory reset, secure erase, partition restore or erase, erase all | asks first, saying what stopping half-way leaves behind (for example: the board will not start until the installation is run again) |
-| Boot loader, boot picture, identity, switching the slot, reading the board | none: they take seconds, and the first three must not be cut short |
+| Boot loader, boot logo, identity, switching the slot, reading the board | none: they take seconds, and the first three must not be cut short |
 
 A stop takes effect at the next safe point (between two writes), never in the middle of one. Self-tests: `--selftest-cancel-question shot.png`; `NOCRY_TEST_CANCEL_MS=n` presses Cancel n ms after a risky operation offers it.

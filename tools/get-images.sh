@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gets everything nocry puts on a board (USB boot stages, the nocryboot loader, the boot picture
+# Gets everything nocry puts on a board (USB boot stages, the nocryboot loader, the boot logo
 # program, the recovery Linux, nocry-rescue) into ./images, where a nocry built from this tree
 # looks for it.
 #

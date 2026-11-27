@@ -19,7 +19,7 @@ It needs nocryboot as the board's loader. USB boot mode stays the last resort be
 | Where it lives | **decided:** one file in `userdata`, not a partition. No repartitioning. |
 | How the loader finds it | a pointer (start sector, length, checksum) in a spare sector of `ota`; the loader reads raw sectors and checks them before starting anything |
 | Losing it | **decided, accepted for now:** a factory reset erases `userdata` and with it the file. A reset done by nocry or by rescue puts it back; after a reset from Creality's menu it is gone until nocry reinstalls it. A dedicated partition would survive; possible later. |
-| Starting it | finger on the screen at power-on, then a 5-second confirmation drawn by the boot picture program; automatically when no slot can be started; on request (a one-shot note in `ota`) |
+| Starting it | finger on the screen at power-on, then a 5-second confirmation drawn by the boot logo program; automatically when no slot can be started; on request (a one-shot note in `ota`) |
 | USB keyboard as trigger | not possible: the loader has no USB stack and about 1.6 KB of room |
 | First version | **decided:** Nebula Pad first. Network setup, slot choice, factory reset, start normally, control from nocry over the LAN. |
 | Firmware install from the touchscreen | **decided:** second step (needs nocry's install engine built for the board) |
@@ -28,7 +28,7 @@ It needs nocryboot as the board's loader. USB boot mode stays the last resort be
 
 ## Why a file and a pointer
 
-Rescue with a touch interface, Wi-Fi and its firmware is estimated at 20 to 40 MiB. The first partitions have no such room: `ota` and `sn_mac` are 1 MiB each, the `rtos` partitions 4 MiB each (nocry's boot picture program is 32 KB, so they are nearly empty, but that is still under 8 MiB together), and each `kernel` partition has about 4 MiB to spare.
+Rescue with a touch interface, Wi-Fi and its firmware is estimated at 20 to 40 MiB. The first partitions have no such room: `ota` and `sn_mac` are 1 MiB each, the `rtos` partitions 4 MiB each (nocry's boot logo program is 32 KB, so they are nearly empty, but that is still under 8 MiB together), and each `kernel` partition has about 4 MiB to spare.
 
 `userdata` has gigabytes, but it is an ext4 file system and nocryboot's first stage cannot read one. It does not have to:
 
@@ -41,7 +41,7 @@ The loader never writes there and never trusts the pointer without the checksum,
 
 ## Starting it
 
-The first stage has almost no room and no input devices. The boot picture program (`rtos/`) runs before Linux, owns the screen, and has room:
+The first stage has almost no room and no input devices. The boot logo program (`rtos/`) runs before Linux, owns the screen, and has room:
 
 - It reads the touch controller. A finger held down at power-on brings up "Start nocry-rescue? Keep holding / tap to confirm" for 5 seconds. Without a finger, nothing changes and no time is added.
 - It reports the result to the first stage in the word it already uses for the panel id (a flag bit beside it).
@@ -52,7 +52,7 @@ Also:
 - **No startable slot:** today nocryboot restarts into USB boot mode. With rescue present it starts rescue first.
 - **On request:** `nocryboot:rescue-once` in the `ota` notes, set by nocry or by a command on the running printer; the loader clears it when it acts on it.
 
-Rescue is started with the display already switched on by the boot picture program, like the firmware's Linux is.
+Rescue is started with the display already switched on by the boot logo program, like the firmware's Linux is.
 
 ## The rescue system
 
@@ -77,7 +77,7 @@ The NS2009 is resistive, so the interface needs a one-time calibration screen (s
 
 - **Discovery:** rescue announces `_nocry._tcp` by mDNS with the model and the last digits of the serial number; nocry lists what it finds, and also accepts an address typed in.
 - **Access:** rescue shows a short code on the touchscreen. nocry asks for it once per session; both sides derive a key from it and the connection is encrypted and authenticated with that key. Nobody can drive the printer without standing at it.
-- Everything the window does over USB then works over the LAN: backup, restore, install, slots, factory reset, identity, loader, boot picture.
+- Everything the window does over USB then works over the LAN: backup, restore, install, slots, factory reset, identity, loader, boot logo.
 
 ## Touchscreen functions, first version
 
@@ -93,9 +93,9 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 
 1. **Hardware bring-up from RAM:** a rescue kernel that shows a picture, reads touches and joins Wi-Fi on a Nebula Pad, loaded over USB like today's recovery. No storage or loader changes. This proves the base.
 2. **Interface skeleton** with network setup and status; `nocry-fbd` over TCP with pairing; mDNS; nocry finds and drives it.
-3. **Living on the board:** nocry installs the file and the pointer; nocryboot learns to load it; the boot picture program learns the touch trigger.
+3. **Living on the board:** nocry installs the file and the pointer; nocryboot learns to load it; the boot logo program learns the touch trigger.
 4. Slot and reset functions on the touchscreen; automatic start when nothing else starts.
-5. K1 family (after its screens are verified with the boot picture program).
+5. K1 family (after its screens are verified with the boot logo program).
 6. Firmware install on the printer.
 
 ## Bring-up log
@@ -121,7 +121,7 @@ Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (ker
 - `tools/recovery-build/netd/nocry-netd.c` on the board: TCP port 5560, SPAKE2 pairing (RFC 9382, P-256) with a six-digit code, then ChaCha20-Poly1305 records, relayed to a `nocry-fbd --stdio` child. One client at a time; three wrong codes make a new code.
 - `host/core/src/net.rs` on the PC: the same exchange; `Fastboot` runs over it as it does over USB. `nocry --net <address> --code <code> <any command>`.
 - Both ends reproduce the RFC's test vector (`cargo test net::`, `nocry-netd --selftest`).
-- Tested on a PC, service and client against a disk image: slots, loader status, a 48 MiB read and a 5 MiB write byte-identical, a verified boot picture change, wrong codes refused.
+- Tested on a PC, service and client against a disk image: slots, loader status, a 48 MiB read and a 5 MiB write byte-identical, a verified boot logo change, wrong codes refused.
 - Until the touch interface exists, `S45nocry-rescue` starts the board's own Wi-Fi network (`nocry`, WPA2, password `nocry111`, board at 192.168.77.1) and `nocry-banner` shows network, address and pairing code on the screen. The Wi-Fi password only gets a computer onto the network; driving the board needs the code.
 - The image is 14.6 MiB with only this chip's Wi-Fi firmware.
 
@@ -169,7 +169,7 @@ Plain HTTP: on a network shared with others the code and the session can be over
 6. **Files** (`/files`): the data partition (`userdata`, the firmware's `/usr/data`): browse, download, delete, upload a replacement of up to 8 MB (a corrected `printer.cfg`). It is mounted only while a request needs it, read-only unless something is changed, and paths that climb out of it are refused.
 7. **Board** (`/board`): the storage chip's own wear estimate and spare-block state, how full the data partition is (with a warning when it is nearly full, a common reason for a printer that no longer starts); downloads: logs (the printer's, plus the rescue system's kernel log, board status and the last check report) as one `tar.gz`, the printer configuration, the identity record; "give the printer this Wi-Fi network", which writes the network the board is on into the installed firmware's own settings file; restart into the firmware.
 
-Not on the pages yet: installing firmware (needs nocry's own install logic on the board, see the to-do list), full backups, the boot loader and boot picture, the kernel log of the last normal start, a restart into USB boot mode or into the other slot once.
+Not on the pages yet: installing firmware (needs nocry's own install logic on the board, see the to-do list), full backups, the boot loader and boot logo, the kernel log of the last normal start, a restart into USB boot mode or into the other slot once.
 
 Tested (second round, 2026-11-27): browsing, downloads, an upload of text and of 2 MB of binary data, deleting, an over-size upload, an upload without a session, paths that climb out, all on a PC against a stand-in folder; on the Nebula Pad the read-only parts (storage report, file listing, log and identity downloads). Not yet run on a board: upload, delete, the file system check, saving the Wi-Fi network, restart.
 

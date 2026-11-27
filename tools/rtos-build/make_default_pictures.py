@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draws nocry-rtos' own boot pictures into rtos/pictures/ (run once; the PNGs are committed).
+"""Draws nocry-rtos' own boot logos into rtos/pictures/ (run once; the PNGs are committed).
 
 The Nebula Pad's 480x272 panel is used upright (272 wide), so the pictures are drawn upright
 and stored turned, like the stock logo."""

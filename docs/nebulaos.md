@@ -23,7 +23,7 @@ nocry does not go through an updater, so it lists one entry, the plain file. The
 ## What nocry does differently for it
 
 - **Printer type is left alone.** NebulaOS ships one image for both printers and does not read the `sn_mac` record, so the model field is not changed. nocry offers it on boards set up as an Ender-3 V3 KE or a retail Nebula Pad and refuses on others (a CR-10 SE or Ender-5 Max would get the wrong printer configuration and mainboard firmware).
-- **No nocry boot picture.** nocry's boot picture program replaces the firmware's start program and is proven with Creality's firmware only. A NebulaOS slot keeps its own, at install time and under Advanced > Boot picture.
+- **No nocry boot logo.** nocry's boot logo program replaces the firmware's start program and is proven with Creality's firmware only. A NebulaOS slot keeps its own, at install time and under Advanced > Boot logo.
 - **No start trial.** nocry's success report is a script in the settings overlay (`rootfs_data`), which NebulaOS does not mount: its root is the read-only squashfs and its data lives under `/usr/data/nebulaos` in `userdata`. A trial would always fall back, so `slots --try` refuses a NebulaOS slot. NebulaOS has its own one-time fallback after an install from its own updater.
 - **Clean install** blanks `userdata`. NebulaOS creates the filesystem itself when the partition is provably blank (from 1.0.4; earlier versions did not, and hung). nocry therefore lists releases from 1.0.4 on: the rule in code is "published for the retail pad too", which starts with the same version.
 

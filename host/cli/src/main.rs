@@ -123,10 +123,11 @@ enum Cmd {
         #[arg(long = "try")]
         tries: Option<u8>,
     },
-    /// Show which boot picture (the splash of the first seconds) each firmware slot has.
-    /// --nocry puts nocry's open boot picture there, --firmware brings the firmware's own back
+    /// Show which boot logo (the splash of the first seconds) each firmware slot has.
+    /// --nocry puts nocry's open boot logo there, --firmware brings the firmware's own back
     /// (it is kept on the board). Dry run unless --yes
-    Picture {
+    #[command(alias = "picture")]
+    Logo {
         #[arg(long, conflicts_with = "firmware")]
         nocry: bool,
         #[arg(long)]
@@ -602,7 +603,7 @@ fn main() -> Result<()> {
                 println!("note: {}", n.describe());
             }
         }
-        Cmd::Picture { nocry, firmware, target, yes } => {
+        Cmd::Logo { nocry, firmware, target, yes } => {
             let want = if nocry { Some(PictureChoice::Nocry) } else if firmware { Some(PictureChoice::Firmware) } else { None };
             let st = set_picture(soc, Via::Auto, images.as_ref(), want, yes, target.as_ref())?;
             let show = |i: &PictureInfo| {
@@ -615,9 +616,9 @@ fn main() -> Result<()> {
             };
             println!("slot A: {}\nslot B: {}", show(&st.a), show(&st.b));
             if !st.available {
-                println!("this copy of nocry has no boot picture image for this board family");
+                println!("this copy of nocry has no boot logo image for this board family");
             } else if !st.proven {
-                println!("note: nocry's boot picture has not been tested on this board family's own screens yet");
+                println!("note: nocry's boot logo has not been tested on this board family's own screens yet");
             }
             if want.is_some() && st.changed && !yes {
                 println!("dry run: nothing was written. Add --yes to do it.");

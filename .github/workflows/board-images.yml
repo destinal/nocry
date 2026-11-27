@@ -1,5 +1,5 @@
 # Builds everything nocry puts on a board, from the sources and patches in this repository:
-# SPL and U-Boot stages, the nocryboot loader, the boot picture image, the recovery Linux and
+# SPL and U-Boot stages, the nocryboot loader, the boot logo image, the recovery Linux and
 # the nocry-rescue image. Runs when those sources change and on request; the result is the
 # "board-images" artifact of the run and, for main, the files of the pre-release "board-images",
 # which tools/get-images.sh downloads so that nobody has to wait for this build.
@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   images:
-    name: Board images (loaders, boot picture, recovery, rescue)
+    name: Board images (loaders, boot logo, recovery, rescue)
     runs-on: ubuntu-22.04
     timeout-minutes: 300
     steps:
@@ -38,7 +38,7 @@ jobs:
         run: tools/burner-build/build.sh "$PWD/out-burner"
       - name: Build nocryboot (first-stage loader for the eMMC)
         run: tools/nocryboot-build/build.sh "$PWD/out-nocryboot"
-      - name: Build nocry-rtos (boot picture image)
+      - name: Build nocry-rtos (boot logo image)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil   # mkpictures.py reads the PNGs
           tools/rtos-build/build.sh "$PWD/out-rtos"
@@ -72,7 +72,7 @@ jobs:
         run: |
           (cd dist-images && tar czf ../nocry-board-images.tar.gz .)
           sha256sum nocry-board-images.tar.gz > nocry-board-images.tar.gz.sha256
-          notes="Everything nocry puts on a board (USB boot stages, the nocryboot loader, the boot picture program, the recovery Linux, nocry-rescue), built by GitHub from commit ${GITHUB_SHA} of this repository. Replaced whenever the sources of these images change; \`tools/get-images.sh\` downloads it. This is not a version of nocry: the programs are in the versioned releases."
+          notes="Everything nocry puts on a board (USB boot stages, the nocryboot loader, the boot logo program, the recovery Linux, nocry-rescue), built by GitHub from commit ${GITHUB_SHA} of this repository. Replaced whenever the sources of these images change; \`tools/get-images.sh\` downloads it. This is not a version of nocry: the programs are in the versioned releases."
           # The pre-release has to exist: this job's token may add files to a release but GitHub
           # refuses it the creation of one with a new tag ("Resource not accessible by integration").
           # Made once by hand: gh release create board-images --prerelease --latest=false

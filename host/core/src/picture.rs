@@ -1,7 +1,7 @@
-//! The boot picture image of a firmware slot (partition `rtos` / `rtos2`).
+//! The boot logo image of a firmware slot (partition `rtos` / `rtos2`).
 //!
 //! It is a small program the loader runs before Linux: it switches the display on and shows
-//! the picture seen for the first seconds after power-on. Every Creality firmware brings its
+//! the logo seen for the first seconds after power-on. Every Creality firmware brings its
 //! own (the Creality logo). nocry can put its open one (`rtos/`, "nocry-rtos") in its place.
 //!
 //! The firmware's own image is not thrown away: it is kept in the unused second half of the
@@ -12,7 +12,7 @@
 //!   2 MiB      the firmware's own image, <n> bytes
 //!
 //! A firmware update from the printer itself rewrites the start of the partition of the slot it
-//! updates, which brings Creality's picture back there.
+//! updates, which brings Creality's logo back there.
 
 use crate::rtos::RtosHeader;
 use sha2::Digest as _;
@@ -25,7 +25,7 @@ const NOCRY_MARK: &[u8] = b"nocry-rtos";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// nocry's open boot picture image
+    /// nocry's open boot logo image
     Nocry,
     /// the one that came with the firmware
     Firmware,
@@ -118,7 +118,7 @@ mod tests {
         bad[5000] ^= 1;
         assert_eq!(kept_image(&m, &bad), None);
         assert_eq!(kept_image(&[0u8; 512], &f), None);
-        // nocry's own image is never "the firmware's picture"
+        // nocry's own image is never "the firmware's logo"
         let n = image(8192, true);
         assert_eq!(kept_image(&kept_mark(&n), &n), None);
     }

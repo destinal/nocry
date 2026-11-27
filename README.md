@@ -46,7 +46,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 - **Rebuild a blank board** from an update file or the list: the bootloader and partition table that update files lack are fetched once from Creality's factory package and checksum-verified.
 - **nocryboot**, an open replacement for the board's boot loader (Advanced, "Boot loader…", or `nocry loader`): built from public source, it does what Creality's does and adds a way out of trouble. If a firmware slot is damaged it starts the other one; if neither can be started it puts the board in USB boot mode by itself, so no BOOT button is needed to repair it. Creality's loader is kept on the board and can be put back. Tested on a Nebula Pad and a K1 mainboard. See `docs/nocryboot.md`.
 - **Firmware on trial** (`nocry slots --set b --try 3`, needs nocryboot): the chosen slot gets a number of starts to come up; if it never does, the board returns to the other slot by itself.
-- **nocry boot picture**: the picture of the first seconds after power-on comes from nocry's own open program instead of Creality's (default when installing firmware on the Nebula Pad family; untick it to keep the Creality logo, or switch later under Advanced, "Boot picture…"). Creality's is kept on the board.
+- **nocry boot logo**: the picture of the first seconds after power-on comes from nocry's own open program instead of Creality's (default when installing firmware on the Nebula Pad family; untick it to keep the Creality logo, or switch later under Advanced, "Boot logo…"). Creality's is kept on the board.
 - **Advanced**: back up, restore or erase a single partition; edit the serial number, MAC address and model; erase the entire storage.
 - **Pick firmware from a list**: versions published by Creality for the supported printers, downloaded and checksum-verified, or use a local update file (`*_ota_img_V*.img`), `.ingenic` package or folder.
 - **Shell access**: the window shows whether `adb` and the USB serial console are available on the running recovery and gives the exact command for each.
@@ -60,10 +60,10 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 | `host/ffi` | C interface to the library (`nocry.h`) |
 | `gui` | Qt 6 Widgets front end |
 | `tools/burner-build` | reproducible Docker build of the SPL and U-Boot stages (fastboot, USB disk) |
-| `rtos` | nocry-rtos, the open boot picture image (bare metal, no FreeRTOS) |
+| `rtos` | nocry-rtos, the open boot logo image (bare metal, no FreeRTOS) |
 | `tools/nocryboot-build` | reproducible build of nocryboot's first stage (SPL) for the eMMC |
-| `tools/nocryboot-analysis`, `tools/rtos-analysis` | emulator harnesses that compare Creality's loader and boot picture image with ours, register access by register access |
-| `tools/rtos-build`, `rtos` | the boot picture program (source and build) |
+| `tools/nocryboot-analysis`, `tools/rtos-analysis` | emulator harnesses that compare Creality's loader and boot logo image with ours, register access by register access |
+| `tools/rtos-build`, `rtos` | the boot logo program (source and build) |
 | `tools/get-images.sh`, `tools/build-images.sh` | download the board images above, or build all of them in one go |
 | `tools/recovery-build` | reproducible build of the recovery Linux (kernel patch, Buildroot config, `nocry-fbd`) |
 | `tools/splhdr` | generator for the SPL parameter header (DDR settings) |
@@ -74,7 +74,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 Everything is built from this repository. There are two halves, and a working nocry needs both:
 
 ```sh
-# 1. What runs on the board: USB boot stages, the nocryboot loader, the boot picture program,
+# 1. What runs on the board: USB boot stages, the nocryboot loader, the boot logo program,
 #    the recovery Linux, nocry-rescue. Not in git: compiled for the board's processor from
 #    upstream U-Boot, Linux and Buildroot at pinned revisions plus the patches here.
 tools/get-images.sh                # downloads the set GitHub built from these sources (seconds)
@@ -87,7 +87,7 @@ cmake -S gui -B gui/build -DCMAKE_BUILD_TYPE=Release && cmake --build gui/build 
 
 - **Downloading** needs curl and tar. The set comes from this project's `board-images` pre-release, which the workflow of the same name replaces whenever the sources of the images change; every file is checked against the checksum list inside the set. It lands in `images/`. `tools/get-images.sh v0.1.0-alpha.4` fetches the set of a release instead.
 - **Building** needs Docker, git and python3 with Pillow, about 10 GB of disk, and about an hour the first time (later runs only redo what changed). The results land under `tools/*/out` and are preferred over a downloaded set. Each part has its own script (`tools/burner-build`, `nocryboot-build`, `rtos-build`, `recovery-build`) if you want only one. Used and tested on Linux. On macOS it should work with Docker Desktop but has not been tried: the containers run emulated on Apple silicon (slow), and the work folder must be on a case-sensitive volume (the script says how to make one).
-- **Without step 1** nocry still starts, but it has nothing to send to a board: no USB boot, no boot loader or boot picture to install.
+- **Without step 1** nocry still starts, but it has nothing to send to a board: no USB boot, no boot loader or boot logo to install.
 
 On Linux a udev rule is needed so a normal user can open the USB devices. The window offers to install it on first run (one password prompt); by hand, copy `host/contrib/60-nocry.rules` into `/etc/udev/rules.d/`. See `host/README.md` for the command-line tool and `gui/README.md` for the GUI.
 
