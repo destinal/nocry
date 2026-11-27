@@ -2094,16 +2094,20 @@ pub fn install_other_slot(
     let sfx = if slot == "b" { "2" } else { "" };
     // (partition, image, zero the rest of the partition)
     let jobs = [(format!("rtos{sfx}"), &pkg.rtos, true), (format!("kernel{sfx}"), &pkg.kernel, true), (format!("rootfs{sfx}"), &pkg.rootfs, false)];
-    let mut plan: Vec<(u64, Vec<u8>, String)> = vec![];
+    let mut plan: Vec<(u64, crate::blob::Part, String)> = vec![];
     for (name, img, pad) in &jobs {
         let p = g.find(name).with_context(|| format!("no {name} partition"))?;
         if img.len() as u64 > p.size() {
             bail!("{name}: the image ({} bytes) does not fit the partition ({} bytes)", img.len(), p.size());
         }
-        let mut data = (*img).clone();
-        if *pad {
-            data.resize(p.size() as usize, 0);
-        }
+        // the small images are padded with zeros to their partition; the system is used as it is
+        let data = if *pad {
+            let mut v = img.to_vec();
+            v.resize(p.size() as usize, 0);
+            crate::blob::Part::new(v.into())
+        } else {
+            (*img).clone()
+        };
         plan.push((p.offset(), data, name.clone()));
     }
     for (off, data, name) in &plan {

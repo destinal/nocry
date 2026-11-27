@@ -7,6 +7,7 @@
 //! - `gpt`, `snmac`: on-disk formats
 //! - `restore`, `diskimage`: provisioning/repair plans, full-disk backup and reimage
 
+pub mod blob;
 pub mod boards;
 pub mod bootrom;
 pub mod catalog;

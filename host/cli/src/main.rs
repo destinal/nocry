@@ -534,7 +534,7 @@ fn main() -> Result<()> {
             let p = restore::Package::load(&firmware)?;
             std::fs::create_dir_all(&dir)?;
             for (n, d) in [("rtos.bin", &p.rtos), ("kernel.bin", &p.kernel), ("rootfs.squashfs", &p.rootfs)] {
-                std::fs::write(dir.join(n), d)?;
+                std::fs::write(dir.join(n), &d[..])?;
                 println!("{n}: {} bytes", d.len());
             }
             println!("board {}, version {}", p.ota_board.as_deref().unwrap_or("?"), p.ota_version.as_deref().unwrap_or("?"));

@@ -19,6 +19,8 @@ xxhash-rust = { version = "0.8", features = ["xxh64"] }
 flate2 = "1"
 # NebulaOS systems are zstd-compressed squashfs (pure Rust decoder)
 ruzstd = "0.8"
+# firmware parts mapped from files instead of held in memory (nocry on the board itself)
+memmap2 = "0.9"
 lzokay-native = { version = "0.2", default-features = false, features = ["decompress"] }
 sevenz-rust2 = { version = "0.20", default-features = false, features = ["aes256"] }
 md-5 = "0.10"

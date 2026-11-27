@@ -8,6 +8,7 @@
 //! (Format worked out in the user's extract_creality_ota.py; Allwinner-based printers use a
 //! different, unencrypted container that this module does not handle.)
 
+use crate::blob::Blob;
 use anyhow::{anyhow, bail, Context, Result};
 use md5::{Digest, Md5};
 use std::collections::BTreeMap;
@@ -129,21 +130,25 @@ pub struct Ota {
     pub version: String,
     /// the seed whose password opened the archive
     pub seed: String,
-    pub kernel: Option<Vec<u8>>,
-    pub rootfs: Option<Vec<u8>>,
-    pub rtos: Option<Vec<u8>>,
+    pub kernel: Option<Blob>,
+    pub rootfs: Option<Blob>,
+    pub rtos: Option<Blob>,
 }
 
-fn open(path: &Path, seed: &str) -> Result<BTreeMap<String, Vec<u8>>> {
+fn open(path: &Path, seed: &str) -> Result<BTreeMap<String, Blob>> {
     let pw = password_for(seed);
     let mut rd = sevenz_rust2::ArchiveReader::open(path, sevenz_rust2::Password::from(pw.as_str()))?;
+    // One thread when unpacking into files: the parallel decoder holds whole stretches of the
+    // archive in memory per thread (several hundred MB here), which a board does not have.
+    if crate::blob::stage_dir().is_some() {
+        rd.set_thread_count(1);
+    }
     let mut files = BTreeMap::new();
     rd.for_each_entries(|e, r| {
         if !e.is_directory() {
-            let mut v = Vec::with_capacity(e.size() as usize);
-            std::io::Read::read_to_end(r, &mut v)?;
             // keep the base name only: fragments and the manifest share one directory
             let base = e.name().rsplit('/').next().unwrap_or("").to_string();
+            let v = Blob::collect(&base, r, e.size() as usize).map_err(|e| std::io::Error::other(format!("{e:#}")))?;
             files.insert(base, v);
         }
         Ok(true)
@@ -184,7 +189,7 @@ pub fn load(path: &Path) -> Result<Ota> {
         let want = kv.get("img_md5").copied().unwrap_or("").to_lowercase();
         // fragments: <name>.<NNNN>.<32 hex>
         let prefix = format!("{name}.");
-        let mut frags: Vec<(u32, &Vec<u8>)> = files
+        let mut frags: Vec<(u32, &Blob)> = files
             .iter()
             .filter_map(|(k, v)| {
                 let rest = k.strip_prefix(&prefix)?;
@@ -197,14 +202,18 @@ pub fn load(path: &Path) -> Result<Ota> {
         if frags.is_empty() {
             bail!("the update file lists {name} but contains no pieces of it");
         }
-        let mut img = Vec::with_capacity(size);
-        for (_, f) in frags {
-            img.extend_from_slice(f);
+        // checked piece by piece, then joined (into a staged file when nocry runs on the board)
+        let mut h = Md5::new();
+        let mut len = 0usize;
+        for (_, f) in &frags {
+            h.update(&f[..]);
+            len += f.len();
         }
-        let got = format!("{:x}", Md5::digest(&img));
-        if img.len() != size || got != want {
-            bail!("{name} in the update file is damaged (size {} of {size}, md5 {got}, expected {want})", img.len());
+        let got = format!("{:x}", h.finalize());
+        if len != size || got != want {
+            bail!("{name} in the update file is damaged (size {len} of {size}, md5 {got}, expected {want})");
         }
+        let img = Blob::concat(name, frags.iter().map(|(_, f)| &f[..]), size)?;
         match *ty {
             "kernel" => ota.kernel = Some(img),
             "rootfs" => ota.rootfs = Some(img),
@@ -245,7 +254,7 @@ pub fn is_plain_ota(path: &Path) -> bool {
 }
 
 pub fn load_plain(path: &Path) -> Result<Ota> {
-    let d = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let d = Blob::from_file(path)?;
     let n = plain_header(&d, d.len() as u64).context("not an update file of the unencrypted kind")?;
     let text = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).to_string();
     let mut ota = Ota { version: text(&d[0x100..0x120]).trim_start_matches(['V', 'v']).to_string(), seed: String::new(), ..Default::default() };
@@ -268,7 +277,8 @@ pub fn load_plain(path: &Path) -> Result<Ota> {
         if crc32fast::hash(img) != crc {
             bail!("{name} in the update file is damaged (checksum mismatch)");
         }
-        *slot = Some(img.to_vec());
+        // a view into the file itself when staging, a copy otherwise
+        *slot = Some(if crate::blob::stage_dir().is_some() { Blob::map_range(path, off as u64, size as u64)? } else { Blob::Mem(img.to_vec()) });
     }
     Ok(ota)
 }

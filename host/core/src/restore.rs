@@ -5,6 +5,7 @@
 //!   boot area (MBR+GPT+SPL+U-Boot) @0, rtos, kernel, rootfs.
 //! Works on the nocry-ums (read-write) block device or on an image file.
 
+use crate::blob::{Blob, Part};
 use crate::events;
 use crate::gpt::{Gpt, GPT_AREA};
 use crate::boards;
@@ -65,9 +66,10 @@ const SPL_OFFSET: usize = GPT_AREA; // 0x4400
 pub struct Package {
     pub source: String,
     pub boot: Option<Vec<u8>>,
-    pub rtos: Vec<u8>,
-    pub kernel: Vec<u8>,
-    pub rootfs: Vec<u8>,
+    /// the three images of a slot; see `blob` for where they are held
+    pub rtos: Part,
+    pub kernel: Part,
+    pub rootfs: Part,
     pub ota_board: Option<String>,
     /// printer types (and mainboards) the firmware itself says it supports
     pub support: Vec<crate::boards::Support>,
@@ -81,13 +83,12 @@ fn is_zip(p: &Path) -> bool {
     File::open(p).and_then(|mut f| f.read_exact(&mut m)).is_ok() && &m == b"PK\x03\x04"
 }
 
-fn zip_entry(p: &Path, name: &str) -> Result<Option<Vec<u8>>> {
+fn zip_entry(p: &Path, name: &str) -> Result<Option<Blob>> {
     let mut z = zip::ZipArchive::new(File::open(p)?).with_context(|| format!("{} is not a valid zip", p.display()))?;
     let res = match z.by_name(name) {
         Ok(mut e) => {
-            let mut v = Vec::with_capacity(e.size() as usize);
-            e.read_to_end(&mut v)?;
-            Some(v)
+            let size = e.size() as usize;
+            Some(Blob::collect(name.rsplit('/').next().unwrap_or(name), &mut e, size)?)
         }
         Err(zip::result::ZipError::FileNotFound) => None,
         Err(e) => return Err(e.into()),
@@ -95,9 +96,9 @@ fn zip_entry(p: &Path, name: &str) -> Result<Option<Vec<u8>>> {
     Ok(res)
 }
 
-fn read_opt(p: &Path) -> Result<Option<Vec<u8>>> {
+fn read_opt(p: &Path) -> Result<Option<Blob>> {
     if p.exists() {
-        Ok(Some(std::fs::read(p).with_context(|| format!("reading {}", p.display()))?))
+        Ok(Some(Blob::from_file(p)?))
     } else {
         Ok(None)
     }
@@ -169,7 +170,8 @@ impl Package {
                 p.display()
             );
         };
-        let need = |v: Option<Vec<u8>>, n: &str| v.ok_or_else(|| anyhow!("{}: missing {n}", p.display()));
+        let boot: Option<Vec<u8>> = boot.map(|b: Blob| b.to_vec());
+        let need = |v: Option<Blob>, n: &str| v.ok_or_else(|| anyhow!("{}: missing {n}", p.display()));
         let (rtos, kernel, rootfs) = (need(rtos, "zero.bin (rtos)")?, need(kernel, "xImage")?, need(rootfs, "rootfs.squashfs")?);
         let rh = crate::rtos::RtosHeader::parse(&rtos).context("zero.bin (rtos)")?;
         if (rtos.len() as u64) < rh.image_len() {
@@ -184,7 +186,7 @@ impl Package {
         if let Some(b) = &boot {
             check_boot(b)?;
         }
-        let (ota_board, ota_version) = ota_info(&rootfs.as_slice());
+        let (ota_board, ota_version) = ota_info(&&rootfs[..]);
         let support = crate::boards::firmware_support(&rootfs);
         // the K1 family's newer generation is published only for printers with the CFS-C upgrade
         let remark = crate::squashfs::read_file(&rootfs, "etc/hardware", 4096).map(|_| {
@@ -192,7 +194,17 @@ impl Package {
              it is not meant for a printer without that kit"
                 .to_string()
         });
-        Ok(Package { source: p.display().to_string(), boot, rtos, kernel, rootfs, ota_board, ota_version, support, remark })
+        Ok(Package {
+            source: p.display().to_string(),
+            boot,
+            rtos: Part::new(rtos),
+            kernel: Part::new(kernel),
+            rootfs: Part::new(rootfs),
+            ota_board,
+            ota_version,
+            support,
+            remark,
+        })
     }
 }
 
@@ -218,7 +230,7 @@ pub fn load_boot(p: &Path) -> Result<Vec<u8>> {
         bail!("{}: no such file or directory", p.display());
     }
     let b = if is_zip(p) {
-        zip_entry(p, "images/u-boot-with-spl-mbr-gpt.bin")?.ok_or_else(|| anyhow!("{} has no boot area", p.display()))?
+        zip_entry(p, "images/u-boot-with-spl-mbr-gpt.bin")?.map(|b| b.to_vec()).ok_or_else(|| anyhow!("{} has no boot area", p.display()))?
     } else {
         std::fs::read(p)?
     };
@@ -367,7 +379,7 @@ impl Target {
         if let Backend::File(f) = &self.b {
             use std::os::unix::io::AsRawFd;
             unsafe {
-                libc::posix_fadvise(f.as_raw_fd(), off as i64, len as i64, libc::POSIX_FADV_DONTNEED);
+                libc::posix_fadvise64(f.as_raw_fd(), off as libc::off64_t, len as libc::off64_t, libc::POSIX_FADV_DONTNEED); // the 64-bit call: offsets pass 4 GiB also on a 32-bit board
             }
         }
         let _ = (off, len);
@@ -625,6 +637,8 @@ const CH: u64 = MIB; // comparison / write granularity
 /// Expected content of an extent.
 enum Src {
     Bytes(Vec<u8>),
+    /// a part of the firmware, shared with the package (never copied)
+    Part(Part),
     Zeros(u64),
 }
 
@@ -632,12 +646,14 @@ impl Src {
     fn len(&self) -> u64 {
         match self {
             Src::Bytes(v) => v.len() as u64,
+            Src::Part(p) => p.len() as u64,
             Src::Zeros(n) => *n,
         }
     }
     fn chunk<'a>(&'a self, off: u64, n: usize, zeros: &'a [u8]) -> &'a [u8] {
         match self {
             Src::Bytes(v) => &v[off as usize..off as usize + n],
+            Src::Part(p) => &p[off as usize..off as usize + n],
             Src::Zeros(_) => &zeros[..n],
         }
     }
@@ -816,7 +832,7 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
         if data.len() as u64 > p.size() {
             bail!("{name} image ({} B) larger than partition ({} B)", data.len(), p.size());
         }
-        let mut ext = vec![(p.offset(), Src::Bytes(data.clone()))];
+        let mut ext = vec![(p.offset(), Src::Part(data.clone()))];
         if name != "rootfs" {
             ext.push((p.offset() + data.len() as u64, Src::Zeros(p.size() - data.len() as u64)));
         }
@@ -1111,7 +1127,9 @@ impl Plan {
         let zeros = vec![0u8; CH as usize];
         for st in self.steps.iter().filter(|s| !s.dirty.is_empty()) {
             crate::say!("writing {} ({} MiB)", st.what, (st.dirty_bytes() + MIB - 1) >> 20);
-            // consecutive dirty chunks go out as one write (up to 64 MiB)
+            // consecutive dirty chunks go out as one write: up to 64 MiB, which saves round trips to
+            // a board; 4 MiB when nocry runs on the board itself, where memory is what is short
+            let merge = if crate::blob::stage_dir().is_some() { 4 } else { 64 } * MIB as usize;
             let mut i = 0;
             while i < st.dirty.len() {
                 // between two writes: what is on the board stays readable, but incomplete
@@ -1120,7 +1138,7 @@ impl Plan {
                 let (off, src) = &st.extents[ei];
                 let mut buf = src.chunk(c0, n0, &zeros).to_vec();
                 let mut j = i + 1;
-                while j < st.dirty.len() && buf.len() < 64 * MIB as usize {
+                while j < st.dirty.len() && buf.len() < merge {
                     let (ej, cj, nj) = st.dirty[j];
                     if ej != ei || cj != c0 + buf.len() as u64 {
                         break;
