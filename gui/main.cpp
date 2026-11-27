@@ -1158,7 +1158,13 @@ private:
         form->addRow(tr("Mainboard:"), brd);
         v->addLayout(form);
         auto *gen = new QPushButton(tr("Generate new random values"));
-        v->addWidget(gen, 0, Qt::AlignLeft);
+        auto *copy = new QPushButton(tr("Copy to clipboard"));
+        copy->setToolTip(tr("Copy the four values as shown here, for your notes"));
+        auto *brow = new QHBoxLayout;
+        brow->addWidget(gen);
+        brow->addWidget(copy);
+        brow->addStretch(1);
+        v->addLayout(brow);
         auto *modelNote = new QLabel(tr("The model must match the installed firmware, or the printer gets no configuration. To change printer type, use Install firmware instead."));
         modelNote->setWordWrap(true);
         v->addWidget(modelNote);
@@ -1178,6 +1184,12 @@ private:
         for (QLineEdit *e : {sn, mc, brd})
             connect(e, &QLineEdit::textChanged, &d, valid);
         connect(mdl, &QComboBox::currentTextChanged, &d, valid);
+        connect(copy, &QPushButton::clicked, &d, [=] {
+            QApplication::clipboard()->setText(tr("Serial number: %1\nMAC address: %2\nModel: %3\nMainboard: %4")
+                                                   .arg(sn->text().trimmed(), mc->text().trimmed(), modelValue(), brd->text().trimmed()));
+            copy->setText(tr("Copied"));
+            QTimer::singleShot(1500, copy, [copy] { copy->setText(tr("Copy to clipboard")); });
+        });
         connect(gen, &QPushButton::clicked, &d, [=] {
             const QJsonObject o = takeJson(nocry_generate_identity_json());
             if (o.value("ok").toBool()) {
@@ -2112,6 +2124,35 @@ int main(int argc, char **argv)
             });
         });
         QTimer::singleShot(1200, [&w] { w.openInstallDialog(); });
+    }
+    // --selftest-identity-dialog shot.png: read the board, open the identity dialog, press
+    // "Copy to clipboard", save a picture and print what was copied
+    const int sid = args.indexOf("--selftest-identity-dialog");
+    if (sid > 0 && sid + 1 < args.size()) {
+        const QString shot = args[sid + 1];
+        w.onIdle = [&w, shot] {
+            static bool once = false;      // readDevice and the dialog closing both end here
+            if (once)
+                return;
+            once = true;
+            QTimer::singleShot(600, [shot] {
+                if (QWidget *m = QApplication::activeModalWidget()) {
+                    for (QPushButton *b : m->findChildren<QPushButton *>())
+                        if (b->text() == QObject::tr("Copy to clipboard"))
+                            b->click();
+                    m->grab().save(shot);
+                    fprintf(stderr, "clipboard:\n%s\n", qPrintable(QApplication::clipboard()->text()));
+                    static_cast<QDialog *>(m)->reject();
+                }
+                QTimer::singleShot(200, [] { QApplication::quit(); });
+            });
+            for (QPushButton *b : w.findChildren<QPushButton *>())
+                if (b->text() == QObject::tr("Edit serial number and MAC…")) {
+                    b->setEnabled(true);
+                    b->click();
+                }
+        };
+        QTimer::singleShot(300, [&w] { w.readDevice(); });
     }
     // --selftest-loader shot.png: open the Boot Loader dialog (needs NOCRY_TEST_TARGET, an image file)
     const int slo = args.indexOf("--selftest-loader");
