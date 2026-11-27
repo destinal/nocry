@@ -5,24 +5,26 @@ front of this port, on 5555); adbd of this vintage has no authentication, so it 
 listen on every interface, and it cannot be told at run time where to listen (no property
 service here).
 ---
---- a/core/adb/adb.c
-+++ b/core/adb/adb.c
-@@ -1308,9 +1308,10 @@
-         printf("using port=%d\n", port);
+--- a/core/adbd/adb.c
++++ b/core/adbd/adb.c
+@@ -1324,11 +1324,10 @@
          // listen on TCP port specified by service.adb.tcp.port property
-         local_init(port);
--    } else if (!usb) {
+     //    local_init(port);
+     //} else 
+-    if (!usb) {
+-        printf("Using USB\n");
 -        // listen on default port
 -        local_init(DEFAULT_ADB_LOCAL_TRANSPORT_PORT);
-+    } else {
-+        // nocry: always, beside USB, but on this machine only (see transport_local.c):
-+        // a relay on the board opens it to the network (port 5555) when the owner turns that on
-+        local_init(5554);
-     }
+-    }
++    // nocry: always, beside USB, but on this machine only (see transport_local.c):
++    // a relay on the board opens it to the network (port 5555) when the owner turns that on
++    (void)usb;
++    local_init(5554);
  
      D("adb_main(): pre init_jdwp()\n");
---- a/core/adb/transport_local.c
-+++ b/core/adb/transport_local.c
+     init_jdwp();
+--- a/core/adbd/transport_local.c
++++ b/core/adbd/transport_local.c
 @@ -162,7 +162,7 @@
      serverfd = -1;
      for(;;) {
