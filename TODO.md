@@ -27,6 +27,14 @@ Last updated: 2026-11-27.
 - [ ] **Windows driver setup against a real board.** Never tested.
 - [ ] **Photo of the Nebula Pad's BOOT/RESET buttons** for the USB boot help (only a K1 schematic exists).
 
+## nocry-rescue (touchscreen recovery on the printer; design in `docs/nocry-rescue.md`)
+
+- [ ] **Step 1: hardware bring-up from RAM on the Nebula Pad** — picture, touch (NS2009), Wi-Fi (BCM43438) in the recovery kernel.
+- [ ] Step 2: interface skeleton, `nocry-fbd` over TCP with pairing, mDNS, nocry over the LAN.
+- [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
+- [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
+- [ ] Step 5: K1 family. Step 6: firmware install on the printer.
+
 ## Code, no board needed
 
 - [ ] **Trials in the GUI,** and arm one automatically when firmware is installed to the other slot. CLI only today (`nocry slots --set b --try 3`).
