@@ -33,6 +33,7 @@ jobs:
       - name: Build nocry-rtos (boot picture image)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil   # mkpictures.py reads the PNGs
           tools/rtos-build/build.sh "$PWD/out-rtos"
           VARIANT=k1 tools/rtos-build/build.sh "$PWD/out-rtos"
       - name: Build recovery Linux
