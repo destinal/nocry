@@ -23,7 +23,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist-images
-          key: images-${{ hashFiles('tools/burner-build/**', 'tools/recovery-build/**', 'tools/splhdr/**', 'tools/nocryboot-build/**', 'tools/rtos-build/**', 'rtos/**') }}
+          key: images-${{ hashFiles('tools/burner-build/**', 'tools/recovery-build/**', 'tools/splhdr/**', 'tools/nocryboot-build/**', 'tools/rtos-build/**', 'rtos/**', 'host/**') }}
       - name: Build SPL and U-Boot stages
         if: steps.cache.outputs.cache-hit != 'true'
         run: tools/burner-build/build.sh "$PWD/out-burner"
@@ -210,6 +210,14 @@ jobs:
           mkdir out
           cp dl/linux/* dl/windows/* dl/macos/* out/
           (cd dl/images && tar czf ../../out/nocry-board-images-${GITHUB_REF_NAME#v}.tar.gz .)
+          # the rescue image and the loaders as files of their own: what the rescue system's own
+          # update check looks for (host/core/src/selfupdate.rs). GitHub lists size and SHA-256 of each.
+          cp dl/images/nocry-rescue.uImage out/nocry-rescue-${GITHUB_REF_NAME#v}.uImage
+          for f in nebula k1; do
+            lv=$(strings dl/images/nocryboot/nocryboot-$f.bin | sed -n 's/^nocryboot-loader \([0-9.]*\) .*/\1/p' | head -1)
+            [ -n "$lv" ] || { echo "no version in nocryboot-$f.bin" >&2; exit 1; }
+            cp dl/images/nocryboot/nocryboot-$f.bin out/nocryboot-$f-$lv.bin
+          done
           (cd out && sha256sum * > SHA256SUMS)
           ls -l out
       - uses: softprops/action-gh-release@v2
@@ -225,5 +233,9 @@ jobs:
             - `nocry-board-images-*.tar.gz`: what nocry loads onto or installs on the board (SPL, U-Boot stages, recovery Linux, nocry-rescue, the nocryboot loader, the boot logo image), built from the sources and patches in this repository
 
             New in 0.2: **nocry-rescue**, a rescue system kept on the board itself (Nebula Pad family). Hold the screen while powering on and it starts, with no computer attached: a touch interface for Wi-Fi, firmware slots, installing firmware from the catalog, file system checks, resets, and the same functions as web pages for a phone or computer on the network. Store it with `nocry rescue --install` (needs the nocryboot loader 0.2, "Boot loader…" in the window). Also: NebulaOS in the firmware catalog; boards reached over Wi-Fi (found by mDNS) from the window and the command line; slot copies and erases run on the board itself; progress and Cancel for every long operation; more precise wording throughout.
+
+            New in 0.2.0-beta.2: the rescue image is kept in the last 50 MiB of each firmware slot's partition (two copies, found by **nocryboot 0.4**), where firmware updates and factory resets do not reach it; USB flash drives in the rescue system (backup, restore, install, format); a web application in place of the plain pages; remote access switches (nocry over the network, ADB, SSH); Wi-Fi by WPS, with a fixed address, or as an access point with its own name and password; and the rescue image and nocryboot can update themselves from these releases (the files `nocry-rescue-*.uImage` and `nocryboot-*.bin` below are for that).
+
+            **Coming from 0.2.0-beta.1:** that version kept the rescue image as a file on the data partition, for nocryboot 0.2. After updating nocry on the computer, run `nocry rescue --install` and then `nocry loader --install --yes` (in that order), so that the image and the loader that looks for it match.
 
             Take a backup before changing anything on a board.

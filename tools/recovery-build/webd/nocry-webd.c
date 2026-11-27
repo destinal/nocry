@@ -367,6 +367,7 @@ static int api_get(struct buf *b, const char *what, const char *p)
 		{ "fw-list", 0, "fw-list", NULL, 0, 32768 }, { "fw-report", 0, "fw-report", NULL, 0, 8192 },
 		{ "usb-targets", 0, "usb-targets", NULL, 0, 4096 }, { "usb-backups", 0, "usb-list", "backups", 0, 32768 },
 		{ "usb-fw", 0, "usb-list", "fw", 0, 32768 }, { "usb-info", 0, "usb-info", NULL, 1, 2048 },
+		{ "update", 0, "update-check", NULL, 0, 2048 }, { "update-again", 0, "update-check", "again", 0, 2048 },
 		{ "ls", 0, "ls", NULL, 1, 65536 }, { "scan", 1, "scan", NULL, 0, 16384 }, { "saved", 1, "saved", NULL, 0, 1024 },
 	};
 	size_t i; int st; char *t;
@@ -394,6 +395,7 @@ static int api_do(struct buf *b, const char *body, char **away_argv, int *away)
 		{ "usb-eject", 0, "usb-eject", NULL, 0, 0, 512 }, { "usb-format", 0, "usb-format", NULL, 1, 0, 1024 },
 		{ "usb-backup", 0, "usb-backup", NULL, 1, 0, 512 }, { "usb-restore", 0, "usb-restore", NULL, 1, 0, 1024 },
 		{ "loader", 0, "loader", NULL, 1, 0, 4096 }, { "logo", 0, "logo", NULL, 1, 0, 4096 },
+		{ "update-rescue", 0, "update-rescue", NULL, 0, 0, 512 }, { "update-loader", 0, "update-loader", NULL, 0, 0, 512 },
 		{ "wifi-join", 1, "join", NULL, 7, 1, 0 }, { "wifi-ap", 1, "ap", NULL, 0, 1, 0 }, { "wifi-off", 1, "off", NULL, 0, 1, 0 }, { "wifi-wps", 1, "wps", NULL, 0, 1, 0 },
 		{ "remote-set", 3, "set", NULL, 3, 0, 1024 },
 	};

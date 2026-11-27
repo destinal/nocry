@@ -105,6 +105,9 @@ cp "$WORK/kout/nocry-recovery.uImage" "$OUT/"
 # --- RESCUE=1: also nocry-rescue (docs/nocry-rescue.md): its own kernel configuration and an
 # initramfs with the recovery's contents plus Wi-Fi firmware and network tools
 if [ "${RESCUE:-0}" = 1 ]; then
+  # the version of the program this image is built with: in the image's name, for the update check
+  RESCUE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO/host/Cargo.toml" | head -1)
+  [ -n "$RESCUE_VERSION" ] && [ ${#RESCUE_VERSION} -le 18 ] || { echo "no usable version in host/Cargo.toml" >&2; exit 1; }
   cat "$HERE/buildroot.defconfig" "$HERE/buildroot-rescue.fragment" > "$WORK/buildroot/configs/nocry_rescue_defconfig"
   if ! cmp -s "$WORK/buildroot/configs/nocry_rescue_defconfig" "$WORK/buildroot/.nocry-rescue-defconfig-built" 2>/dev/null && [ -d "$WORK/buildroot/output-rescue" ]; then
     echo "rescue defconfig changed: clean Buildroot build (~15 min)"
@@ -121,10 +124,11 @@ if [ "${RESCUE:-0}" = 1 ]; then
     cd kout-rescue
     # a kernel that unpacks itself (as the firmware's own kernels do): nocryboot's first stage
     # starts it straight from the eMMC and cannot unpack anything. The name is what that
-    # stage looks for; load and start address are where the unpacker was linked.
+    # stage looks for ("nocry-rescue", then the version, which the update check reads); load
+    # and start address are where the unpacker was linked.
     mipsel-linux-gnu-objcopy -O binary -R .comment -R .note -R .reginfo vmlinuz vmlinuz.bin
     entry=\$(mipsel-linux-gnu-readelf -h vmlinuz | awk '/Entry point/{print \$4}')
-    mkimage -A mips -O linux -T kernel -C none -a \$entry -e \$entry -n nocry-rescue -d vmlinuz.bin nocry-rescue.uImage >/dev/null" \
+    mkimage -A mips -O linux -T kernel -C none -a \$entry -e \$entry -n 'nocry-rescue $RESCUE_VERSION' -d vmlinuz.bin nocry-rescue.uImage >/dev/null" \
     || { grep -n 'error\|Error' "$WORK/kernel-rescue-build.log" | head -30; tail -15 "$WORK/kernel-rescue-build.log"; exit 1; }
   cp "$WORK/kout-rescue/nocry-rescue.uImage" "$OUT/"
 fi

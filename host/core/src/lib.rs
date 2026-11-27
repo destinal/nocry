@@ -23,6 +23,7 @@ pub mod ota;
 pub mod picture;
 pub mod restore;
 pub mod rtos;
+pub mod selfupdate;
 pub mod session;
 pub mod snmac;
 pub mod squashfs;

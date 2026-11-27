@@ -18,7 +18,7 @@ It needs nocryboot as the board's loader. USB boot mode stays the last resort be
 
 | Topic | Decision |
 |---|---|
-| Where it lives | **decided (changed 2026-11-27):** two copies, in the last 32 MiB of `rootfs` and of `rootfs2`, behind the system images. No repartitioning. Before: one file in `userdata`. |
+| Where it lives | **decided (changed 2026-11-27):** two copies, in the last 50 MiB of `rootfs` and of `rootfs2`, behind the system images. No repartitioning. Before: one file in `userdata`. |
 | How the loader finds it | at those two fixed places; it checks the header and the contents against the CRCs in the uImage header before starting anything (`docs/nocryboot.md`) |
 | Losing it | firmware updates, factory resets (Creality's and nocry's) and a formatted data partition leave the copies alone. A restore of a full backup, erasing the storage, or Ingenic's Cloner removes them; nocry stores them again. |
 | Starting it | finger on the screen at power-on (the nocryboot loader reads the touch chip), nothing more to hold (a 3-second count was dropped again); automatically when no slot can be started; on request (a one-shot note in `ota`) |
@@ -32,7 +32,7 @@ It needs nocryboot as the board's loader. USB boot mode stays the last resort be
 
 Rescue with a touch interface, Wi-Fi and its firmware is 17 MiB. The first partitions have no such room: `ota` and `sn_mac` are 1 MiB each, the `rtos` partitions 4 MiB each, and each `kernel` partition has about 4 MiB to spare.
 
-The two root file system partitions are 500 MiB each and a system image takes 105 to 158 MiB of one, so over 340 MiB at the end of each is never written by the firmware or its updater. The last 32 MiB of each hold a copy of the rescue image, as raw sectors: the loader needs no file system and no pointer. The first design kept one file in `userdata` with a pointer in `ota`; it went with every factory reset.
+The two root file system partitions are 500 MiB each and a system image takes 105 to 158 MiB of one, so over 340 MiB at the end of each is never written by the firmware or its updater. The last 50 MiB of each hold a copy of the rescue image, as raw sectors: the loader needs no file system and no pointer. The first design kept one file in `userdata` with a pointer in `ota`; it went with every factory reset.
 
 ## Starting it
 
@@ -100,6 +100,14 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 - `nocry-ui --sim SCRIPT` runs it on a PC without screen or touch chip (taps from a script, pictures to files, commands from `$PATH`): how the screens were checked before they ran on a board.
 
 Not on the screen yet: uploading a firmware file (web pages only), boot loader and boot logo changes, files and logs.
+
+### Updates (System info > Updates; in the web application: System, and a notice on the overview; written 2026-11-27, not yet run on a board)
+
+Once the board is on a network with internet access, the rescue system asks GitHub once which release of this project is the newest (`nocry self-update check`, `host/core/src/selfupdate.rs`) and says so if it carries a newer rescue image or nocryboot than the board has. Nothing is downloaded or changed without a yes.
+
+- A release carries `nocry-rescue-<version>.uImage`, `nocryboot-nebula-<version>.bin` and `nocryboot-k1-<version>.bin` as files of their own. Size and SHA-256 of each are taken from GitHub's list of the release's files; only files of this project's releases are fetched, over https.
+- **Rescue image:** downloaded into memory, kept only if size and SHA-256 match, then checked as an image (name, header CRC, contents CRC), then written over the two copies one after the other, each read back, so one good copy exists at every moment. The version of a stored copy is in the image's name (`nocry-rescue <version>`).
+- **Boot loader:** offered only where nocryboot is already installed, and only after the rescue image is up to date and both its copies are good. Downloaded, kept only if size and SHA-256 match, then checked for what it is (24 KiB, the loader header, `nocryboot-loader <that version> <this board's family>`), then installed by `nocry loader --install` with its own checks: the loader on the board is one it knows, the partitions are where the loader expects them, the factory loader is kept, the write is read back. What cannot be ruled out is a power cut during the few seconds of writing 24 KiB; USB boot mode and nocry on a computer bring a board back from that.
 
 ### Remote access (Advanced > Remote access; `nocry-remote`; written 2026-11-27, not yet run on a board)
 

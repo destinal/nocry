@@ -58,6 +58,8 @@ start() {
     NOCRY_TURN=$(sed -n 's/^turn //p' /run/nocry-touch.cal 2>/dev/null | head -1); export NOCRY_TURN=${NOCRY_TURN:-0}
     # USB: a computer on the Micro-USB socket, or a flash drive in an A socket (nocry-usb)
     setsid nocry-usb daemon >/dev/null 2>&1 </dev/null &
+    # one copy of the rescue system good and the other gone (a slot was rewritten whole): put it back
+    ( r=$(nocry-rescue-do rescue-heal 2>&1); case "$r" in *healed=[ab]*|*failed*) echo "nocry-rescue: copies: $r" > /dev/kmsg ;; esac ) &
     show
     # what the owner turned on for reaching the board over the network (nocry on a computer,
     # adb, SSH: all off otherwise), and a pairing code for the web pages either way

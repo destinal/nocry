@@ -217,12 +217,37 @@ let board = null;                                   /* nocry-rescue-do status, r
 async function loadBoard(force) { if (!board || force) { const r = await get("status"); board = r.rc ? { error: r.text } : kv(r.text); } return board; }
 const slotName = (b, s) => b[s + "_firmware"] || "unknown";
 
+/* ---- updates from this project's releases on GitHub ----------------------------------------- */
+let updates = null;                                 /* the answer of update-check, once asked */
+async function checkUpdates(again) { const r = await get(again ? "update-again" : "update"); updates = kv(r.text); if (r.rc && !updates.error) updates.error = "the check did not run"; return updates; }
+const updR = () => updates && updates.rescue_update === "yes", updL = () => updates && updates.loader_update === "yes";
+function updatesCard(el, redraw) {
+  const u = updates;
+  if (!u) { el.innerHTML = '<h2>Updates</h2><p class="dim small">Newer versions of the rescue image and the boot loader, from the nocry project on GitHub.</p><div class="row"><button class="sec" id="uck">Check for updates</button></div>'; }
+  else if (u.error || !u.release) { el.innerHTML = `<h2>Updates</h2><div class="note">The update check needs an internet connection.${u.error ? `<br><span class="dim small">${esc(u.error)}</span>` : ""}</div><div class="row"><button class="sec" id="uck">Check again</button></div>`; }
+  else {
+    const fac = u.loader_installed === "factory";
+    el.innerHTML = `<h2>Updates</h2><dl class="kv"><dt>Newest release</dt><dd>${esc(u.release)}</dd>
+      <dt>Rescue image</dt><dd>${esc(u.rescue_installed)} ${updR() ? '<span class="badge warn">update available</span>' : '<span class="badge ok">up to date</span>'}</dd>
+      <dt>Boot loader</dt><dd>${fac ? "factory loader" : "nocryboot " + esc(u.loader_installed)} ${fac ? "" : updL() ? '<span class="badge warn">update available</span>' : '<span class="badge ok">up to date</span>'}</dd></dl>
+      ${updR() && updL() ? '<p class="dim small">Update the rescue image first; the boot loader after it.</p>' : ""}
+      <div class="row">${updR() ? `<button id="urs">Update rescue image to ${esc(u.rescue_latest)}</button>` : ""}${updL() ? `<button id="uld" ${updR() ? "disabled" : ""}>Update boot loader to ${esc(u.loader_latest)}</button>` : ""}<button class="sec" id="uck">Check again</button></div>`;
+  }
+  $("#uck", el).onclick = async () => { el.innerHTML = "<h2>Updates</h2>" + loading; await checkUpdates(true); redraw(); };
+  const rs = $("#urs", el), ld = $("#uld", el);
+  if (rs) rs.onclick = async () => { if (await confirmBox("Update the rescue image?", `Downloads rescue ${esc(u.rescue_latest)} from GitHub, checks its size, SHA-256 and the image itself, then replaces both stored copies one after the other, each read back. The rescue system running now is not affected; the new one runs from the next start.`, "Update")) { await run("update-rescue"); updates = null; } };
+  if (ld) ld.onclick = async () => { if (await confirmBox("Update the boot loader?", `Downloads nocryboot ${esc(u.loader_latest)} from GitHub and checks its size, SHA-256, board family and version before anything is written. Writing takes a few seconds and is read back: <b>do not power off</b>. The factory loader stays kept on the board. If the board ever fails to start, USB boot mode (BOOT button) and nocry on a computer bring it back.`, "Update", true)) { await run("update-loader"); updates = null; } };
+}
+
 views.home = {
   async show() {
     view().innerHTML = head("Overview") + '<div class="grid" id="g">' + loading + "</div>";
     const b = await loadBoard(true), act_ = (b.active || "")[0];
     if (current !== "home") return;
+    const onAp = S.wifi.mode === "ap";
     $("#g").innerHTML = `
+      ${onAp ? '<div class="card wide" id="wnets" style="border-color:var(--accent)"></div>' : ""}
+      <div class="card wide" id="hupd" style="display:none;border-color:var(--warn)"></div>
       <div class="card"><h2>Board</h2><dl class="kv"><dt>Model</dt><dd>${esc(b.model || "unknown")}</dd><dt>Mainboard</dt><dd>${esc(b.mainboard || "unknown")}</dd>${b.note ? `<dt>Boot record</dt><dd>${esc(b.note)}</dd>` : ""}</dl>
         <div class="row"><a class="btn sec" href="#system">Details</a><button class="sec" id="reboot">Reboot</button></div></div>
       <div class="card"><h2>Firmware slots</h2><ul class="list">
@@ -232,6 +257,16 @@ views.home = {
       <div class="card"><h2>USB flash drive</h2><div id="husb"></div><div class="row"><a class="btn sec" href="#usb">Open</a></div></div>`;
     $("#reboot").onclick = reboot;
     this.live();
+    /* on the board's own network the first thing most people want is to put it on theirs */
+    if (onAp) views.wifi.scan("Connect the board to your Wi-Fi");
+    /* once it is on a network: is there something newer?  Nothing is downloaded without a yes */
+    if (S.wifi.mode === "client" && !updates) checkUpdates().then(() => { if (current === "home") this.banner(); });
+    this.banner();
+  },
+  banner() {
+    const el = $("#hupd"); if (!el) return;
+    if (!updR() && !updL()) { el.style.display = "none"; return; }
+    el.style.display = ""; updatesCard(el, () => this.banner());
   },
   live() {
     const n = $("#hnet"), u = $("#husb"), w = S.wifi, d = S.usb;
@@ -277,15 +312,15 @@ views.wifi = {
       if (await confirmBox("Start the access point?", `The board leaves its current network and opens <b>${esc(n)}</b>${p ? " with the password " + esc(p) : " without a password"}. Join it with this device and open http://192.168.77.1.`, "Start")) { await act("wifi-ap"); moving(`Join the network <b>${esc(n)}</b> and open <a href="http://192.168.77.1">http://192.168.77.1</a>.`); }
     };
   },
-  async scan() {
-    const el = $("#wnets"); el.innerHTML = '<h2>Networks</h2>' + loading;
-    const r = await get("scan"); if (current !== "wifi") return;
+  async scan(title) {
+    const el = $("#wnets"), from = current, t = title || "Networks"; el.innerHTML = `<h2>${t}</h2>` + loading;
+    const r = await get("scan"); if (current !== from || !$("#wnets")) return;
     const nets = rows(r.text).filter(n => n[2]);
-    el.innerHTML = `<h2>Networks <button class="ghost" id="rescan">Scan again</button></h2><ul class="list">
+    el.innerHTML = `<h2>${t} <button class="ghost" id="rescan">Scan again</button></h2><ul class="list">
       <li class="tap" data-wps="1"><div class="t"><b>WPS (router button)</b><span>no password to type: press WPS on the router first</span></div></li>
       ${nets.map((n, i) => `<li class="tap" data-i="${i}"><div class="t"><b>${esc(n[2])}</b><span>${esc(n[0])} dBm · ${n[1] === "open" ? "open" : "secured"}</span></div></li>`).join("")}
       <li class="tap" data-i="-1"><div class="t"><b>Other network…</b><span>enter the SSID manually</span></div></li></ul>`;
-    $("#rescan").onclick = () => this.scan();
+    $("#rescan").onclick = () => this.scan(title);
     el.onclick = e => { const li = e.target.closest("li"); if (!li) return; if (li.dataset.wps) return this.wps(); const i = Number(li.dataset.i); this.join(i < 0 ? null : nets[i]); };
   },
   async wps() {
@@ -487,7 +522,7 @@ views.boot = {
         <div class="row">${nb ? '<button class="sec" data-ld="factory">Restore factory loader</button>' : '<button data-ld="install">Install nocryboot</button>'}</div></div>
       <div class="card"><h2>Boot logo</h2><pre>${esc(g.text)}</pre><div class="row"><button class="sec" data-lg="nocry">Use the nocry logo</button><button class="sec" data-lg="firmware">Use the firmware's logo</button></div></div>
       <div class="card"><h2>Rescue image</h2><p>${rs.stored === "yes" ? '<span class="badge ok">installed, verified</span>' : rs.stored === "damaged" ? '<span class="badge warn">checksum mismatch</span>' : '<span class="badge">not installed</span>'}</p>
-        <dl class="kv"><dt>Copy behind slot A</dt><dd>${esc(rs.copy_a || "no")}</dd><dt>Copy behind slot B</dt><dd>${esc(rs.copy_b || "no")}</dd></dl><p class="dim small">Started by holding a finger on the screen at power-on (nocryboot 0.3 or later). Stored with <code>nocry rescue --install</code> from a computer.</p></div>`;
+        <dl class="kv"><dt>Copy behind slot A</dt><dd>${esc(rs.copy_a || "no")}</dd><dt>Copy behind slot B</dt><dd>${esc(rs.copy_b || "no")}</dd></dl><p class="dim small">Started by holding a finger on the screen at power-on (nocryboot 0.4 or later). Stored with <code>nocry rescue --install</code> from a computer.</p></div>`;
     $("#g").onclick = async e => {
       const ld = e.target.dataset.ld, lg = e.target.dataset.lg;
       if (ld && await confirmBox(ld === "install" ? "Install the nocryboot boot loader?" : "Restore the factory boot loader?", "Takes a few seconds; <b>do not power off</b>. If the write fails the board does not boot by itself; recovery is through USB boot mode: hold BOOT, tap RESET, and use nocry on a computer.", "Change boot loader", true)) { const x = await act("loader", ld); await info(x.rc ? "Failed" : "Done", `<pre>${esc(x.text)}</pre>`); this.show(); }
@@ -528,9 +563,12 @@ views.system = {
     const rs = kv(r.text);
     $("#g").innerHTML = `<div class="card"><h2>Board</h2><dl class="kv"><dt>Model</dt><dd>${esc(b.model || "unknown")}</dd><dt>Mainboard</dt><dd>${esc(b.mainboard || "unknown")}</dd><dt>Slot A</dt><dd>${esc(slotName(b, "a"))}</dd><dt>Slot B</dt><dd>${esc(slotName(b, "b"))}</dd><dt>Active slot</dt><dd>${esc((b.active || "?")[0].toUpperCase())}</dd>
         <dt>Boot loader</dt><dd>${esc((l.text.match(/loader: (.*)/) || [])[1] || "unknown")}</dd><dt>Rescue image</dt><dd>${rs.stored === "yes" ? "installed, verified" : rs.stored === "damaged" ? "checksum mismatch" : "not installed"}</dd>${b.note ? `<dt>Boot record</dt><dd>${esc(b.note)}</dd>` : ""}</dl></div>
+      <div class="card" id="supd"></div>
       <div class="card"><h2>Rescue system</h2><p class="dim small">Runs from memory. Rebooting leaves it and starts the active slot.</p><div class="row"><button id="rb">Reboot</button><a class="btn sec" href="/dl/logs">Download logs</a></div>
         <p class="dim small" style="margin-top:14px">The touch calibration and which way up the screen is are set on the touch screen itself.</p></div>`;
     $("#rb").onclick = reboot;
+    const draw = () => { const e = $("#supd"); if (e) updatesCard(e, draw); };
+    draw();
   },
 };
 

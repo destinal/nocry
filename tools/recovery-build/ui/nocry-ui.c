@@ -1638,6 +1638,80 @@ static void about_status(int rc, char *out)
 	if (*note) about_add("Boot record: %s\n", note);
 	start(about_loader, NULL, "nocry-rescue-do", "loader", NULL);
 }
+/* ---- updates: a newer rescue image or boot loader in this project's releases on GitHub ---- */
+static char upd[700]; static int upd_asked;	/* the last answer of update-check; asked about once */
+static void update_draw(void);
+static void update_done(int rc, char *out)
+{
+	modal_close();
+	snprintf(upd, sizeof upd, "%s", rc && !*kv(out, "error") ? "error=the check did not run" : out);
+	update_draw();
+}
+static void update_check(const char *again)
+{
+	busy("Asking GitHub...");
+	start(update_done, NULL, "nocry-rescue-do", "update-check", again, NULL);
+}
+static void update_again_cb(lv_event_t *e) { (void)e; update_check("again"); }
+static void update_rescue_yes(void) { job_next = NULL; job_home = 0; job_undo = NULL; busy("Starting..."); start(job_started, NULL, "nocry-rescue-do", "update-rescue", NULL); }
+static void update_loader_yes(void) { job_next = NULL; job_home = 0; job_undo = NULL; busy("Starting..."); start(job_started, NULL, "nocry-rescue-do", "update-loader", NULL); }
+static void update_rescue_cb(lv_event_t *e)
+{
+	char b[400];
+	(void)e;
+	snprintf(b, sizeof b, "Downloads rescue %s from GitHub, checks its size, SHA-256 and the image itself, then replaces both stored copies one after the other, each read back. The rescue system running now is not affected; the new one runs from the next start.", kv(upd, "rescue_latest"));
+	ask("Update the rescue image?", b, "Update", 0, update_rescue_yes);
+}
+static void update_loader_cb(lv_event_t *e)
+{
+	char b[500];
+	(void)e;
+	snprintf(b, sizeof b, "Downloads nocryboot %s from GitHub and checks its size, SHA-256, board family and version before anything is written. Writing takes a few seconds and is read back: do not power off. The factory loader stays kept on the board. If the board ever fails to start, USB boot mode (BOOT button) and nocry on a computer bring it back.", kv(upd, "loader_latest"));
+	ask("Update the boot loader?", b, "Update", 1, update_loader_yes);
+}
+static void update_draw(void)
+{
+	char s[400]; int r = !strcmp(kv(upd, "rescue_update"), "yes"), l = !strcmp(kv(upd, "loader_update"), "yes");
+	lv_obj_clean(content);
+	if (*kv(upd, "error") || !*kv(upd, "release")) {
+		text(content, "The update check needs an internet connection.");
+		if (*kv(upd, "error")) dim(text(content, kv(upd, "error")));
+		wide(button(content, "Check again", update_again_cb, NULL));
+		return;
+	}
+	snprintf(s, sizeof s, "Newest release: %s\nRescue image: %s%s\nBoot loader: %s%s%s", kv(upd, "release"),
+		kv(upd, "rescue_installed"), r ? "  (update available)" : "  (up to date)",
+		!strcmp(kv(upd, "loader_installed"), "factory") ? "factory loader" : "nocryboot ", !strcmp(kv(upd, "loader_installed"), "factory") ? "" : kv(upd, "loader_installed"),
+		!strcmp(kv(upd, "loader_installed"), "factory") ? "" : l ? "  (update available)" : "  (up to date)");
+	text(content, s);
+	if (r) { snprintf(s, sizeof s, "Update rescue image to %s", kv(upd, "rescue_latest")); wide(button(content, s, update_rescue_cb, NULL)); }
+	if (l) {
+		lv_obj_t *b;
+		snprintf(s, sizeof s, "Update boot loader to %s", kv(upd, "loader_latest")); b = wide(button(content, s, update_loader_cb, NULL));
+		/* the new loader has to find the rescue image where the new rescue image is kept: that one first */
+		if (r) { lv_obj_add_state(b, LV_STATE_DISABLED); dim(text(content, "Update the rescue image first; the boot loader after it.")); }
+	}
+	if (!r && !l) dim(text(content, "Nothing to update."));
+	wide(grey(button(content, "Check again", update_again_cb, NULL)));
+}
+static void update_screen(void)
+{
+	set_title("Updates");
+	update_check(NULL);
+}
+/* once, when the board is on a network: is there something newer?  A box says so; nothing is
+   downloaded or changed without the owner saying yes on the Updates screen. */
+static void update_show(void) { go(update_screen); }
+static void update_quiet(int rc, char *out)
+{
+	char b[300]; int r, l;
+	if (rc || modal || depth != 1) return;
+	snprintf(upd, sizeof upd, "%s", out);
+	r = !strcmp(kv(upd, "rescue_update"), "yes"); l = !strcmp(kv(upd, "loader_update"), "yes");
+	if (!r && !l) return;
+	snprintf(b, sizeof b, "%s%s%s%s%s is available from the nocry project on GitHub.", r ? "Rescue " : "", r ? kv(upd, "rescue_latest") : "", r && l ? " and " : "", l ? "boot loader " : "", l ? kv(upd, "loader_latest") : "");
+	ask2("Update available", b, "Later", "Show", 0, update_show);
+}
 void calibrate_screen(void);
 static void cal_cb(lv_event_t *e) { (void)e; go(calibrate_screen); }
 static void about_screen(void)
@@ -1645,6 +1719,7 @@ static void about_screen(void)
 	set_title("System info");
 	about[0] = 0;
 	about_lbl = text(content, "");
+	wide(button(content, "Updates", go_cb, (void *)update_screen));
 	wide(grey(button(content, "Calibrate touch screen", cal_cb, NULL)));
 	dim(text(content, "Touch offset? Hold anywhere for 10 seconds to recalibrate."));
 	busy("Reading the board...");
@@ -1740,6 +1815,11 @@ static void home_tick(lv_timer_t *t)
 	}
 	if (strcmp(lv_label_get_text(home_net), s)) lv_label_set_text(home_net, s);
 	free(st);
+	/* on a network for the first time since the start: ask once, quietly, whether there is an update */
+	if (!upd_asked && !strcmp(mode, "client") && !modal && depth == 1 && !sim) {
+		upd_asked = 1;
+		start(update_quiet, NULL, "nocry-rescue-do", "update-check", NULL);
+	}
 	/* Eject is there to be seen, and greyed out while no drive is mounted */
 	if (usb_mounted()) lv_obj_clear_state(home_eject, LV_STATE_DISABLED); else lv_obj_add_state(home_eject, LV_STATE_DISABLED);
 }

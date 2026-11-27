@@ -21,7 +21,7 @@ The design notes, measurements and test log are in [`docs/nocryboot.md`](../../d
 4. The slot is checked: kernel, boot logo image and root file system each have to carry their signature. If the slot is incomplete, or its trial count has run out, the other slot is taken and the record rewritten. If no slot is complete, the board restarts in USB boot mode.
 5. The slot's boot logo image (`rtos` partition) runs on the second processor core and switches the display on.
 6. The slot's kernel is loaded and started.
-7. *(rescue)* A copy of the rescue system is looked for in the last 32 MiB of each root file system partition, the active slot's first. A copy is a plain uImage named `nocry-rescue...`; it is started only if the CRCs in its header match the header and the contents. If neither copy is good, the start goes on at step 3.
+7. *(rescue)* A copy of the rescue system is looked for in the last 50 MiB of each root file system partition, the active slot's first. A copy is a plain uImage named `nocry-rescue...`; it is started only if the CRCs in its header match the header and the contents. If neither copy is good, the start goes on at step 3.
 
 The loader never writes to the eMMC except the first two sectors of `ota` (the slot record and its own note about trials).
 
@@ -76,12 +76,12 @@ What a system has to provide to be started by it:
 
 - **Slots.** Two sets of `rtos`, `kernel`, `rootfs` partitions and a 512-byte text record in `ota` naming the active one.
 - **Boot logo image.** A small bare-metal program with Ingenic's `RTOS` header that initialises the display. nocry's open one is in [`rtos/`](../../rtos).
-- **A rescue image** (optional). Any Linux uImage that needs no unpacking by the loader (a self-extracting kernel with built-in initramfs), named `nocry-rescue...`, at most 32 MiB minus 4 KiB, written to the last 32 MiB of a root file system partition. The loader passes it `nocry.rescue=touch` on the kernel command line. [`tools/recovery-build`](../recovery-build) builds the one nocry uses.
+- **A rescue image** (optional). Any Linux uImage that needs no unpacking by the loader (a self-extracting kernel with built-in initramfs), named `nocry-rescue...`, at most 50 MiB minus 4 KiB, written to the last 50 MiB of a root file system partition. The loader passes it `nocry.rescue=touch` on the kernel command line. [`tools/recovery-build`](../recovery-build) builds the one nocry uses.
 
 ## State
 
 - Slot fallback, USB boot mode on its own and trials: tested in the emulator and on a K1 mainboard and a Nebula Pad.
-- Touch-to-rescue: version 0.2 (rescue kept as a file on the data partition) ran on a Nebula Pad. Version 0.3 (two copies behind the system images, CRC-checked) passes every emulator case and is installed on a Nebula Pad; a held start from it has not been confirmed yet.
+- Touch-to-rescue: version 0.2 (rescue kept as a file on the data partition) and 0.3 (two copies behind the system images, CRC-checked, 32 MiB each; never released) ran on a Nebula Pad. Version 0.4 is 0.3 with 50 MiB of room; it passes every emulator case and has not been installed on a board yet.
 - The K1 family has no touch-to-rescue: its panel and touch chip are not supported.
 
 Licence: GPL-2.0-or-later, as the U-Boot source it is built from.

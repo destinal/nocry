@@ -1,12 +1,14 @@
 /*
  * nocry-rescue-copy: the copies of the rescue system that the nocryboot loader starts
- * (docs/nocryboot.md).  A copy is a uImage named "nocry-rescue..." in the last 32 MiB of a
+ * (docs/nocryboot.md).  A copy is a uImage named "nocry-rescue..." in the last 50 MiB of a
  * root file system partition, far behind the end of the system image there; the loader
  * starts it only if the CRCs in its header are right, and this tool checks exactly that.
  *
  *   nocry-rescue-copy check FILE          is FILE such an image?            prints its bytes
- *   nocry-rescue-copy status PART         "yes <bytes>", "damaged" or "no"
+ *   nocry-rescue-copy status PART         "yes <bytes> <version>", "damaged" or "no" (the version
+ *                                         is what follows "nocry-rescue " in the image's name)
  *   nocry-rescue-copy store PART FILE     write FILE into PART's room, read it back
+ *   nocry-rescue-copy copy FROM TO        the good copy in partition FROM into partition TO
  *   nocry-rescue-copy erase PART          blank the start of the room
  *   nocry-rescue-copy keep-put PART FILE  a small file (the touch calibration) into the last
  *   nocry-rescue-copy keep-get PART       4 KiB of the room / back out of it
@@ -22,7 +24,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define ROOM	(32u << 20)
+#define ROOM	(50u << 20)
 #define HEAD	64
 #define KEEP	4096		/* the end of the room: "nocry-keep\0", length, CRC, the bytes */
 #define IMAGE	(ROOM - KEEP)	/* what an image may take */
@@ -81,7 +83,7 @@ static off_t room_of(int fd)
 int main(int argc, char **argv)
 {
 	static unsigned char a[1 << 16], b[1 << 16];
-	off_t room, off;
+	off_t room, off, from = 0;
 	long len, n;
 	int i, k, fd, in;
 	uint32_t c;
@@ -97,16 +99,22 @@ int main(int argc, char **argv)
 		printf("%ld\n", len);
 		return 0;
 	}
-	if (argc < 3 || (fd = open(argv[2], strcmp(argv[1], "status") && strcmp(argv[1], "keep-get") ? O_RDWR : O_RDONLY)) < 0)
-		return die("usage: nocry-rescue-copy check FILE | status|erase|keep-get PART | store|keep-put PART FILE");
+	if (argc < 3 || (fd = open(argv[2], strcmp(argv[1], "status") && strcmp(argv[1], "keep-get") && strcmp(argv[1], "copy") ? O_RDWR : O_RDONLY)) < 0)
+		return die("usage: nocry-rescue-copy check FILE | status|erase|keep-get PART | store|keep-put PART FILE | copy FROM TO");
 	room = room_of(fd);
 	if (argc == 3 && !strcmp(argv[1], "status")) {
 		len = room < 0 ? 0 : image_at(fd, room, IMAGE);
-		if (len > 0) printf("yes %ld\n", len); else puts(len ? "damaged" : "no");
+		if (len > 0) {
+			char name[33] = "", *v = name + 12;
+			if (pread(fd, name, 32, room + 32) != 32) name[0] = 0;
+			while (*v == ' ') v++;
+			for (i = 0; v[i]; i++) if (!((v[i] >= '0' && v[i] <= '9') || (v[i] >= 'a' && v[i] <= 'z') || v[i] == '.' || v[i] == '-')) { v[i] = 0; break; }
+			printf("yes %ld %s\n", len, v);
+		} else puts(len ? "damaged" : "no");
 		return 0;
 	}
 	if (room < 0)
-		return die("no room for a copy in this partition (the system image reaches into the last 32 MiB)");
+		return die("no room for a copy in this partition (the system image reaches into the last 50 MiB)");
 	if (argc == 3 && !strcmp(argv[1], "erase")) {
 		memset(a, 0, sizeof a);
 		if (pwrite(fd, a, sizeof a, room) != sizeof a || fsync(fd)) return die("could not write");
@@ -126,18 +134,31 @@ int main(int argc, char **argv)
 			return 1;
 		return fwrite(a + 20, 1, n, stdout) != (size_t)n;
 	}
-	if (argc != 4 || strcmp(argv[1], "store"))
-		return die("usage: nocry-rescue-copy check FILE | status|erase|keep-get PART | store|keep-put PART FILE");
-	if ((in = open(argv[3], O_RDONLY)) < 0) return die("cannot open the image");
-	len = image_at(in, 0, IMAGE);
-	if (len <= 0 || len != lseek(in, 0, SEEK_END)) return die("that is not a nocry rescue image (or it is damaged)");
+	if (argc == 4 && !strcmp(argv[1], "copy")) {
+		/* here argv[2] is where it comes from and argv[3] where it goes: swap, so that the
+		   writing below is the same as for a file */
+		int to = open(argv[3], O_RDWR); off_t to_room;
+		if (to < 0) return die("cannot open the partition to copy to");
+		in = fd; from = room; fd = to;
+		to_room = room_of(fd);
+		if (to_room < 0) return die("no room for a copy in this partition (the system image reaches into the last 50 MiB)");
+		room = to_room;
+		len = image_at(in, from, IMAGE);
+		if (len <= 0) return die("there is no good copy to copy from");
+	} else {
+		if (argc != 4 || strcmp(argv[1], "store"))
+			return die("usage: nocry-rescue-copy check FILE | status|erase|keep-get PART | store|keep-put PART FILE | copy FROM TO");
+		if ((in = open(argv[3], O_RDONLY)) < 0) return die("cannot open the image");
+		len = image_at(in, 0, IMAGE);
+		if (len <= 0 || len != lseek(in, 0, SEEK_END)) return die("that is not a nocry rescue image (or it is damaged)");
+	}
 	/* the header last: until the whole image is there the loader sees no copy here */
 	memset(a, 0, 512);
 	if (pwrite(fd, a, 512, room) != 512 || fsync(fd)) return die("could not write");
 	for (off = len; off > 0; ) {
 		n = off % (long)sizeof a ? off % (long)sizeof a : (long)sizeof a;
 		off -= n;
-		if (pread(in, a, n, off) != n) return die("could not read the image");
+		if (pread(in, a, n, from + off) != n) return die("could not read the image");
 		if (pread(fd, b, n, room + off) == n && !memcmp(a, b, n)) continue;	/* already there */
 		if (pwrite(fd, a, n, room + off) != n) return die("could not write");
 	}

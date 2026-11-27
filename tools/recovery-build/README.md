@@ -18,7 +18,7 @@ On the touch screen (480x272, wide by default; a button turns it a quarter turn 
 - **Install**: firmware from the internet (Creality's published versions, NebulaOS), downloaded and checked before anything is written.
 - **USB drive**: back up and restore the whole eMMC or single partitions to a flash drive (FAT32, exFAT, NTFS), install a firmware file from the drive, format the drive, eject.
 - **Advanced**: repair (file system checks, storage health, wipe the settings overlay, factory reset) and remote access (nocry over the network, adb over the network, SSH: all off unless turned on).
-- **System info**: model, slots, loader, rescue copies; touch calibration.
+- **System info**: model, slots, loader, rescue copies; touch calibration; **Updates**: a newer rescue image or nocryboot from this project's releases on GitHub, downloaded and checked (size, SHA-256, and what the file is) before anything is written.
 
 From a phone or computer on the same network: a web application with nearly everything the touch screen has (and file access and firmware upload on top), behind a six-digit pairing code shown on the screen. It is one self-contained page, laid out for phones and for desktop browsers.
 
@@ -26,7 +26,7 @@ From a phone or computer on the same network: a web application with nearly ever
 
 ```
 nocryboot (loader)            finger on the screen at power-on
-   └─ nocry-rescue.uImage     Linux 6.6 + initramfs, read from the last 32 MiB of rootfs / rootfs2
+   └─ nocry-rescue.uImage     Linux 6.6 + initramfs, read from the last 50 MiB of rootfs / rootfs2
         ├─ S30nocry-usb       USB gadget: adb, fastboot service (nocry-fbd), serial console
         ├─ S45nocry-rescue    starts everything below
         ├─ nocry-ui           the touch interface (LVGL on the frame buffer, NS2009 touch chip)
@@ -53,13 +53,15 @@ The rule that keeps it small: **the interfaces do no work themselves.** The touc
 
 ### Where it lives on the board
 
-Two copies of `nocry-rescue.uImage`, one in the last 32 MiB of each root file system partition. Those partitions are 500 MiB and a system image takes 105 to 158 MiB, and the firmware's updater writes only the image, so firmware updates, factory resets and a reformatted data partition leave the copies alone. The last 4 KiB of that room hold the kept settings: touch calibration, which way up, the access point's name and password, what remote access is on.
+Two copies of `nocry-rescue.uImage`, one in the last 50 MiB of each root file system partition. Those partitions are 500 MiB and a system image takes 105 to 158 MiB, and the firmware's updater writes only the image, so firmware updates, factory resets and a reformatted data partition leave the copies alone. The last 4 KiB of that room hold the kept settings: touch calibration, which way up, the access point's name and password, what remote access is on.
 
 ```sh
 nocry rescue --install      # store both copies (board on USB), each read back and CRC-checked
 nocry rescue                # are they there?
 nocry rescue --remove
 ```
+
+When the rescue system starts and finds one copy good and the other missing or damaged, it copies the good one over. Removing it on purpose (`nocry rescue --remove`) erases both.
 
 ### Safety rules it keeps
 

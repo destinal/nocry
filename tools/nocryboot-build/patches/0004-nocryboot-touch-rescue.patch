@@ -2,13 +2,14 @@ nocryboot: hold the screen at power-on to start the rescue system
 
 The Nebula Pad build reads the touch chip once at start (NS2009, I2C bit-banged on PC25/PC26).
 If the screen is pressed it looks for the rescue system, a Linux kernel as a uImage, in the
-last 32 MiB of each root file system partition (the slot that would start first, then the
+last 50 MiB of each root file system partition (the slot that would start first, then the
 other), checks the header and the contents against the CRCs in the header, and starts it with
-nocry.rescue=touch. Anything missing or wrong and the board starts as always. Version 0.3
-(0.2 took the place of the image from a note in "ota" and read a file on the data partition).
+nocry.rescue=touch. Anything missing or wrong and the board starts as always. Version 0.4
+(0.2 read a file on the data partition through a note in "ota"; 0.3, never released, had the
+copies in the last 32 MiB).
 ---
 diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
-index 6e6d88620..df09ac63a 100644
+index 6e6d88620..875ea35fa 100644
 --- a/common/spl/spl_jzsdhci.c
 +++ b/common/spl/spl_jzsdhci.c
 @@ -2065,6 +2065,7 @@ void spl_mmc_mcu_rtos_boot(void)
@@ -26,7 +27,7 @@ index 6e6d88620..df09ac63a 100644
 +#ifdef CONFIG_NOCRYBOOT_TOUCH
 +/*
 + * The rescue system: a Linux kernel with its files built in.  It is kept where nothing else
-+ * writes: in the last 32 MiB of each of the two root file system partitions, far behind the
++ * writes: in the last 50 MiB of each of the two root file system partitions, far behind the
 + * end of any system image, so that an update of the firmware, a factory reset and a damaged
 + * data partition all leave it alone.  Each copy is a plain uImage named "nocry-rescue...",
 + * a kernel that needs no unpacking by the loader.  A copy is started only if the checksums
@@ -35,7 +36,7 @@ index 6e6d88620..df09ac63a 100644
 + * always.
 + */
 +#define NB_SCRATCH	0x8f000000	/* far above anything loaded */
-+#define NB_RESCUE_ROOM	(32 << 11)	/* sectors */
++#define NB_RESCUE_ROOM	(50 << 11)	/* sectors: 50 MiB */
 +
 +static u32 nb_crc(const u32 *table, const u8 *p, u32 len)
 +{
@@ -175,7 +176,7 @@ index bc17057ed..9f0476129 100644
   * Someone at the serial console asking for the door: at least three ESC
   * characters, and nothing else, received since the console came up.
 diff --git a/include/configs/nocryboot.h b/include/configs/nocryboot.h
-index 3eda3a42f..aa20666ee 100644
+index 3eda3a42f..4f6213ed0 100644
 --- a/include/configs/nocryboot.h
 +++ b/include/configs/nocryboot.h
 @@ -21,7 +21,7 @@
@@ -183,7 +184,7 @@ index 3eda3a42f..aa20666ee 100644
  #define NOCRYBOOT_VERSION	"0.1-doortest"	/* never installed: it only opens the door */
  #else
 -#define NOCRYBOOT_VERSION	"0.1"
-+#define NOCRYBOOT_VERSION	"0.3"
++#define NOCRYBOOT_VERSION	"0.4"
  #endif
  
  #define CONFIG_ROOTFS_SQUASHFS

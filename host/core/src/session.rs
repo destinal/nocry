@@ -621,7 +621,7 @@ pub fn rescue_image(opt: Option<&PathBuf>) -> Result<PathBuf> {
 }
 
 /// The room at the end of each root file system partition that holds a copy of the rescue system.
-pub const RESCUE_ROOM: u64 = 32 << 20;
+pub const RESCUE_ROOM: u64 = 50 << 20;
 
 /// Is the rescue system stored on the board? "yes" (at least one copy with the right
 /// checksums), "damaged" or "no"; and how many of the two copies are good.
@@ -631,7 +631,7 @@ pub fn rescue_status() -> Result<(String, u32)> {
     Ok((kv(&out, "stored"), good))
 }
 
-/// Store the rescue system on the board: a copy in the last 32 MiB of each root file system
+/// Store the rescue system on the board: a copy in the last 50 MiB of each root file system
 /// partition, behind the system image, each read back and checked the way the loader checks
 /// it. Returns how many copies were stored (1 or 2).
 pub fn rescue_install(image: &std::path::Path) -> Result<u32> {
@@ -644,7 +644,7 @@ pub fn rescue_install(image: &std::path::Path) -> Result<u32> {
         bail!("{} is an older kind of rescue image that the loader cannot start from the board; get the current board images", image.display());
     }
     if data.len() as u64 > RESCUE_ROOM {
-        bail!("the rescue image is too large to store ({} MiB; the room is 32 MiB)", data.len() >> 20);
+        bail!("the rescue image is too large to store ({} MiB; the room is 50 MiB)", data.len() >> 20);
     }
     say!("sending the rescue system to the board ({:.1} MiB)", data.len() as f64 / 1048576.0);
     let out = String::from_utf8_lossy(&do_service()?.board_do("rescue-install", None, Some(&data), Duration::from_secs(600))?).into_owned();
@@ -652,6 +652,12 @@ pub fn rescue_install(image: &std::path::Path) -> Result<u32> {
         bail!("the board did not confirm the rescue system");
     }
     Ok(kv(&out, "copies").parse().unwrap_or(0))
+}
+
+/// Is the loader on the board a nocryboot that looks for the rescue system somewhere else
+/// than where it is kept now (0.2: a file on the data partition; 0.3: the last 32 MiB)?
+pub fn rescue_loader_old() -> Result<bool> {
+    Ok(kv(&do_text("rescue-status", None)?, "loader_old") == "yes")
 }
 
 /// Remove it again.
@@ -2460,7 +2466,7 @@ pub fn copy_slot(soc: &SocProfile, via: Via, from: &str, safety_dir: Option<&std
         if sp.size() != dp.size() {
             bail!("{sn} and {dn} differ in size ({} and {} bytes); the slot cannot be copied", sp.size(), dp.size());
         }
-        // the last 32 MiB of a root file system partition are not firmware: each slot keeps
+        // the last 50 MiB of a root file system partition are not firmware: each slot keeps
         // its own copy of the rescue system there (docs/nocryboot.md)
         let size = if base == "rootfs" && sp.size() > 2 * RESCUE_ROOM { sp.size() - RESCUE_ROOM } else { sp.size() };
         jobs.push((sp.offset(), dp.offset(), size, dn));

@@ -296,6 +296,16 @@ enum Cmd {
         #[arg(long)]
         target: Option<PathBuf>,
     },
+    /// Newer versions of the rescue image and the nocryboot loader in this project's releases
+    /// on GitHub (used by the rescue system's Updates). `check` prints what the newest release
+    /// has as key=value lines; `fetch URL SHA256 BYTES FILE` downloads one of its files and
+    /// keeps it only if size and SHA-256 match
+    SelfUpdate {
+        /// check | fetch
+        what: String,
+        /// for fetch: URL SHA256 BYTES FILE
+        args: Vec<String>,
+    },
     /// Download a firmware from the firmware catalog (verified, cached). MODEL: NEBULA, F005, F003, F004;
     /// VERSION: e.g. 1.1.0.30 or "latest". Prints the local path for --os
     Fetch { model: String, version: String },
@@ -677,10 +687,15 @@ fn main() -> Result<()> {
                 let copies = s::rescue_install(&img)?;
                 println!("rescue image installed and verified ({copies} of 2 copies)");
                 if copies < 2 {
-                    println!("one slot has no room for a copy: its system image reaches into the last 32 MiB of the partition");
+                    println!("one slot has no room for a copy: its system image reaches into the last 50 MiB of the partition");
                 }
                 println!("to boot it: have a finger on the screen while switching the board on");
-                println!("(that needs the nocryboot loader 0.3 or later: see `nocry loader`)");
+                if s::rescue_loader_old()? {
+                    println!("NOTE: the boot loader on this board is older than nocryboot 0.4 and does not look where");
+                    println!("the rescue image is kept now. Update it: nocry loader --install --yes");
+                } else {
+                    println!("(that needs the nocryboot loader 0.4 or later: see `nocry loader`)");
+                }
             } else if remove {
                 s::rescue_remove()?;
                 println!("rescue image removed");
@@ -896,6 +911,27 @@ fn main() -> Result<()> {
                     let have = catalog::cached_path(&dir.join("firmware"), &f.url, &f.file).exists();
                     println!("  {:<12} {}  {:>4} MiB  {}{}", f.version, f.released, f.size >> 20, f.file, if have { "  [downloaded]" } else { "" });
                 }
+            }
+        }
+        Cmd::SelfUpdate { what, args } => {
+            use nocry_core::selfupdate as su;
+            match (what.as_str(), args.as_slice()) {
+                ("check", []) => {
+                    let o = su::latest()?;
+                    println!("release={}", o.version);
+                    if let Some(a) = &o.rescue {
+                        println!("rescue_url={}\nrescue_sha256={}\nrescue_bytes={}", a.url, a.sha256, a.size);
+                    }
+                    for (family, version, a) in &o.loaders {
+                        println!("loader_{family}_version={version}\nloader_{family}_url={}\nloader_{family}_sha256={}\nloader_{family}_bytes={}", a.url, a.sha256, a.size);
+                    }
+                }
+                ("fetch", [url, sha256, bytes, file]) => {
+                    let size: u64 = bytes.parse().context("BYTES is not a number")?;
+                    su::fetch(url, sha256, size, std::path::Path::new(file))?;
+                    println!("{file}");
+                }
+                _ => bail!("usage: nocry self-update check | nocry self-update fetch URL SHA256 BYTES FILE"),
             }
         }
         Cmd::Fetch { model, version } => {
