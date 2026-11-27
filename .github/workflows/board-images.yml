@@ -21,9 +21,11 @@ on:
 permissions:
   contents: write     # replaces the files of the "board-images" pre-release
 
+# One at a time, and a running build is left to finish (it takes over an hour, and its result
+# is what tools/get-images.sh downloads); of several waiting ones only the newest runs.
 concurrency:
   group: board-images-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   images:

@@ -38,9 +38,22 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 echo "downloading $file ($tag)"
 if ! curl -fL --retry 3 --progress-bar -o "$tmp/$file" "$BASE/$tag/$file"; then
-  echo "error: could not download $BASE/$tag/$file" >&2
-  echo "       (no such release, or no connection). To build the images yourself: $0 --build" >&2
-  exit 1
+  url=
+  if [ "$tag" = board-images ]; then
+    # the set built from main is not there (yet, or its build failed): take the newest release's
+    url=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=20" 2>/dev/null \
+          | grep -o "https://github.com/$REPO/releases/download/v[^\"]*/nocry-board-images-[^\"]*\.tar\.gz" | head -1 || true)
+  fi
+  if [ -z "$url" ]; then
+    echo "error: could not download $BASE/$tag/$file" >&2
+    echo "       (no such release, or no connection). To build the images yourself: $0 --build" >&2
+    exit 1
+  fi
+  file=${url##*/}
+  echo "the set built from the newest sources is not available; taking the newest release's instead:"
+  echo "downloading $file"
+  curl -fL --retry 3 --progress-bar -o "$tmp/$file" "$url" || { echo "error: could not download $url" >&2; exit 1; }
+  echo "note: a release's set is older than the sources here and has no nocry-rescue image; $0 --build makes the current one"
 fi
 mkdir "$tmp/x" && tar xzf "$tmp/$file" -C "$tmp/x"
 # every file is listed with its checksum inside the set; a damaged or cut-off download fails here
