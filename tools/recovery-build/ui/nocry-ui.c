@@ -8,10 +8,17 @@
  * separate program with its arguments as they are, never through a shell.  So the checks
  * exist once.
  *
- *   nocry-ui [--fb DEV] [--i2c DEV]
+ *   nocry-ui [--fb DEV] [--i2c DEV] [--turn 0|90|270]
  *   nocry-ui --sim SCRIPT        no screen and no touch chip: follow a script of
  *                                "tap X Y", "hold X Y MS", "wait MS", "shot FILE.ppm" lines
- *                                (testing on a PC; commands come from $PATH)
+ *                                (testing on a PC; commands come from $PATH; --turn 0 for
+ *                                the wide layout)
+ *
+ * Which way up: the 480x272 panel of the Nebula Pad and the printers built on it is used
+ * upright (272 wide, 480 high), turned the same way as the boot logo.  A panel that is
+ * already upright or is meant to be wide (the K1 family, once its panel and touch chip are
+ * supported) is used as it is.  --turn overrides.  $NOCRY_UI_LOG=1 writes every touch to
+ * standard error (where it landed, how hard).
  *
  * The touch position needs calibrating once (three crosses); it is kept on the data partition
  * next to the rescue image.  Holding a finger anywhere for ten seconds starts the calibration
@@ -34,9 +41,12 @@
 #include <linux/i2c-dev.h>
 #include "lvgl.h"
 
-#define W 480
-#define H 272
-#define BAR 34			/* the title bar */
+#define BAR 44			/* the title bar */
+#define MAXPIX (800 * 480)
+
+static int W = 480, H = 272;	/* as the interface sees the screen */
+static int turn;		/* 0, or 90 / 270: the panel is wide and the interface upright */
+static int touch_log;
 
 static const char *RUN = "/run";
 static int sim;
@@ -52,28 +62,32 @@ uint32_t nocry_ui_ms(void)
 
 /* ---- the screen -------------------------------------------------------------------- */
 static uint8_t *fb; static int fb_bpp, fb_stride;
-static lv_color_t frame[W * H];
+static lv_color_t frame[MAXPIX];
 
 static void flush(lv_disp_drv_t *d, const lv_area_t *a, lv_color_t *c)
 {
-	int x, y, w = a->x2 - a->x1 + 1;
-	for (y = a->y1; y <= a->y2; y++, c += w) {
-		if (!fb) break;
-		if (fb_bpp == 4) memcpy(fb + y * fb_stride + a->x1 * 4, c, w * 4);
-		else for (x = 0; x < w; x++) {
-			uint16_t v = (c[x].ch.red >> 3) << 11 | (c[x].ch.green >> 2) << 5 | c[x].ch.blue >> 3;
-			memcpy(fb + y * fb_stride + (a->x1 + x) * 2, &v, 2);
+	int x, y;
+	(void)c;
+	/* the whole picture is in "frame"; copy the changed part, turned if the panel is */
+	for (y = a->y1; fb && y <= a->y2; y++)
+		for (x = a->x1; x <= a->x2; x++) {
+			lv_color_t px = frame[y * W + x];
+			int fx = turn == 90 ? y : turn == 270 ? H - 1 - y : x, fy = turn == 90 ? W - 1 - x : turn == 270 ? x : y;
+			if (fb_bpp == 4) memcpy(fb + fy * fb_stride + fx * 4, &px, 4);
+			else { uint16_t v = (px.ch.red >> 3) << 11 | (px.ch.green >> 2) << 5 | px.ch.blue >> 3; memcpy(fb + fy * fb_stride + fx * 2, &v, 2); }
 		}
-	}
 	lv_disp_flush_ready(d);
 }
 
-static int screen_open(const char *dev)
+static int screen_open(const char *dev, int want_turn)
 {
 	struct fb_var_screeninfo v; struct fb_fix_screeninfo f; int fd = open(dev, O_RDWR); size_t size;
 	if (fd < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &v) || ioctl(fd, FBIOGET_FSCREENINFO, &f)) { perror(dev); return -1; }
 	fb_bpp = v.bits_per_pixel / 8; fb_stride = f.line_length; size = (size_t)fb_stride * v.yres_virtual;
-	if ((fb_bpp != 4 && fb_bpp != 2) || v.xres < W || v.yres < H) { fprintf(stderr, "nocry-ui: this screen is not supported\n"); return -1; }
+	if ((fb_bpp != 4 && fb_bpp != 2) || v.xres * v.yres > MAXPIX || v.xres < 272 || v.yres < 272) { fprintf(stderr, "nocry-ui: this screen is not supported\n"); return -1; }
+	/* the small wide panel (Nebula Pad and the printers built on it) is used upright, turned as the boot logo is */
+	turn = want_turn >= 0 ? want_turn : v.xres == 480 && v.yres == 272 ? 90 : 0;
+	if (turn) { W = v.yres; H = v.xres; } else { W = v.xres; H = v.yres; }
 	fb = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (fb == MAP_FAILED) { perror("mmap"); fb = NULL; return -1; }
 	memset(fb, 0, size);
@@ -106,8 +120,10 @@ static void touch_read(lv_indev_drv_t *d, lv_indev_data_t *data)
 		return;
 	}
 	z = i2c < 0 ? -1 : ns_read(0xe0);
-	/* pressed from 500 up, let go below 250: a finger that is leaving wobbles in between */
-	if (z >= (down ? 250 : 500)) {
+	/* The pressure reading is 0 with nothing on the screen, but how high it gets under a finger
+	   depends on where the finger is (it is a voltage divider across the panel): towards one
+	   edge it stays low.  So the bar is low: pressed from 150 up, let go below 80. */
+	if (z >= (down ? 80 : 150)) {
 		x = ns_read(0xc0); y = ns_read(0xd0); x2 = ns_read(0xc0); y2 = ns_read(0xd0);
 		/* two readings that agree, or the reading is taken while the finger settles */
 		if (x >= 0 && y >= 0 && abs(x - x2) < 40 && abs(y - y2) < 40) {
@@ -126,6 +142,12 @@ static void touch_read(lv_indev_drv_t *d, lv_indev_data_t *data)
 		if (last_x >= W) last_x = W - 1;
 		if (last_y < 0) last_y = 0;
 		if (last_y >= H) last_y = H - 1;
+	}
+	if (touch_log) {
+		static int was;
+		if (raw_down && !was) fprintf(stderr, "touch down: raw %d,%d pressure %d -> screen %d,%d\n", raw_x, raw_y, z, last_x, last_y);
+		if (!raw_down && was) fprintf(stderr, "touch up:   last screen %d,%d\n", last_x, last_y);
+		was = raw_down;
 	}
 	if (down && nocry_ui_ms() - held_since > 10000) { want_calibration = 1; held_since = nocry_ui_ms(); }
 	data->point.x = last_x; data->point.y = last_y;
@@ -247,7 +269,16 @@ static lv_obj_t *button(lv_obj_t *parent, const char *label, lv_event_cb_t cb, v
 	if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, arg);
 	return b;
 }
-static lv_obj_t *wide(lv_obj_t *b) { lv_obj_set_width(b, lv_pct(100)); return b; }
+static lv_obj_t *wide(lv_obj_t *b)
+{
+	lv_obj_t *l = lv_obj_get_child(b, 0);
+	lv_obj_set_width(b, lv_pct(100));
+	/* a long label takes a second line instead of being cut off */
+	lv_obj_set_height(b, LV_SIZE_CONTENT); lv_obj_set_style_min_height(b, 44, 0);
+	lv_obj_set_width(l, lv_pct(100)); lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+	lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+	return b;
+}
 static lv_obj_t *grey(lv_obj_t *b) { lv_obj_set_style_bg_color(b, lv_color_hex(0x48505a), 0); return b; }
 static lv_obj_t *red(lv_obj_t *b) { lv_obj_set_style_bg_color(b, lv_color_hex(0xb03a3a), 0); return b; }
 
@@ -272,7 +303,7 @@ static lv_obj_t *modal_box(void)
 	lv_obj_set_style_bg_color(modal, lv_color_hex(0x000000), 0); lv_obj_set_style_bg_opa(modal, LV_OPA_70, 0);
 	lv_obj_add_flag(modal, LV_OBJ_FLAG_CLICKABLE);		/* nothing underneath can be touched */
 	box = lv_obj_create(modal);
-	lv_obj_set_size(box, W - 40, LV_SIZE_CONTENT);
+	lv_obj_set_size(box, W - (W > 400 ? 40 : 16), LV_SIZE_CONTENT);
 	lv_obj_set_style_max_height(box, H - 16, 0);
 	lv_obj_center(box);
 	lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
@@ -327,6 +358,7 @@ static void code_tick(lv_timer_t *t)
 	(void)t;
 	c[strcspn(c, "\r\n")] = 0;
 	if (strlen(c) == 6) snprintf(s, sizeof s, "code  %.3s %s", c, c + 3); else s[0] = 0;
+	if (W < 400) s[0] = 0;		/* no room in the bar: the home screen shows it */
 	if (strcmp(lv_label_get_text(code_lbl), s)) lv_label_set_text(code_lbl, s);
 	free(c);
 	if (want_calibration) { extern void calibrate_screen(void); want_calibration = 0; depth = 1; go(calibrate_screen); }
@@ -431,17 +463,41 @@ static void pw_key(lv_event_t *e)
 	if (strlen(lv_textarea_get_text(pw_area)) < 8) { remark("Too short", "A Wi-Fi password has at least 8 characters."); return; }
 	{ char pw[80]; snprintf(pw, sizeof pw, "%s", lv_textarea_get_text(pw_area)); wifi_join(pw); }
 }
+/* An upright screen is 272 wide: ten keys in a row is the most a finger can hit, and they are
+   made tall.  Everything that can be in a password is on the letters and the two "1#" pages. */
+static void keyboard_upright(lv_obj_t *kb)
+{
+	static const char *lower[] = { "q","w","e","r","t","y","u","i","o","p","\n", "a","s","d","f","g","h","j","k","l","\n",
+		"ABC","z","x","c","v","b","n","m",LV_SYMBOL_BACKSPACE,"\n", "1#"," ",LV_SYMBOL_OK,"" };
+	static const char *upper[] = { "Q","W","E","R","T","Y","U","I","O","P","\n", "A","S","D","F","G","H","J","K","L","\n",
+		"abc","Z","X","C","V","B","N","M",LV_SYMBOL_BACKSPACE,"\n", "1#"," ",LV_SYMBOL_OK,"" };
+	static const char *special[] = { "1","2","3","4","5","6","7","8","9","0","\n", "!","@","#","$","%","^","&","*","(",")","\n",
+		"-","_","=","+","[","]","{","}","\\","|","\n", ";",":","'","\"",",",".","<",">","/","?","\n",
+		"abc","`","~"," ",LV_SYMBOL_BACKSPACE,LV_SYMBOL_OK,"" };
+	#define K LV_BTNMATRIX_CTRL_POPOVER | 2
+	#define F LV_KEYBOARD_CTRL_BTN_FLAGS | 3
+	static const lv_btnmatrix_ctrl_t letters[] = { K,K,K,K,K,K,K,K,K,K, K,K,K,K,K,K,K,K,K, F,K,K,K,K,K,K,K,F, F | 1, 12, F | 1 };
+	static const lv_btnmatrix_ctrl_t signs[] = { K,K,K,K,K,K,K,K,K,K, K,K,K,K,K,K,K,K,K,K, K,K,K,K,K,K,K,K,K,K, K,K,K,K,K,K,K,K,K,K, F,K,K,6,F,F };
+	#undef K
+	#undef F
+	lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, lower, letters);
+	lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_UPPER, upper, letters);
+	lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL, special, signs);
+	lv_obj_set_style_pad_all(kb, 2, 0); lv_obj_set_style_pad_gap(kb, 3, 0);
+}
 static void password_screen(void)
 {
 	lv_obj_t *kb; char t[100];
-	snprintf(t, sizeof t, "Password for %s", chosen); set_title(t);
+	set_title(W < 400 ? "Password" : (snprintf(t, sizeof t, "Password for %s", chosen), t));
 	lv_obj_set_style_pad_all(content, 4, 0);
 	pw_area = lv_textarea_create(content);
 	lv_textarea_set_one_line(pw_area, true); lv_textarea_set_max_length(pw_area, 63);
-	lv_textarea_set_placeholder_text(pw_area, "password");
+	snprintf(t, sizeof t, "password for %s", chosen);
+	lv_textarea_set_placeholder_text(pw_area, t);
 	lv_obj_set_width(pw_area, lv_pct(100));
 	kb = lv_keyboard_create(content);
-	lv_obj_set_size(kb, lv_pct(100), H - BAR - 52);
+	lv_obj_set_size(kb, lv_pct(100), H - BAR - 52 > 300 ? 300 : H - BAR - 52);
+	if (W < 400) keyboard_upright(kb);
 	lv_keyboard_set_textarea(kb, pw_area);
 	lv_obj_add_event_cb(kb, pw_key, LV_EVENT_READY, NULL);
 	lv_obj_add_event_cb(kb, pw_key, LV_EVENT_CANCEL, NULL);
@@ -730,7 +786,7 @@ static void about_screen(void)
 }
 
 /* ---- calibration: three crosses -------------------------------------------------------- */
-static const lv_point_t cal_at[3] = { { 48, 40 }, { W - 48, H / 2 }, { W / 2, H - 40 } };
+static lv_point_t cal_at[3];
 static int cal_step, cal_wait_up; static long cal_sx, cal_sy, cal_n; static int cal_rx[3], cal_ry[3];
 static lv_obj_t *cal_cross, *cal_text;
 
@@ -739,7 +795,7 @@ static void cal_store(void)
 	char p[128], d[160]; FILE *f;
 	snprintf(p, sizeof p, "%s/nocry-touch.cal", RUN);
 	f = fopen(p, "w"); if (!f) return;
-	fprintf(f, "%.9g %.9g %.9g %.9g %.9g %.9g\n", cal[0], cal[1], cal[2], cal[3], cal[4], cal[5]); fclose(f);
+	fprintf(f, "%dx%d %.9g %.9g %.9g %.9g %.9g %.9g\n", W, H, cal[0], cal[1], cal[2], cal[3], cal[4], cal[5]); fclose(f);
 	snprintf(d, sizeof d, "nocry-rescue/touch.cal");
 	start(NULL, p, "nocry-rescue-do", "put", d, NULL);	/* kept if the rescue system is stored on the board */
 }
@@ -760,7 +816,7 @@ static void cal_place(void)
 {
 	char s[80];
 	lv_obj_set_pos(cal_cross, cal_at[cal_step].x - 20, cal_at[cal_step].y - 20);
-	snprintf(s, sizeof s, "Press the cross and hold it a moment   (%d of 3)", cal_step + 1);
+	snprintf(s, sizeof s, "Press the cross and hold it a moment\n(%d of 3)", cal_step + 1);
 	lv_label_set_text(cal_text, s);
 	cal_sx = cal_sy = cal_n = 0; cal_wait_up = 1;
 }
@@ -788,11 +844,15 @@ void calibrate_screen(void)
 	set_title("Touch calibration");
 	cal_ok = 0;				/* nothing can be pressed by accident meanwhile */
 	cal_step = 0;
+	cal_at[0].x = 40; cal_at[0].y = 40; cal_at[1].x = W - 40; cal_at[1].y = H / 2; cal_at[2].x = W / 2; cal_at[2].y = H - 40;
 	modal_close();
 	modal = lv_obj_create(lv_layer_top());		/* over everything; removed with the screen */
 	lv_obj_remove_style_all(modal); lv_obj_set_size(modal, W, H);
 	lv_obj_set_style_bg_color(modal, lv_color_hex(0x101418), 0); lv_obj_set_style_bg_opa(modal, LV_OPA_COVER, 0);
 	cal_text = lv_label_create(modal); lv_obj_align(cal_text, LV_ALIGN_CENTER, 0, -34);
+	lv_obj_set_style_text_color(cal_text, lv_color_hex(0xffffff), 0);
+	lv_obj_set_width(cal_text, W - 100); lv_label_set_long_mode(cal_text, LV_LABEL_LONG_WRAP);
+	lv_obj_set_style_text_align(cal_text, LV_TEXT_ALIGN_CENTER, 0);
 	cal_cross = lv_obj_create(modal); lv_obj_remove_style_all(cal_cross); lv_obj_set_size(cal_cross, 40, 40);
 	l = lv_label_create(cal_cross); lv_label_set_text(l, LV_SYMBOL_PLUS); lv_obj_set_style_text_font(l, &lv_font_montserrat_28, 0);
 	lv_obj_set_style_text_color(l, lv_palette_main(LV_PALETTE_YELLOW), 0); lv_obj_center(l);
@@ -806,10 +866,17 @@ static void home_tick(lv_timer_t *t)
 {
 	char *st = run_file("nocry-wifi.state"), s[200]; const char *mode = kv(st, "mode");
 	(void)t;
-	if (!strcmp(mode, "client")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  %s      http://%s", kv(st, "ssid"), kv(st, "address"));
-	else if (!strcmp(mode, "ap")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  own network \"%s\", password %s      http://%s", kv(st, "ssid"), kv(st, "password"), kv(st, "address"));
+	const char *gap = W < 400 ? "\n" : "      ";
+	if (!strcmp(mode, "client")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  %s%shttp://%s", kv(st, "ssid"), gap, kv(st, "address"));
+	else if (!strcmp(mode, "ap")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  own network \"%s\", password %s%shttp://%s", kv(st, "ssid"), kv(st, "password"), gap, kv(st, "address"));
 	else if (!strcmp(mode, "joining")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  joining %s...", kv(st, "ssid"));
 	else snprintf(s, sizeof s, LV_SYMBOL_WIFI "  no Wi-Fi yet");
+	if (W < 400) {		/* the bar has no room for the pairing code here */
+		char *c = run_file("nocry-pair-code"); size_t l = strlen(s);
+		c[strcspn(c, "\r\n")] = 0;
+		if (strlen(c) == 6) snprintf(s + l, sizeof s - l, "\npairing code   %.3s %s", c, c + 3);
+		free(c);
+	}
 	if (strcmp(lv_label_get_text(home_net), s)) lv_label_set_text(home_net, s);
 	free(st);
 }
@@ -820,7 +887,7 @@ static void go_cb(lv_event_t *e) { go((screen_fn)lv_event_get_user_data(e)); }
 static void tile(lv_obj_t *grid, const char *icon, const char *label, lv_event_cb_t cb, void *arg)
 {
 	lv_obj_t *b = lv_btn_create(grid), *i = lv_label_create(b), *l = lv_label_create(b);
-	lv_obj_set_size(b, 148, 78);
+	lv_obj_set_size(b, W < 400 ? (W - 20) / 2 : (W - 26) / 3, W < 400 ? 104 : 74);
 	lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_label_set_text(i, icon); lv_obj_set_style_text_font(i, &lv_font_montserrat_28, 0);
@@ -854,14 +921,14 @@ static void frame_build(void)
 	lv_obj_set_style_bg_color(scr, lv_color_hex(0x101418), 0);
 	lv_obj_remove_style_all(bar); lv_obj_set_size(bar, W, BAR); lv_obj_set_pos(bar, 0, 0);
 	lv_obj_set_style_bg_color(bar, lv_color_hex(0x1c232c), 0); lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-	back_btn = lv_btn_create(bar); lv_obj_set_size(back_btn, 54, BAR); lv_obj_set_pos(back_btn, 0, 0);
+	back_btn = lv_btn_create(bar); lv_obj_set_size(back_btn, 76, BAR); lv_obj_set_pos(back_btn, 0, 0);
 	lv_obj_set_style_radius(back_btn, 0, 0); lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x38424e), 0);
 	lv_obj_set_style_shadow_width(back_btn, 0, 0);
 	{ lv_obj_t *l = lv_label_create(back_btn); lv_label_set_text(l, LV_SYMBOL_LEFT); lv_obj_center(l); }
 	lv_obj_add_event_cb(back_btn, back_cb, LV_EVENT_CLICKED, NULL);
 	title = lv_label_create(bar); lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
-	lv_obj_align(title, LV_ALIGN_LEFT_MID, 64, 0);
-	lv_label_set_long_mode(title, LV_LABEL_LONG_DOT); lv_obj_set_width(title, 290);
+	lv_obj_align(title, LV_ALIGN_LEFT_MID, 86, 0);
+	lv_label_set_long_mode(title, LV_LABEL_LONG_DOT); lv_obj_set_width(title, W < 400 ? W - 92 : W - 200);
 	code_lbl = lv_label_create(bar); lv_label_set_text(code_lbl, "");
 	lv_obj_align(code_lbl, LV_ALIGN_RIGHT_MID, -8, 0);
 	lv_obj_set_style_text_color(code_lbl, lv_palette_lighten(LV_PALETTE_YELLOW, 1), 0);
@@ -875,7 +942,8 @@ static void frame_build(void)
 static void cal_load(void)
 {
 	char *s = run_file("nocry-touch.cal");
-	if (sscanf(s, "%lf %lf %lf %lf %lf %lf", &cal[0], &cal[1], &cal[2], &cal[3], &cal[4], &cal[5]) == 6) cal_ok = 1;
+	int w, h;	/* made for this way up, or it is of no use */
+	if (sscanf(s, "%dx%d %lf %lf %lf %lf %lf %lf", &w, &h, &cal[0], &cal[1], &cal[2], &cal[3], &cal[4], &cal[5]) == 8 && w == W && h == H) cal_ok = 1;
 	free(s);
 }
 
@@ -892,28 +960,30 @@ static void sim_run(int ms) { for (; ms > 0; ms -= 5) { sim_ms += 5; lv_timer_ha
 int main(int argc, char **argv)
 {
 	static lv_disp_draw_buf_t db; static lv_disp_drv_t dd; static lv_indev_drv_t id;
-	const char *fbdev = "/dev/fb0", *i2cdev = "/dev/i2c-4", *script = NULL; int i;
+	const char *fbdev = "/dev/fb0", *i2cdev = "/dev/i2c-4", *script = NULL; int i, want_turn = -1;
 
 	for (i = 1; i + 1 < argc; i += 2) {
 		if (!strcmp(argv[i], "--fb")) fbdev = argv[i + 1];
 		else if (!strcmp(argv[i], "--i2c")) i2cdev = argv[i + 1];
 		else if (!strcmp(argv[i], "--sim")) { script = argv[i + 1]; sim = 1; }
+		else if (!strcmp(argv[i], "--turn")) want_turn = atoi(argv[i + 1]);
 		else break;
 	}
-	if (i < argc) { fprintf(stderr, "usage: nocry-ui [--fb DEV] [--i2c DEV] | nocry-ui --sim SCRIPT\n"); return 2; }
+	if (i < argc) { fprintf(stderr, "usage: nocry-ui [--fb DEV] [--i2c DEV] [--turn 0|90|270] | nocry-ui --sim SCRIPT\n"); return 2; }
 	if (getenv("NOCRY_RUN")) RUN = getenv("NOCRY_RUN");
 	signal(SIGPIPE, SIG_IGN);
 	if (!sim) {
-		if (screen_open(fbdev)) return 1;
+		if (screen_open(fbdev, want_turn)) return 1;
 		i2c = open(i2cdev, O_RDWR);
 		if (i2c < 0 || ioctl(i2c, I2C_SLAVE, 0x48) < 0) { perror(i2cdev); i2c = -1; }
 		cal_load();
-	} else cal_ok = 1;
+	} else { cal_ok = 1; if (want_turn) { W = 272; H = 480; } }
+	touch_log = getenv("NOCRY_UI_LOG") != NULL;
 
 	lv_init();
-	lv_disp_draw_buf_init(&db, frame, NULL, W * H);
+	lv_disp_draw_buf_init(&db, frame, NULL, MAXPIX);
 	lv_disp_drv_init(&dd);
-	dd.hor_res = W; dd.ver_res = H; dd.flush_cb = flush; dd.draw_buf = &db; dd.direct_mode = 1;
+	dd.hor_res = W; dd.ver_res = H; dd.flush_cb = flush; dd.draw_buf = &db; dd.direct_mode = 1;	/* "frame" always holds the whole picture */
 	lv_disp_drv_register(&dd);
 	lv_indev_drv_init(&id);
 	id.type = LV_INDEV_TYPE_POINTER; id.read_cb = touch_read;

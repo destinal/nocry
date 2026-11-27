@@ -98,6 +98,8 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 - Repair: check either file system, storage health, remove system modifications, factory reset.
 - Long work shows a progress bar and a Stop button that says what stopping leaves behind. Anything that erases asks first.
 - Touch calibration: three crosses, once; kept next to the rescue image on the data partition. Holding a finger anywhere for ten seconds starts it again, so a wrong calibration cannot lock anyone out.
+- Which way up: on the 480x272 panel of the Nebula Pad and the printers built on it the interface is upright (272 wide, 480 high), turned the same way as the boot logo; the keyboard there has ten tall keys per row. A wide layout exists for panels meant to be wide (the K1 family, once its panel and touch chip are supported). `--turn 0|90|270` overrides.
+- The pressure reading of the touch chip depends on where the finger is, not only on how hard it presses: towards one edge it stays low (a back button in a corner did not react with a bar of 500). The interface takes 150 as pressed and 80 as let go; untouched reads 0.
 - `nocry-ui --sim SCRIPT` runs it on a PC without screen or touch chip (taps from a script, pictures to files, commands from `$PATH`): how the screens were checked before they ran on a board.
 
 Not on the screen yet: uploading a firmware file (web pages only), boot loader and boot logo changes, files and logs.
