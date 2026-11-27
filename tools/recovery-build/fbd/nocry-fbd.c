@@ -842,7 +842,8 @@ static void cmd_nocry_wifi(char *arg)
  * then OKAY; or FAIL with its message. */
 static void cmd_nocry_do(char *arg)
 {
-	static const char *const verbs[] = { "status", "health", "job", "cancel", "check", "ls", "get", "put", "rm", "bundle", "wifi-save", "restart", NULL };
+	static const char *const verbs[] = { "status", "health", "job", "cancel", "check", "ls", "get", "put", "rm", "bundle", "wifi-save", "restart",
+					      "rescue-status", "rescue-install", "rescue-remove", NULL };
 	char *a1 = strchr(arg, ':'), val[600] = "", err[400] = ""; u8 *out; size_t n = 0, en = 0; ssize_t k;
 	int i, in[2], po[2], pe[2], st = 0; pid_t pid;
 	if (a1) *a1++ = 0;
@@ -862,7 +863,7 @@ static void cmd_nocry_do(char *arg)
 		_exit(127);
 	}
 	close(in[0]); close(po[1]); close(pe[1]);
-	if (!strcmp(arg, "put") && dl && dl_size) { size_t off = 0; while (off < dl_size && (k = write(in[1], dl + off, dl_size - off)) > 0) off += k; }
+	if ((!strcmp(arg, "put") || !strcmp(arg, "rescue-install")) && dl && dl_size) { size_t off = 0; while (off < dl_size && (k = write(in[1], dl + off, dl_size - off)) > 0) off += k; }
 	close(in[1]);
 	while (n < DO_MAX && (k = read(po[0], out + n, DO_MAX - n)) > 0) n += k;
 	if (n == DO_MAX && read(po[0], err, 1) > 0) { kill(pid, SIGKILL); snprintf(err, sizeof(err), "too large to fetch this way (over 32 MiB)"); en = strlen(err); st = -1; }

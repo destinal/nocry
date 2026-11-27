@@ -1,3 +1,15 @@
+diff --git a/arch/mips/Kconfig b/arch/mips/Kconfig
+index 066bc5232..eb4288731 100644
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -465,6 +465,7 @@ config MACH_XBURST
+ 
+ config MACH_XBURST2
+     bool "Ingenic Xburst2 based machines"
++    select SYS_SUPPORTS_ZBOOT
+     select SYS_SUPPORTS_32BIT_KERNEL
+     select SYS_SUPPORTS_LITTLE_ENDIAN
+     select SYS_HAS_CPU_MIPS32_R1
 diff --git a/arch/mips/xburst2/soc-x2000/Kconfig.DT b/arch/mips/xburst2/soc-x2000/Kconfig.DT
 index 5f1144644..e5547f797 100644
 --- a/arch/mips/xburst2/soc-x2000/Kconfig.DT

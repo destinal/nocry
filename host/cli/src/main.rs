@@ -80,6 +80,18 @@ enum BoardCmd {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// The rescue system stored on the board itself (Nebula Pad, with the nocryboot loader 0.2 or
+    /// later): hold the screen while switching on and it starts, no computer needed. Without
+    /// options: say whether it is stored. --install stores it, --remove takes it away
+    Rescue {
+        #[arg(long, conflicts_with = "remove")]
+        install: bool,
+        #[arg(long)]
+        remove: bool,
+        /// the rescue image to store (default: nocry-rescue.uImage among the board images)
+        #[arg(long)]
+        image: Option<PathBuf>,
+    },
     /// Repair actions run by the board itself: storage health, file system check, files, logs, restart
     #[command(subcommand)]
     Board(BoardCmd),
@@ -655,6 +667,25 @@ fn main() -> Result<()> {
                     println!("looking for the board (put this computer on the same network)...");
                     let addr = nocry_core::session::refind_network_board(Duration::from_secs(180))?;
                     println!("found it at {addr}; use --net {addr} with the same code");
+                }
+            }
+        }
+        Cmd::Rescue { install, remove, image } => {
+            use nocry_core::session as s;
+            if install {
+                let img = s::rescue_image(image.as_ref())?;
+                let pieces = s::rescue_install(&img)?;
+                println!("the rescue system is stored on the board and checked ({pieces} piece(s) on the disk)");
+                println!("to start it: hold the screen while switching the board on, and keep holding while it counts down");
+                println!("(that needs the nocryboot loader 0.2 or later: see `nocry loader`)");
+            } else if remove {
+                s::rescue_remove()?;
+                println!("the rescue system is removed from the board");
+            } else {
+                match s::rescue_status()?.as_str() {
+                    "yes" => println!("the rescue system is stored on the board and intact"),
+                    "damaged" => println!("the rescue system was stored on the board, but it no longer reads back correctly (moved or overwritten); store it again with --install"),
+                    _ => println!("no rescue system is stored on the board (--install stores it)"),
                 }
             }
         }

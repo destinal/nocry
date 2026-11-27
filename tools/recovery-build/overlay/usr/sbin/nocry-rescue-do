@@ -25,6 +25,9 @@
 #   nocry-rescue-do fw-discard      forget it and remove the downloaded file
 #   nocry-rescue-do loader [install|factory]   the boot loader: say what is there, or change it
 #   nocry-rescue-do logo [nocry|firmware]      the boot logo: say what is there, or change it
+#   nocry-rescue-do rescue-status   is the rescue system stored on the board, and will the loader find it?
+#   nocry-rescue-do rescue-install  standard input (a rescue image) -> the data partition, and the loader's note
+#   nocry-rescue-do rescue-remove   take both away again
 #   nocry-rescue-do job             the running or last job: state=, what=, done=, total=, message=
 #   nocry-rescue-do cancel          ask the running job to stop at its next safe point
 #
@@ -338,9 +341,65 @@ do_fw_install() {
     session_off
 }
 
+# --- the rescue system stored on the board (docs/nocryboot.md) ---------------------------
+# A file on the data partition, and in the third sector of "ota" a note for the loader saying
+# where the file's blocks are and what they sum to. Hold the screen at power-on and the
+# nocryboot loader (0.2 or later, Nebula Pad) starts it.
+RESCUE_DIR=nocry-rescue
+RESCUE_FILE=$RESCUE_DIR/rescue.uImage
+ota_note() { p=$(part ota) || return 1; dd if="$p" bs=512 skip=2 count=1 2>/dev/null | tr -d '\000' | head -1; }
+rescue_status() {
+    note=$(ota_note)
+    case "$note" in
+      nocryboot:rescue:*)
+        if echo "$note" | nocry-extent --check "$DISK"; then echo "stored=yes"; else echo "stored=damaged"; fi ;;
+      *) echo "stored=no" ;;
+    esac
+    if data_on ro 2>/dev/null; then
+        [ -f "$DATA/$RESCUE_FILE" ] && echo "file_bytes=$(ls -l "$DATA/$RESCUE_FILE" | awk '{print $5}')"
+        data_off
+    fi
+}
+rescue_install() {
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; return 1; }
+    [ -d $SESSION ] && { echo "a firmware file is being held for installing; finish or discard that first" >&2; return 1; }
+    o=$(part ota) || { echo "this board has no ota partition" >&2; return 1; }
+    u=$(part userdata) || { echo "this board has no data partition" >&2; return 1; }
+    data_on rw || return 1
+    mkdir -p "$DATA/$RESCUE_DIR"
+    # take the old note away first: from here until the new one is written and checked, the
+    # loader finds nothing and starts the firmware
+    dd if=/dev/zero of="$o" bs=512 seek=2 count=1 conv=notrunc 2>/dev/null
+    rm -f "$DATA/$RESCUE_FILE"
+    cat > "$DATA/$RESCUE_FILE" || { data_off; echo "the image could not be stored (data partition full?)" >&2; return 1; }
+    sync
+    # what the loader will insist on: a kernel image named for it, needing no unpacking
+    if [ "$(dd if="$DATA/$RESCUE_FILE" bs=1 count=4 2>/dev/null | hexdump -v -e '/1 "%02x"')" != 27051956 ] ||
+       [ "$(dd if="$DATA/$RESCUE_FILE" bs=1 skip=32 count=12 2>/dev/null)" != nocry-rescue ]; then
+        rm -f "$DATA/$RESCUE_FILE"; data_off; echo "that is not a nocry rescue image" >&2; return 1
+    fi
+    note=$(nocry-extent "$DATA/$RESCUE_FILE" "$(cat /sys/class/block/$(basename "$u")/start)") || { data_off; return 1; }
+    data_off        # everything on the disk before it is read back raw
+    echo "$note" | nocry-extent --check "$DISK" || { echo "the stored image does not read back correctly; nothing was noted for the loader" >&2; return 1; }
+    { printf '%s\n' "$note"; dd if=/dev/zero bs=512 count=1 2>/dev/null; } | dd of="$o" bs=512 seek=2 count=1 conv=notrunc 2>/dev/null
+    sync
+    [ "$(ota_note)" = "$note" ] || { echo "the note for the loader could not be written" >&2; return 1; }
+    echo "stored=yes"
+    echo "pieces=$(echo "$note" | tr ' ' '\n' | grep -c '+')"
+}
+rescue_remove() {
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; return 1; }
+    o=$(part ota) && dd if=/dev/zero of="$o" bs=512 seek=2 count=1 conv=notrunc 2>/dev/null
+    if data_on rw 2>/dev/null; then rm -rf "$DATA/$RESCUE_DIR"; data_off; fi
+    sync; echo "stored=no"
+}
+
 case "$1" in
   status) status ;;
   health) health ;;
+  rescue-status) rescue_status ;;
+  rescue-install) rescue_install ;;
+  rescue-remove) rescue_remove ;;
   fw-list)
     # the list lives in memory between requests; "refresh" asks the internet for the current one
     export XDG_DATA_HOME=$RUN/nocry-list HOME=$RUN/nocry-list; mkdir -p $XDG_DATA_HOME

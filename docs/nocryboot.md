@@ -72,6 +72,25 @@ Limits: a factory reset erases the settings area and with it the script; a trial
 
 State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ... --note ... --emmc FILE` for a sequence of starts). On a K1 mainboard (2026-11-26/27): the SPL counted two starts down on the eMMC, and the started stock system (1.3.2.20) then erased the note and logged it, so both the SPL's write and the success script work there. With slot A on trial for 2 starts and power cut early twice, the third start came up in slot B with the `ota` record rewritten to `ota:kernel2` and the note `nocryboot:failed=A`. `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. On a K1 mainboard with the first sector of `rtos2` zeroed and slot B named, this loader (started from RAM) started slot A, with video (2026-11-26); an earlier build that started slot B without its boot logo image gave a running system with a dark screen. The current build (door, whole-slot rule, count of starts) is installed on the K1 mainboard and on the Nebula Pad; both cold-boot from it (2026-11-27). The door, the fallback and the count have only been exercised on the K1.
 
+### Hold the screen for the rescue system (0.2, Nebula Pad)
+
+At every start the Nebula Pad build reads the touch chip once, before it looks at the slots: an NS2009 on the two pins PC25 (clock) and PC26 (data), the I2C bus bit-banged as open-drain lines. Measured on a board: 0 when nobody touches the screen, about 2200 of 4095 under a finger. Three readings 20 ms apart of 600 or more count as held; one reading below that, or a chip that does not answer, and the board starts as always. An untouched start costs about a millisecond. The K1 build has no such check (other panel, other pins).
+
+With the screen held, the SPL starts the rescue system (`docs/nocry-rescue.md`) instead of a slot:
+
+- **Where it is.** A file on the data partition, `nocry-rescue/rescue.uImage`. The SPL cannot read a file system, so whoever stores the file leaves a note in the third sector of `ota`: `nocryboot:rescue:<sum> <sector>+<count> <sector>+<count> ...`, all hexadecimal: the runs of sectors that hold the file, in order, and the sum of its 32-bit words. Several runs are normal: this file system puts a bookkeeping block between every 4 MiB of a file.
+- **What it must be.** A uImage named `nocry-rescue...`, a Linux kernel the loader does not have to unpack: the rescue kernel is built to unpack itself, as the firmware's kernels are.
+- **Checks.** The note has to be there, the first sector has to carry that header, every run has to read, and the words have to add up to the noted sum. If the file was moved, deleted or overwritten the sum is wrong, and the board starts as always. Nothing is written.
+- **Hand-over.** The kernel gets `nocry.rescue=touch`. The rescue system then shows a five-second count and wants the screen held throughout; let go and it restarts into the firmware. A stray touch at power-on costs a restart.
+
+There is no second stage. One was tried when a USB flash disk was to be a way in as well (it needs a USB host stack, which the SPL has no room for) and dropped again with that idea; the SPL already knows how to load and start a kernel.
+
+The loader is 244 bytes under its 24 KiB after this.
+
+Storing the rescue system: `nocry rescue --install` (it sends `nocry-rescue.uImage` to the board, which writes the file, works out the runs, reads them back raw to check the sum and only then writes the note); `nocry rescue` says whether it is there and intact; `--remove` takes it away. A factory reset from Creality's menu or anything else that rewrites the data partition leaves a note that no longer matches, which is harmless: store it again.
+
+Tested in the emulator (`splemu.py --touch N`): untouched, a light touch, held with the image in three scattered runs (started, with the right argument), held with one byte of the image changed, held without a note. Not yet run on a board.
+
 ### Build and try
 
 ```

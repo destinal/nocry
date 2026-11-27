@@ -13,6 +13,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # the board's own repair actions, in the recovery and in the rescue system alike: nocry on a
 # computer reaches them through the service (nocry-do), the rescue pages run them directly
 chmod 755 "$T/usr/sbin/nocry-rescue-do"
+# where a file's blocks are, for the loader's note about the rescue system; the touch pressure
+"$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-extent" "$HERE/tools/nocry-extent.c"
+"$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-touch" "$HERE/tools/nocry-touch.c"
+"$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-extent" "$T/usr/sbin/nocry-touch"
 
 # nocry-rescue only (its system has the Wi-Fi tools): the network service and the status screen
 if [ -e "$T/usr/sbin/wpa_supplicant" ]; then

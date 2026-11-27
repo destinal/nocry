@@ -605,6 +605,54 @@ pub fn board_bundle(what: &str) -> Result<Vec<u8>> {
     do_service()?.board_do("bundle", Some(what), None, Duration::from_secs(300))
 }
 
+/// The rescue image nocry would store on a board: `nocry-rescue.uImage` among the board images.
+pub fn rescue_image(opt: Option<&PathBuf>) -> Result<PathBuf> {
+    if let Some(p) = opt {
+        return Ok(p.clone());
+    }
+    let mut cands: Vec<PathBuf> = vec![];
+    if let Ok(rec) = recovery_image(None) {
+        if let Some(d) = rec.parent() {
+            cands.push(d.join("nocry-rescue.uImage"));
+        }
+    }
+    cands.push(user_images_dir().join("nocry-rescue.uImage"));
+    cands.iter().find(|c| c.is_file()).cloned().context("no rescue image found (nocry-rescue.uImage among the board images); get the current board images, or pass --image")
+}
+
+/// Is the rescue system stored on the board, and will the loader find it?
+/// "yes", "no", or "damaged" (the loader's note is there but the image no longer matches it).
+pub fn rescue_status() -> Result<String> {
+    Ok(kv(&do_text("rescue-status", None)?, "stored"))
+}
+
+/// Store the rescue system on the board: the image as a file on the data partition, and a
+/// note for the nocryboot loader saying where its blocks are. The board checks the stored
+/// image by reading it back the way the loader will. Returns in how many pieces it lies.
+pub fn rescue_install(image: &std::path::Path) -> Result<u32> {
+    let data = std::fs::read(image).with_context(|| format!("reading {}", image.display()))?;
+    if data.len() < 64 || data[..4] != [0x27, 0x05, 0x19, 0x56] || !data[32..64].starts_with(b"nocry-rescue") {
+        bail!("{} is not a nocry rescue image", image.display());
+    }
+    // the loader starts it as it is: it must be the kind that unpacks itself
+    if data[67] != 0 {
+        bail!("{} is an older kind of rescue image that the loader cannot start from the board; get the current board images", image.display());
+    }
+    if data.len() > 31 << 20 {
+        bail!("the rescue image is too large to store this way ({} MiB)", data.len() >> 20);
+    }
+    say!("sending the rescue system to the board ({:.1} MiB)", data.len() as f64 / 1048576.0);
+    let out = String::from_utf8_lossy(&do_service()?.board_do("rescue-install", None, Some(&data), Duration::from_secs(600))?).into_owned();
+    if kv(&out, "stored") != "yes" {
+        bail!("the board did not confirm the rescue system");
+    }
+    Ok(kv(&out, "pieces").parse().unwrap_or(0))
+}
+
+pub fn rescue_remove() -> Result<()> {
+    do_text("rescue-remove", None).map(|_| ())
+}
+
 /// Leave the recovery or rescue system: restart the board normally.
 pub fn board_restart() -> Result<()> {
     do_text("restart", None).map(|_| ())

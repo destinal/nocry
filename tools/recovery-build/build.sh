@@ -115,12 +115,14 @@ if [ "${RESCUE:-0}" = 1 ]; then
     make -s -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue k1_defconfig
     KSRC=/w/linux KOUT=/w/kout-rescue sh /nocry/kernel-config.sh /br/output-rescue/images/rootfs.cpio rescue
     make -s -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue olddefconfig
-    make -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue -j\$(nproc) vmlinux > /w/kernel-rescue-build.log 2>&1
+    make -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue -j\$(nproc) vmlinuz > /w/kernel-rescue-build.log 2>&1
     cd kout-rescue
-    mipsel-linux-gnu-objcopy -O binary -R .comment -R .note -R .reginfo vmlinux vmlinux.bin
-    gzip -9nf vmlinux.bin
-    entry=0x\$(mipsel-linux-gnu-nm vmlinux | awk '\$3==\"kernel_entry\"{print substr(\$1,9)}')
-    mkimage -A mips -O linux -T kernel -C gzip -a 0x80010000 -e \$entry -n nocry-rescue -d vmlinux.bin.gz nocry-rescue.uImage >/dev/null" \
+    # a kernel that unpacks itself (as the firmware's own kernels do): nocryboot's first stage
+    # starts it straight from the eMMC and cannot unpack anything. The name is what that
+    # stage looks for; load and start address are where the unpacker was linked.
+    mipsel-linux-gnu-objcopy -O binary -R .comment -R .note -R .reginfo vmlinuz vmlinuz.bin
+    entry=\$(mipsel-linux-gnu-readelf -h vmlinuz | awk '/Entry point/{print \$4}')
+    mkimage -A mips -O linux -T kernel -C none -a \$entry -e \$entry -n nocry-rescue -d vmlinuz.bin nocry-rescue.uImage >/dev/null" \
     || { grep -n 'error\|Error' "$WORK/kernel-rescue-build.log" | head -30; tail -15 "$WORK/kernel-rescue-build.log"; exit 1; }
   cp "$WORK/kout-rescue/nocry-rescue.uImage" "$OUT/"
 fi

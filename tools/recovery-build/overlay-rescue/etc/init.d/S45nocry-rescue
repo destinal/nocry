@@ -35,8 +35,33 @@ show() {
     esac
 }
 
+# Started by holding the screen at power-on (the loader says so): the screen has to stay held
+# for five more seconds, with a count on it, or the board restarts into its firmware. A stray
+# touch while switching on then costs a restart and nothing else.
+confirm_hold() {
+    grep -q 'nocry.rescue=touch' /proc/cmdline || return 0
+    n=5
+    while [ $n -gt 0 ]; do
+        nocry-banner "#nocry rescue" "" "Keep holding the screen" "to start the rescue system" "" "#$n"
+        i=0
+        while [ $i -lt 4 ]; do
+            nocry-touch --held; r=$?
+            # let go: back to the firmware. A chip that does not answer is not a reason to leave.
+            if [ $r = 1 ]; then
+                nocry-banner "#nocry rescue" "" "Starting the printer" "normally..."
+                sync; reboot -f; sleep 30
+            fi
+            sleep 0.25; i=$((i+1))
+        done
+        n=$((n-1))
+    done
+    nocry-banner "#nocry rescue" "" "You can let go."
+    sleep 1
+}
+
 start() {
     mkdir -p /run /var/run/wpa_supplicant
+    confirm_hold
     show
     nocry-netd --code-file $CODE 2>/dev/console &
     # the web pages, on whatever network the board is on (in a session of their own)
