@@ -31,6 +31,7 @@ Last updated: 2026-11-27.
 - [ ] **Work the board can do alone should stay on the board.** Slot copy (`nocry-copy`) and every zero fill (`nocry-zero`: partition erase, erase all, factory reset, blank parts of an install) do since `nocry-fbd` 0.4; tested on a PC, not yet on hardware. Still through the computer: bringing back the boot picture kept on the board (a few MiB).
 - [ ] **NebulaOS on hardware:** nocry lists and installs NebulaOS (`docs/nebulaos.md`), tested on a disk image only. Start it on a board from a nocry install, with the factory loader and with nocryboot. Later: a start trial that works with NebulaOS (it has no settings overlay for nocry's report script).
 - [ ] **Board images from CI:** workflow `board-images` builds all of them, nocry-rescue included, on changes to their sources. Open: confirm the first run passes; let the release workflow reuse it and ship nocry-rescue; maybe publish the newest set where it can be fetched without a GitHub login (artifacts need one and expire).
+- [ ] **Board images on macOS:** `tools/build-images.sh` builds everything from a clone; verified on Linux only. Try it on a Mac with Docker Desktop (emulated containers, case-sensitive work volume) and fix what breaks.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.

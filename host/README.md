@@ -114,4 +114,11 @@ Firmware for another mainboard is refused: the printer it is for is read from `e
 
 ## Board images for a build from source
 
-The loader, boot picture and recovery images that nocry sends to a board are built with Linux tools (`tools/*/build.sh`) and are not in git. A copy of nocry built from source on another system finds them in the user's data folder: unpack `nocry-board-images-<version>.tar.gz` from the releases page into `images` there (`~/Library/Application Support/nocry/images` on macOS, `%LOCALAPPDATA%\nocry\images` on Windows, `~/.local/share/nocry/images` on Linux). Installed releases carry them already. The images of the current source are built on GitHub whenever their sources change (workflow `board-images`): `gh run download -R destinal/nocry -n board-images -D <that images folder>` fetches the newest, which also holds the nocry-rescue image. The build scripts need only Docker and git, so they may also run on macOS with Docker Desktop; that has not been tried.
+What nocry sends to a board (USB boot stages, the nocryboot loader, the boot picture program, the recovery Linux) is compiled from this repository by `tools/build-images.sh`; see "Building" in the top-level README. They are build results, so they are not in git, and nocry built from the same tree finds them under `tools/*/out` by itself.
+
+Instead of building them, a ready set can be unpacked into `images` in nocry's data folder (`~/Library/Application Support/nocry/images` on macOS, `%LOCALAPPDATA%\nocry\images` on Windows, `~/.local/share/nocry/images` on Linux):
+
+- from a release: `nocry-board-images-<version>.tar.gz`;
+- for the current source: the `board-images` artifact that GitHub builds whenever these sources change, e.g. `gh run download -R destinal/nocry -n board-images -D <that images folder>`. It also holds the nocry-rescue image.
+
+Installed releases carry the images already.

@@ -63,18 +63,31 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 | `rtos` | nocry-rtos, the open boot picture image (bare metal, no FreeRTOS) |
 | `tools/nocryboot-build` | reproducible build of nocryboot's first stage (SPL) for the eMMC |
 | `tools/nocryboot-analysis`, `tools/rtos-analysis` | emulator harnesses that compare Creality's loader and boot picture image with ours, register access by register access |
+| `tools/rtos-build`, `rtos` | the boot picture program (source and build) |
+| `tools/build-images.sh` | builds all of the board images above in one go |
 | `tools/recovery-build` | reproducible build of the recovery Linux (kernel patch, Buildroot config, `nocry-fbd`) |
 | `tools/splhdr` | generator for the SPL parameter header (DDR settings) |
 | `docs` | findings and design notes: USB boot protocol, `sn_mac`, `.ingenic` packages, restore logic, fastboot/recovery design, GUI plan, NebulaOS |
 
 ## Building
 
+Everything is built from this repository. There are two halves, and a working nocry needs both:
+
 ```sh
-tools/burner-build/build.sh        # SPL + stage2 images (needs Docker)
-tools/recovery-build/build.sh      # recovery Linux (needs Docker; ~15 min the first time)
+# 1. What runs on the board: USB boot stages, the nocryboot loader, the boot picture program,
+#    the recovery Linux. Compiled for the board's processor from upstream U-Boot, Linux and
+#    Buildroot at pinned revisions plus the patches here. Not in git; this builds them.
+tools/build-images.sh              # add --rescue for the nocry-rescue image too
+
+# 2. What runs on your computer.
 (cd host && cargo build --release) # the nocry CLI: host/target/release/nocry
 cmake -S gui -B gui/build -DCMAKE_BUILD_TYPE=Release && cmake --build gui/build -j   # GUI (Qt 6)
 ```
+
+- **Step 1 needs** Docker, git and python3 with Pillow, about 10 GB of disk, and about an hour the first time (later runs only redo what changed). The images land under `tools/*/out`, where a nocry built from the same tree finds them by itself. Each part has its own script (`tools/burner-build`, `nocryboot-build`, `rtos-build`, `recovery-build`) if you want only one.
+- **Without step 1** nocry still starts, but it has nothing to send to a board: no USB boot, no boot loader or boot picture to install.
+- **Linux** is where step 1 is used and tested; GitHub builds it from a fresh clone on every change to these sources (workflow `board-images`). **macOS** should work with Docker Desktop but has not been tried: the scripts avoid Linux-only commands, the containers run emulated on Apple silicon (slow), and the work folder must be on a case-sensitive volume (the script says how to make one).
+- **Not building step 1 yourself:** unpack `nocry-board-images-<version>.tar.gz` from a release, or the `board-images` artifact of a GitHub run, into nocry's data folder (see `host/README.md`).
 
 On Linux a udev rule is needed so a normal user can open the USB devices. The window offers to install it on first run (one password prompt); by hand, copy `host/contrib/60-nocry.rules` into `/etc/udev/rules.d/`. See `host/README.md` for the command-line tool and `gui/README.md` for the GUI.
 

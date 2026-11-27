@@ -2311,7 +2311,8 @@ private:
 static void setDevPaths()
 {
     QDir d(QCoreApplication::applicationDirPath());
-    for (int i = 0; i < 5; i++, d.cdUp()) {
+    // far enough up for a macOS bundle too: gui/build/nocry-gui.app/Contents/MacOS
+    for (int i = 0; i < 8; i++, d.cdUp()) {
         if (d.exists("tools/burner-build/out/spl-x2000e/spl-x2000e.bin")) {
             const QByteArray img = d.filePath("tools/burner-build/out").toUtf8();
             const QByteArray rec = d.filePath("tools/recovery-build/out/nocry-recovery.uImage").toUtf8();

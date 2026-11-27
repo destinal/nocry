@@ -7,8 +7,13 @@
 # Usage: tools/recovery-build/build.sh [WORKDIR] [OUTDIR]      (needs docker + git; ~10 GB in WORKDIR)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-WORK=$(realpath -m "${1:-$HOME/nocry-work}")
-OUT=$(realpath -m "${2:-$HERE/out}")
+# The same commands on Linux and macOS (no GNU-only options), and the same compilers on every
+# computer: the build containers are x86-64, emulated where the computer is not.
+abspath() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s\n' "$PWD/$1" ;; esac; }
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+export DOCKER_DEFAULT_PLATFORM=${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+WORK=$(abspath "${1:-$HOME/nocry-work}")
+OUT=$(abspath "${2:-$HERE/out}")
 LINUX_REPO=https://github.com/k1-debian/linux
 LINUX_BRANCH=master-k1
 LINUX_SHA=043f9fc7090512e504386a3866aa5a9d0b6af737
@@ -17,6 +22,21 @@ BR_REPO=https://gitlab.com/buildroot.org/buildroot.git
 BR_TAG=2025.02.20
 
 mkdir -p "$WORK" "$OUT"
+# The Linux source has files whose names differ only in upper and lower case. On a file system
+# that does not tell them apart (the macOS default) the checkout is silently wrong.
+rm -f "$WORK/.Case-Test" && : > "$WORK/.case-test"
+if [ -e "$WORK/.Case-Test" ]; then
+  rm -f "$WORK/.case-test"
+  cat >&2 <<EOT
+error: $WORK is on a file system that ignores upper and lower case in file names; the Linux
+kernel cannot be built there. Give a work folder on a case-sensitive one. On macOS:
+  hdiutil create -type SPARSE -fs 'Case-sensitive APFS' -size 40g -volname nocry-work ~/nocry-work.sparseimage
+  hdiutil attach ~/nocry-work.sparseimage
+  $0 /Volumes/nocry-work
+EOT
+  exit 1
+fi
+rm -f "$WORK/.case-test"
 docker build -q -t nocry-recovery-build "$HERE" >/dev/null
 run() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/w" -v "$WORK/buildroot:/br" -v "$HERE:/nocry:ro" -w /w nocry-recovery-build bash -c "$1"; }
 
@@ -89,4 +109,4 @@ if [ "${RESCUE:-0}" = 1 ]; then
     || { grep -n 'error\|Error' "$WORK/kernel-rescue-build.log" | head -30; tail -15 "$WORK/kernel-rescue-build.log"; exit 1; }
   cp "$WORK/kout-rescue/nocry-rescue.uImage" "$OUT/"
 fi
-cd "$OUT" && ls -l nocry-recovery.uImage && sha256sum nocry-recovery.uImage
+cd "$OUT" && ls -l nocry-recovery.uImage && sha256 nocry-recovery.uImage

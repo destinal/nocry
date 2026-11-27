@@ -177,7 +177,7 @@ pub fn images_dir(opt: Option<&PathBuf>) -> Result<PathBuf> {
         }
     }
     bail!(
-        "cannot find the board images (looked in: {}). Build them with tools/burner-build/build.sh, \
+        "cannot find the board images (looked in: {}). Build them with tools/build-images.sh, \
          pass --images DIR, or unpack nocry-board-images-*.tar.gz from a nocry release into {}",
         cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", "),
         user_images_dir().display()
@@ -358,9 +358,10 @@ pub fn recovery_image(opt: Option<&PathBuf>) -> Result<PathBuf> {
             }
         }
     }
+    cands.push(user_images_dir().join("nocry-recovery.uImage"));
     cands.iter().find(|c| c.is_file()).cloned().with_context(|| {
         format!(
-            "no recovery image found (looked in: {}); build it with tools/recovery-build/build.sh or pass --image",
+            "no recovery image found (looked in: {}); build it with tools/build-images.sh or pass --image",
             cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ")
         )
     })

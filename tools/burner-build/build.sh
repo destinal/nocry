@@ -13,7 +13,12 @@
 # Usage: tools/burner-build/build.sh [OUTDIR]        (needs docker + git)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=$(realpath -m "${1:-$HERE/out}")
+# The same commands on Linux and macOS (no GNU-only options), and the same compilers on every
+# computer: the build containers are x86-64, emulated where the computer is not.
+abspath() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s\n' "$PWD/$1" ;; esac; }
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+export DOCKER_DEFAULT_PLATFORM=${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+OUT=$(abspath "${1:-$HERE/out}")
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -53,7 +58,7 @@ python3 -I "$HERE/../splhdr/nocry_splhdr.py" build \
 # Keep every stage2 under 0x44000 bytes: a 278840-byte image did not start on hardware.
 for t in nocry_ums_x2000_v12 nocry_ums_ro_x2000_v12 nocry_fb_x2000_v12; do
   build "$WORK/k1deb-nocry" "$t" "$OUT/$t"
-  sz=$(stat -c %s "$OUT/$t/u-boot.bin")
+  sz=$(($(wc -c < "$OUT/$t/u-boot.bin")))
   if [ "$sz" -ge $((0x44000)) ]; then
     echo "error: $t is $sz bytes; stage2 must stay below 0x44000 (bigger images don't start)" >&2; exit 1
   fi
@@ -70,4 +75,4 @@ if [ "${LEGACY:-0}" = 1 ]; then
   for t in burner_x2000_lpddr2 nocry_ums_x2000 nocry_ums_ro_x2000; do build "$WORK/xburst" "$t" "$OUT/$t"; done
 fi
 
-cd "$OUT" && sha256sum spl-x2000e/spl-x2000e.bin nocry_ums_*/u-boot.bin nocry_fb_*/u-boot.bin
+cd "$OUT" && sha256 spl-x2000e/spl-x2000e.bin nocry_ums_*/u-boot.bin nocry_fb_*/u-boot.bin

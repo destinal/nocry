@@ -15,7 +15,12 @@
 # Usage: tools/nocryboot-build/build.sh [OUTDIR]        (needs docker + git)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=$(realpath -m "${1:-$HERE/out}")
+# The same commands on Linux and macOS (no GNU-only options), and the same compilers on every
+# computer: the build containers are x86-64, emulated where the computer is not.
+abspath() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s\n' "$PWD/$1" ;; esac; }
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+export DOCKER_DEFAULT_PLATFORM=${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+OUT=$(abspath "${1:-$HERE/out}")
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -49,4 +54,4 @@ assert b'lcm_id=' in b and b'sn_mac' in b and b'ota:kernel2' in b
 assert b'restarting in USB boot mode' in b
 PY
 done
-cd "$OUT" && sha256sum nocryboot-nebula.bin nocryboot-k1.bin nocryboot-doortest-nebula.bin nocryboot-doortest-k1.bin
+cd "$OUT" && sha256 nocryboot-nebula.bin nocryboot-k1.bin nocryboot-doortest-nebula.bin nocryboot-doortest-k1.bin
