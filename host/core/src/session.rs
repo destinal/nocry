@@ -155,14 +155,17 @@ pub fn images_dir(opt: Option<&PathBuf>) -> Result<PathBuf> {
         if let Some(d) = exe.parent() {
             cands.push(d.join("images"));
             cands.push(d.join("../Resources/images")); // macOS app bundle
-            // host/target/{release,debug}/nocry -> project/tools/burner-build/out
+            // host/target/{release,debug}/nocry -> project/tools/burner-build/out (built here),
+            // then project/images (fetched by tools/get-images.sh)
             if let Some(proj) = d.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
                 cands.push(proj.join("tools/burner-build/out"));
+                cands.push(proj.join("images"));
             }
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
         cands.push(cwd.join("tools/burner-build/out"));
+        cands.push(cwd.join("images"));
     }
     // a build from source on a computer that cannot build the board images (they need Linux
     // tools): the release's board images, unpacked into the user's data folder
@@ -177,7 +180,7 @@ pub fn images_dir(opt: Option<&PathBuf>) -> Result<PathBuf> {
         }
     }
     bail!(
-        "cannot find the board images (looked in: {}). Build them with tools/build-images.sh, \
+        "cannot find the board images (looked in: {}). Get them with tools/get-images.sh, \
          pass --images DIR, or unpack nocry-board-images-*.tar.gz from a nocry release into {}",
         cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", "),
         user_images_dir().display()
@@ -193,7 +196,8 @@ pub fn user_images_dir() -> PathBuf {
 fn no_image(what: &str) -> String {
     format!(
         "this copy of nocry has no {what} image for this board family. Installed releases include it; a copy built \
-         from source needs the board images: unpack nocry-board-images-*.tar.gz from the nocry releases page into {}",
+         from source needs the board images: run tools/get-images.sh in the source tree, or unpack \
+         nocry-board-images-*.tar.gz from the nocry releases page into {}",
         user_images_dir().display()
     )
 }
@@ -355,13 +359,14 @@ pub fn recovery_image(opt: Option<&PathBuf>) -> Result<PathBuf> {
             cands.push(d.join("../Resources/images/nocry-recovery.uImage")); // macOS app bundle
             if let Some(proj) = d.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
                 cands.push(proj.join("tools/recovery-build/out/nocry-recovery.uImage"));
+                cands.push(proj.join("images/nocry-recovery.uImage"));
             }
         }
     }
     cands.push(user_images_dir().join("nocry-recovery.uImage"));
     cands.iter().find(|c| c.is_file()).cloned().with_context(|| {
         format!(
-            "no recovery image found (looked in: {}); build it with tools/build-images.sh or pass --image",
+            "no recovery image found (looked in: {}); get it with tools/get-images.sh or pass --image",
             cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ")
         )
     })

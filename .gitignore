@@ -9,6 +9,9 @@ nocry-identities.log
 /host/target/
 /gui/build/
 /tools/burner-build/out/
+# board images fetched by tools/get-images.sh
+/images/
+/images.new/
 /tools/recovery-build/out/
 /tools/rtos-build/out/
 /tools/nocryboot-build/out/

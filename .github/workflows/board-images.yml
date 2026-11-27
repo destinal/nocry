@@ -1,7 +1,8 @@
 # Builds everything nocry puts on a board, from the sources and patches in this repository:
 # SPL and U-Boot stages, the nocryboot loader, the boot picture image, the recovery Linux and
 # the nocry-rescue image. Runs when those sources change and on request; the result is the
-# "board-images" artifact of the run (unpack it into nocry's images folder, see host/README.md).
+# "board-images" artifact of the run and, for main, the files of the pre-release "board-images",
+# which tools/get-images.sh downloads so that nobody has to wait for this build.
 # The release workflow builds the same images (without nocry-rescue) for the packages.
 name: board-images
 on:
@@ -18,7 +19,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write     # replaces the files of the "board-images" pre-release
 
 concurrency:
   group: board-images-${{ github.ref }}
@@ -62,3 +63,18 @@ jobs:
           name: board-images
           path: dist-images
           retention-days: 90
+      - name: Publish as the "board-images" pre-release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd dist-images && tar czf ../nocry-board-images.tar.gz .)
+          sha256sum nocry-board-images.tar.gz > nocry-board-images.tar.gz.sha256
+          notes="Everything nocry puts on a board (USB boot stages, the nocryboot loader, the boot picture program, the recovery Linux, nocry-rescue), built by GitHub from commit ${GITHUB_SHA} of this repository. Replaced whenever the sources of these images change; \`tools/get-images.sh\` downloads it. This is not a version of nocry: the programs are in the versioned releases."
+          if gh release view board-images -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit board-images -R "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create board-images -R "$GITHUB_REPOSITORY" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Board images (built from main)" --notes "$notes"
+          fi
+          gh release upload board-images -R "$GITHUB_REPOSITORY" --clobber nocry-board-images.tar.gz nocry-board-images.tar.gz.sha256
