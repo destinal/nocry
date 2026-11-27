@@ -1,0 +1,64 @@
+# Builds everything nocry puts on a board, from the sources and patches in this repository:
+# SPL and U-Boot stages, the nocryboot loader, the boot picture image, the recovery Linux and
+# the nocry-rescue image. Runs when those sources change and on request; the result is the
+# "board-images" artifact of the run (unpack it into nocry's images folder, see host/README.md).
+# The release workflow builds the same images (without nocry-rescue) for the packages.
+name: board-images
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/burner-build/**"
+      - "tools/recovery-build/**"
+      - "tools/nocryboot-build/**"
+      - "tools/rtos-build/**"
+      - "tools/splhdr/**"
+      - "rtos/**"
+      - ".github/workflows/board-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: board-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    name: Board images (loaders, boot picture, recovery, rescue)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build SPL and U-Boot stages
+        run: tools/burner-build/build.sh "$PWD/out-burner"
+      - name: Build nocryboot (first-stage loader for the eMMC)
+        run: tools/nocryboot-build/build.sh "$PWD/out-nocryboot"
+      - name: Build nocry-rtos (boot picture image)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil   # mkpictures.py reads the PNGs
+          tools/rtos-build/build.sh "$PWD/out-rtos"
+          VARIANT=k1 tools/rtos-build/build.sh "$PWD/out-rtos"
+      - name: Build recovery Linux and nocry-rescue
+        run: RESCUE=1 tools/recovery-build/build.sh "$RUNNER_TEMP/recovery-work" "$PWD/out-recovery" || { tail -60 "$RUNNER_TEMP"/recovery-work/*.log; exit 1; }
+      - name: Collect
+        run: |
+          mkdir -p dist-images/spl-x2000e
+          cp out-burner/spl-x2000e/spl-x2000e.bin dist-images/spl-x2000e/
+          for t in nocry_fb_x2000_v12 nocry_ums_x2000_v12 nocry_ums_ro_x2000_v12; do
+            mkdir -p dist-images/$t && cp out-burner/$t/u-boot.bin dist-images/$t/
+          done
+          mkdir -p dist-images/nocryboot
+          cp out-nocryboot/nocryboot-nebula.bin out-nocryboot/nocryboot-k1.bin dist-images/nocryboot/
+          mkdir -p dist-images/nocry-rtos
+          cp out-rtos/nocry-rtos.bin dist-images/nocry-rtos/nocry-rtos-nebula.bin
+          cp out-rtos/nocry-rtos-k1.bin dist-images/nocry-rtos/
+          cp out-recovery/nocry-recovery.uImage out-recovery/nocry-rescue.uImage dist-images/
+          git rev-parse HEAD > dist-images/SOURCE_COMMIT
+          (cd dist-images && find . -type f ! -name SHA256SUMS | sort | xargs sha256sum | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: board-images
+          path: dist-images
+          retention-days: 90
