@@ -21,7 +21,10 @@ ap.add_argument('spl'); ap.add_argument('disk')
 ap.add_argument('--block-read'); ap.add_argument('--cmd'); ap.add_argument('--init'); ap.add_argument('--elf')
 ap.add_argument('--delay', action='append', default=[], help='address of a delay routine to skip (repeatable)')
 ap.add_argument('--lcm', type=int, default=7, help='panel id the rtos image reports; -1: it reports none')
-ap.add_argument('--slot', choices=['a', 'b'], help='pretend the ota record selects this slot'); ap.add_argument('--ram-mb', type=int, default=256)
+ap.add_argument('--slot', choices=['a', 'b'], help='pretend the ota record selects this slot')
+ap.add_argument('--blank', default='', help='comma list of partitions to read as zeros: rtos,rtos2,kernel,kernel2')
+ap.add_argument('--copy-a-to-b', action='store_true', help='read slot B (rtos2, kernel2) from slot A')
+ap.add_argument('--console-input', default='', help='characters waiting at the serial console, e.g. "\\x1b\\x1b\\x1b"'); ap.add_argument('--ram-mb', type=int, default=256)
 ap.add_argument('--limit', type=int, default=400_000_000); ap.add_argument('-o', default='trace.txt')
 args = ap.parse_args()
 
@@ -96,6 +99,8 @@ reads = collections.Counter()
 lastreads = collections.deque(maxlen=8)
 core1 = {'started': False}
 RTOS = {}
+PARTS = {'rtos': (0x1800, 0x2000), 'rtos2': (0x3800, 0x2000), 'kernel': (0x5800, 0x4000), 'kernel2': (0x9800, 0x4000)}
+conin = bytearray(args.console_input.encode().decode('unicode_escape').encode('latin1'))
 def rtos_header():
     # which slot the SPL will use, and where its image goes
     disk.seek(0x100000); slot_b = disk.read(11) == b'ota:kernel2'
@@ -114,6 +119,9 @@ def mmio_write(uc, off, size, value, ud):
             uart.append(value)
         return
     out('W %-22s = %#010x   [%#x]' % (rname(a), value, here()))
+    if a == 0xb0002004 and value & 1 and regs.get(0xb00000cc, 0) >> 8 == 0x425753:
+        out('# watchdog reset requested with "software boot select" = %d (2 = USB boot mode)' % (regs[0xb00000cc] & 0xff))
+        stop['door'] = True; uc.emu_stop(); return
     if 0xb0010000 <= a < 0xb0010800 and (a & 0xf) in (4, 8):
         base = a & ~0xf
         regs[base] = (regs.get(base, 0) | value) if a & 0xf == 4 else (regs.get(base, 0) & ~value)
@@ -129,6 +137,8 @@ def mmio_write(uc, off, size, value, ud):
 MODEL = {}
 def mmio_read(uc, off, size, ud):
     a = 0xb0000000 + off
+    if 0xb0030000 <= a < 0xb0035000 and (a & 0xfff) == 0 and conin:
+        return conin.pop(0)
     v = regs.get(a & ~3, 0)
     f = MODEL.get(a & ~3)
     if f: v = f(v)
@@ -150,8 +160,16 @@ def hook_r(uc, off, size, ud):
     if off == 0x40:                 # block_read(start sector, count, destination)
         start, cnt, dst = hargs
         disk.seek(start * 512); data = disk.read(cnt * 512)
+        for name, (first, n) in PARTS.items():
+            if first <= start < first + n:
+                if args.copy_a_to_b and name.endswith('2'):
+                    disk.seek((start - first + PARTS[name[:-1]][0]) * 512); data = disk.read(cnt * 512)
+                if name in args.blank.split(','):
+                    data = bytes(len(data))
         if start == 0x800 and args.slot:
             data = (b'ota:kernel2\n' if args.slot == 'b' else b'ota:kernel\n').ljust(len(data), b'\0')
+        if len(data) >= 36 and data[8:12] == b'RTOS':          # the image the SPL is about to start on core 1
+            h = struct.unpack('<9I', data[:36]); RTOS.update(start=h[4], size_word=h[8])
         uc.mem_write(P(dst), data)
         out('# eMMC read: sector %#x, %d blocks -> %#x' % (start, cnt, dst))
         return cnt
@@ -184,7 +202,9 @@ except UcError as e:
     out('# emulator error %s at pc %#x' % (e, mu.reg_read(UC_MIPS_REG_PC)))
 def cstr(a, n=400):
     b = bytes(mu.mem_read(P(a), n)); return b[:b.index(0)].decode('latin1') if 0 in b else b.decode('latin1')
-if 'pc' in stop:
+if 'door' in stop:
+    out('\n##### restart into USB boot mode')
+elif 'pc' in stop:
     a0, a1, a2 = (mu.reg_read(r) for r in (UC_MIPS_REG_A0, UC_MIPS_REG_A1, UC_MIPS_REG_A2))
     out('\n##### jump to %#x  a0=%#x a1=%#x a2=%#x' % (stop['pc'], a0, a1, a2))
     if 0x80000000 <= a1 < 0x90000000:

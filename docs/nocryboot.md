@@ -44,6 +44,20 @@ Remaining differences in the emulator traces: the order of two timer/clock-gate 
 
 Not compared in the emulator: the two eMMC routines "send a command" and "read blocks" (they are replaced there). The command sequence around them is identical; the routines themselves are verified on hardware.
 
+### Recovery door
+
+The factory loader hangs when the boot picture image of the chosen slot is missing or damaged, and has no way back to a PC except the BOOT button on the mainboard. nocryboot decides like this:
+
+1. The slot the `ota` record names is started if it holds a kernel. If its boot picture image is bad, it is started without one (the screen stays dark until Linux is up, and Linux gets `lcm_id=0`).
+2. Otherwise the other slot is started, if that one holds a kernel.
+3. Otherwise the board restarts in **USB boot mode**, the mode the BOOT button selects, where nocry can repair it. The same happens when the eMMC does not answer, or when three ESC characters (and nothing else) are waiting at the serial console.
+
+USB boot mode is requested the way Ingenic's own tools do it: the value `0x42575302` in the CPM register `SLPC` (0xb00000cc), then a watchdog reset.
+
+"Holds a kernel" means a uImage header with the Linux type and a plausible load address and size; the data is not checksummed (that would cost boot time). When the SPL starts the other slot it does not change the `ota` record, so the system then runs from the slot it believes inactive; treat that as an emergency start and repair the board.
+
+State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest.bin` is a loader that only opens the door, to check on a board that the boot ROM honours the request.
+
 ### Build and try
 
 ```
@@ -59,5 +73,4 @@ Installing it means writing the 24 KiB file at byte 0x4400 of the eMMC (inside t
 ### Next
 
 - An installer in nocry (with the factory loader kept for going back).
-- A recovery door: a way to reach a loader without the BOOT button (the factory SPL has none).
 - Read the partition table from the disk instead of the built-in one.

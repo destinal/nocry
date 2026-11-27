@@ -1,7 +1,7 @@
 # How the hardware answers when the SPL polls it.  Loaded by splemu.py.
 # Everything not listed reads back what was written (0 before the first write).
 for u in range(5):
-    MODEL[0xb0030014 + u * 0x1000] = lambda v: 0x60            # UART: transmitter empty
+    MODEL[0xb0030014 + u * 0x1000] = lambda v: 0x60 | (1 if conin else 0)    # UART: transmitter empty; data ready if input waits
 MODEL[0xb00000d4] = lambda v: 0xf0000000                       # clock dividers: change done, all stable
 def _ost_lo(v):
     ticks[0] += 240; return ticks[0] & 0xffffffff              # system timer: moves 10 us per read

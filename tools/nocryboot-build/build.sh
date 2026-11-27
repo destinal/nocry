@@ -27,7 +27,9 @@ mkdir -p "$OUT"
 git clone -q --depth 50 "$REPO" "$WORK/src" && git -C "$WORK/src" checkout -q "$REV"
 for p in "$HERE"/patches/*.patch; do patch -s -d "$WORK/src" -p1 < "$p"; done
 
-for fam in nebula k1; do
+# doortest: a loader that does nothing but restart the board into USB boot mode; start it
+# with `nocry run-spl` to check that a board's boot ROM honours the recovery door.
+for fam in nebula k1 doortest; do
   t=nocryboot_$fam; o="$OUT/$t"; mkdir -p "$o"
   docker run --rm -v "$WORK/src:/src:ro" -v "$o:/out" nocry-uboot-build bash -c "
     cp -a /src /w && cd /w &&
@@ -44,6 +46,7 @@ assert b[:4] == b'LPSM' and b[0x100:0x104] == b'INGE', 'header missing'
 # nocryboot must not touch the eFuse block (0xb3540000) at all
 assert not re.search(r'\blui\s+\w+,0xb354\b', dis), 'the loader references the eFuse block'
 assert b'lcm_id=' in b and b'sn_mac' in b and b'ota:kernel2' in b
+assert b'restarting in USB boot mode' in b
 PY
 done
-cd "$OUT" && sha256sum nocryboot-nebula.bin nocryboot-k1.bin
+cd "$OUT" && sha256sum nocryboot-nebula.bin nocryboot-k1.bin nocryboot-doortest.bin

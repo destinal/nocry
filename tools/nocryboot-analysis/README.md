@@ -9,6 +9,6 @@ Limits:
 - The eMMC is not emulated at register level. The routines "send a command" and "read blocks" are replaced; reads come from the image file. Commands are answered like an eMMC (no answer to the SD-only ones).
 - The rtos image is not run. When the SPL starts CPU core 1, the emulator changes the image's first word and stores a panel id (`--lcm N`, `--lcm -1` for none), which is what a finished image does.
 - Registers read back what was written; reset values are 0. A read-modify-write of a reset value is therefore invisible here.
-- `--slot a|b` overrides the `ota` record of the image.
+- `--slot a|b` overrides the `ota` record of the image; `--blank rtos,kernel2,...` reads partitions as zeros; `--copy-a-to-b` gives slot B the content of slot A; `--console-input '\x1b\x1b\x1b'` puts characters at the serial console. The run ends at the jump into the kernel or at a restart into USB boot mode.
 
 Needs: python3 with `unicorn`, `nm` (binutils).

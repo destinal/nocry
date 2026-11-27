@@ -1,0 +1,204 @@
+diff --git a/boards.cfg b/boards.cfg
+index 05ec85c91..b88c3441b 100755
+--- a/boards.cfg
++++ b/boards.cfg
+@@ -764,6 +764,7 @@ x2100l_base_rtos_sfc_nor     mips        xburst2    x2000_base   ingenic    x200
+ x2100l_base_rtos_sfc_nand     mips        xburst2    x2000_base   ingenic    x2000_v12   x2000_base:SPL_SFC_NAND,MTD_SFCNAND,SPL_RTOS_BOOT,X2100L,RMEM_MB=32,SPL_PARAMS_FIXER
+ x2000_base_rtos_xImage_mmc0         mips        xburst2    x2000_base	 ingenic	x2000_v12	x2000_base:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,RTOS_BOOT_ON_SECOND_CPU,RMEM_MB=32,SPL_PARAMS_FIXER
+ nocryboot_nebula                    mips        xburst2    x2000_base	 ingenic	x2000_v12	nocryboot:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,SPL_OS_OTA_BOOT,RTOS_BOOT_ON_SECOND_CPU,SPL_PARAMS_FIXER,NOCRYBOOT_NEBULA
++nocryboot_doortest                  mips        xburst2    x2000_base	 ingenic	x2000_v12	nocryboot:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,SPL_OS_OTA_BOOT,RTOS_BOOT_ON_SECOND_CPU,SPL_PARAMS_FIXER,NOCRYBOOT_NEBULA,NOCRYBOOT_DOOR_TEST
+ nocryboot_k1                    mips        xburst2    x2000_base	 ingenic	x2000_v12	nocryboot:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,SPL_OS_OTA_BOOT,RTOS_BOOT_ON_SECOND_CPU,SPL_PARAMS_FIXER,NOCRYBOOT_K1
+ x2000_base_rtos_xImage_sfc_nor     mips        xburst2    x2000_base   ingenic    x2000_v12   x2000_base:SPL_SFC_NOR,ENV_IS_IN_SFC,MTD_SFCNOR,SPL_RTOS_BOOT,SPL_OS_BOOT,RTOS_BOOT_ON_SECOND_CPU,RMEM_MB=32,SPL_PARAMS_FIXER
+ x2000_base_ilock_rtos_xImage_mmc0_emmc_coexist           mips        xburst2	 x2000_base	  ingenic	 x2000_v12	 x2000_base:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,RTOS_BOOT_ON_SECOND_CPU,BOOT_FAST_FIXED,STORAGE_REDUCE_SD,RTOS_SIZE_MB=32,SPL_PARAMS_FIXER,GPT_TABLE_PATH=$(TOPDIR)/board/$(BOARDDIR)/ilock
+diff --git a/common/spl/Makefile b/common/spl/Makefile
+index 8aa28c4af..e9368fde2 100644
+--- a/common/spl/Makefile
++++ b/common/spl/Makefile
+@@ -48,6 +48,7 @@ endif
+ COBJS-$(CONFIG_GPT_TAB_BUILT_IN) += spl_gpt_partition.o
+ ifdef CONFIG_SPL_AUTO_PROBE_ARGS_MEM
+ COBJS-y += spl_auto_args_mem.o
++COBJS-$(CONFIG_NOCRYBOOT) += spl_nocryboot.o
+ else
+ COBJS-$(CONFIG_BOOTARGS_AUTO_MODIFY) += spl_auto_modify_mem.o
+ endif
+diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
+index 4cc8e789a..2845d268b 100644
+--- a/common/spl/spl_jzsdhci.c
++++ b/common/spl/spl_jzsdhci.c
+@@ -2062,6 +2062,101 @@ void spl_mmc_mcu_rtos_boot(void)
+ }
+ #endif
+ 
++#ifdef CONFIG_NOCRYBOOT
++extern void nocryboot_usb_boot_mode(const char *why);
++extern int nocryboot_console_asks(void);
++
++#define NB_KERNEL	1
++#define NB_RTOS		2
++
++/* Read the first sector of a partition; 0 if there is no such partition or the read fails. */
++static int nocryboot_read_head(const char *name, u32 *buf)
++{
++	unsigned int sector;
++	u32 ret;
++
++	memset(buf, 0, 512);
++	if (spl_get_built_in_gpt_partition(name, &sector, NULL))
++		return 0;
++	ret = mmc_block_read(sector, 1, buf);
++	return ret != 0 && ret != (u32)-1;
++}
++
++/* What a slot holds: a kernel image that can be started, a boot picture image. */
++static int nocryboot_slot_state(int slot_b)
++{
++	u32 *buf = (u32 *)CONFIG_SYS_TEXT_BASE;
++	struct image_header *ih = (struct image_header *)buf;
++	struct rtos_header *rh = (struct rtos_header *)buf;
++	int state = 0;
++
++	if (nocryboot_read_head(slot_b ? CONFIG_SPL_OS_NAME2 : CONFIG_SPL_OS_NAME, buf) &&
++	    image_get_magic(ih) == IH_MAGIC && image_get_os(ih) == IH_OS_LINUX &&
++	    image_get_load(ih) >= 0x80000000 && image_get_load(ih) < 0x90000000 &&
++	    image_get_data_size(ih) > 0 && image_get_data_size(ih) < 64 * 1024 * 1024)
++		state |= NB_KERNEL;
++
++	if (nocryboot_read_head(slot_b ? CONFIG_SPL_RTOS_NAME2 : CONFIG_SPL_RTOS_NAME, buf) &&
++	    rh->tag == 0x534f5452 && rh->img_start < rh->img_end)
++		state |= NB_RTOS;
++
++	return state;
++}
++
++/*
++ * nocryboot's boot decision.  The factory loader takes the slot the "ota"
++ * record names and hangs if its boot picture image is missing or damaged.
++ * Here:
++ *   - the named slot is started if it has a kernel (without the boot picture
++ *     if that image is bad: the screen then stays dark until Linux is up);
++ *   - else the other slot, if that one has a kernel;
++ *   - else, or when asked at the serial console, USB boot mode.
++ */
++static char *nocryboot_load(void)
++{
++	u32 *buf = (u32 *)CONFIG_SYS_TEXT_BASE;
++	unsigned int sector;
++	int want_b = 0, slot, state;
++
++	if (nocryboot_console_asks())
++		nocryboot_usb_boot_mode("asked at the console");
++#ifdef CONFIG_NOCRYBOOT_DOOR_TEST
++	/* test build: checks that the boot ROM honours the request */
++	nocryboot_usb_boot_mode("door test");
++#endif
++
++	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, buf) &&
++	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, (char *)buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
++		want_b = 1;
++
++	slot = want_b;
++	state = nocryboot_slot_state(slot);
++	if (!(state & NB_KERNEL)) {
++		printf("nocryboot: slot %s has no kernel\n", slot ? "B" : "A");
++		slot = !slot;
++		state = nocryboot_slot_state(slot);
++		if (!(state & NB_KERNEL))
++			nocryboot_usb_boot_mode("no slot has a kernel");
++	}
++
++	if (state & NB_RTOS) {
++		spl_get_built_in_gpt_partition(slot ? CONFIG_SPL_RTOS_NAME2 : CONFIG_SPL_RTOS_NAME, &sector, NULL);
++		if (!mmc_rtos_load(&rtos_header, sector)) {
++			flush_cache_all();
++			mmc_rtos_load_rtosdata_partition(&rtos_header);
++			start_second_cpu();
++		}
++	} else {
++		printf("nocryboot: slot %s has no boot picture image\n", slot ? "B" : "A");
++	}
++
++	spl_get_built_in_gpt_partition(slot ? CONFIG_SPL_OS_NAME2 : CONFIG_SPL_OS_NAME, &sector, NULL);
++	mmc_load_image_raw(sector, slot ? CONFIG_SPL_OS_NAME2 : CONFIG_SPL_OS_NAME);
++
++	return slot ? CONFIG_SYS_SPL_ARGS_ADDR2 : CONFIG_SYS_SPL_ARGS_ADDR;
++}
++#endif
++
+ char *spl_mmc_load_image(void)
+ {
+ #ifdef CONFIG_JZ_MMC_MSC0
+@@ -2074,6 +2169,11 @@ char *spl_mmc_load_image(void)
+ 	io_base = MSC2_BASE;
+ #endif
+ 
++#ifdef CONFIG_NOCRYBOOT
++	if (jzmmc_init() < 0)
++		nocryboot_usb_boot_mode("the eMMC does not answer");
++	return nocryboot_load();
++#endif
+ 	jzmmc_init();
+ 
+ #ifdef CONFIG_SPL_AUTO_DETECT_BOOT
+diff --git a/common/spl/spl_nocryboot.c b/common/spl/spl_nocryboot.c
+new file mode 100644
+index 000000000..48ae715da
+--- /dev/null
++++ b/common/spl/spl_nocryboot.c
+@@ -0,0 +1,56 @@
++/*
++ * nocryboot: the recovery door.  SPDX-License-Identifier: GPL-2.0+
++ *
++ * The SoC's boot ROM can be asked to start in USB boot mode on the next reset,
++ * the same mode the BOOT button selects: a magic value in the CPM "SLPC"
++ * register, then a watchdog reset.  From USB boot mode a PC can always repair
++ * the board (nocry does), because that mode does not depend on the eMMC.
++ *
++ * The factory loader never uses this: it hangs when it finds nothing to start.
++ */
++#include <common.h>
++#include <asm/io.h>
++#include <asm/arch/cpm.h>
++#include <asm/arch/wdt.h>
++
++#define SLPC_SW_MAGIC		0x425753	/* "SWB": software boot select */
++#define SLPC_SW_USB_BOOT	0x2
++
++void nocryboot_usb_boot_mode(const char *why)
++{
++	int time = RTC_FREQ / WDT_DIV * RESET_DELAY_MS / 1000;
++
++	printf("nocryboot: %s; restarting in USB boot mode\n", why);
++
++	cpm_outl(SLPC_SW_MAGIC << 8 | SLPC_SW_USB_BOOT, CPM_SLPC);
++
++	/* watchdog reset, a few ms from now */
++	writel(TSCR_WDTSC, TCU_BASE + TCU_TSCR);
++	writel(0, WDT_BASE + WDT_TCNT);
++	writel(time, WDT_BASE + WDT_TDR);
++	writel(TCSR_PRESCALE | TCSR_RTC_EN | TCSR_CLRZ, WDT_BASE + WDT_TCSR);
++	writel(0, WDT_BASE + WDT_TCER);
++	writel(TCER_TCEN, WDT_BASE + WDT_TCER);
++
++	for (;;)
++		;
++}
++
++/*
++ * Someone at the serial console asking for the door: at least three ESC
++ * characters, and nothing else, received since the console came up.
++ */
++int nocryboot_console_asks(void)
++{
++	volatile u8 *uart = (volatile u8 *)(0xb0030000 + CONFIG_SYS_UART_INDEX * 0x1000);
++	int esc = 0, other = 0, n;
++
++	for (n = 0; n < 64 && (uart[0x14] & 1); n++) {	/* LSR: data ready */
++		if (uart[0] == 0x1b)
++			esc++;
++		else
++			other++;
++	}
++
++	return esc >= 3 && !other;
++}
