@@ -27,6 +27,7 @@ Last updated: 2026-11-27.
 
 - [ ] **Step 1: hardware bring-up from RAM on the Nebula Pad.** Done: screen, backlight, touch chip answers, Wi-Fi chip detected. Wi-Fi firmware loads, scan works, access point works (a phone joined and was reachable). Left: joining an existing network; touch calibration.
 - [ ] Step 2: interface skeleton, `nocry-fbd` over TCP with pairing, mDNS, nocry over the LAN. Done: pairing (SPAKE2) and the encrypted link, `nocry-netd` on the board, discovery (`nocry discover`), "Connect over the network…" in the window. Left: a run over the board's Wi-Fi rather than the USB tunnel (first try from a Mac under way), the touch interface with network setup, model and serial tail in the announcement.
+- [ ] **Rescue Wi-Fi is slow from the board:** on the first run from a Mac the board sent at 5.5 Mbit/s (the 802.11b rate) with hundreds of failed transmissions, while receiving at 72 Mbit/s. Find out whether it is the bare board's antenna, the channel, or the access point settings. A backup over such a link would take hours.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.

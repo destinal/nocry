@@ -1,7 +1,91 @@
-//! Minimal squashfs 4.0 reader: fetch one small file by path from a gzip-compressed image
-//! held in memory. Enough to read `etc/ota_info` from a Creality rootfs on every platform.
+//! Minimal squashfs 4.0 reader: fetch one small file by path from a gzip- or lzo-compressed
+//! image. Enough to read `etc/ota_info` from a Creality rootfs on every platform.
+//!
+//! The image is a [`Source`]: bytes in memory, or [`Paged`], which fetches only the parts
+//! that are looked at. Finding one small file touches the superblock, a few blocks of the
+//! tables at the end and one data block, a megabyte or two of a 200 MiB system, which is
+//! what makes reading a board's firmware version bearable over a slow network link.
 
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Read;
+
+/// Where the image's bytes come from. None: outside the image, or the read failed.
+pub trait Source {
+    fn get(&self, off: u64, len: usize) -> Option<Cow<'_, [u8]>>;
+}
+
+impl Source for &[u8] {
+    fn get(&self, off: u64, len: usize) -> Option<Cow<'_, [u8]>> {
+        let o = usize::try_from(off).ok()?;
+        Some(Cow::Borrowed(<[u8]>::get(self, o..o.checked_add(len)?)?))
+    }
+}
+
+/// An image of `size` bytes read on demand in pages through `fetch(offset, length)`.
+/// Pages are kept, and a request that misses several pages is one fetch.
+pub struct Paged<F: Fn(u64, usize) -> Option<Vec<u8>>> {
+    fetch: F,
+    size: u64,
+    pages: RefCell<HashMap<u64, Vec<u8>>>,
+    fetched: RefCell<u64>,
+}
+
+const PAGE: u64 = 64 * 1024;
+
+impl<F: Fn(u64, usize) -> Option<Vec<u8>>> Paged<F> {
+    pub fn new(size: u64, fetch: F) -> Self {
+        Paged { fetch, size, pages: RefCell::new(HashMap::new()), fetched: RefCell::new(0) }
+    }
+
+    /// bytes asked from `fetch` so far
+    pub fn fetched(&self) -> u64 {
+        *self.fetched.borrow()
+    }
+}
+
+impl<F: Fn(u64, usize) -> Option<Vec<u8>>> Source for Paged<F> {
+    fn get(&self, off: u64, len: usize) -> Option<Cow<'_, [u8]>> {
+        let end = off.checked_add(len as u64)?;
+        if end > self.size {
+            return None;
+        }
+        if len == 0 {
+            return Some(Cow::Owned(Vec::new()));
+        }
+        let (first, last) = (off / PAGE, (end - 1) / PAGE);
+        let mut pages = self.pages.borrow_mut();
+        let missing: Vec<u64> = (first..=last).filter(|p| !pages.contains_key(p)).collect();
+        if let (Some(&a), Some(&b)) = (missing.first(), missing.last()) {
+            let start = a * PAGE;
+            let n = (((b + 1) * PAGE).min(self.size) - start) as usize;
+            let data = (self.fetch)(start, n)?;
+            if data.len() != n {
+                return None;
+            }
+            *self.fetched.borrow_mut() += n as u64;
+            for (i, chunk) in data.chunks(PAGE as usize).enumerate() {
+                pages.entry(a + i as u64).or_insert_with(|| chunk.to_vec());
+            }
+        }
+        let mut out = Vec::with_capacity(len);
+        for p in first..=last {
+            let page = pages.get(&p)?;
+            let from = off.max(p * PAGE) - p * PAGE;
+            let to = end.min((p + 1) * PAGE) - p * PAGE;
+            out.extend_from_slice(page.get(from as usize..to as usize)?);
+        }
+        Some(Cow::Owned(out))
+    }
+}
+
+fn src16(s: &dyn Source, o: u64) -> Option<u16> {
+    u16le(&s.get(o, 2)?, 0)
+}
+fn src64(s: &dyn Source, o: u64) -> Option<u64> {
+    u64le(&s.get(o, 8)?, 0)
+}
 
 fn u16le(b: &[u8], o: usize) -> Option<u16> {
     Some(u16::from_le_bytes(b.get(o..o + 2)?.try_into().ok()?))
@@ -28,7 +112,7 @@ const COMP_GZIP: u16 = 1;
 const COMP_LZO: u16 = 3;
 
 struct Sq<'a> {
-    img: &'a [u8],
+    img: &'a dyn Source,
     comp: u16,
     block_size: usize,
     inode_table: u64,
@@ -46,11 +130,10 @@ impl<'a> Sq<'a> {
 
     /// One metadata block at absolute `pos`: (data, position of the next block).
     fn meta_block(&self, pos: u64) -> Option<(Vec<u8>, u64)> {
-        let p = pos as usize;
-        let h = u16le(self.img, p)?;
+        let h = src16(self.img, pos)?;
         let n = (h & 0x7fff) as usize;
-        let raw = self.img.get(p + 2..p + 2 + n)?;
-        let data = if h & 0x8000 != 0 { raw.to_vec() } else { self.unpack(raw, 8192)? };
+        let raw = self.img.get(pos + 2, n)?;
+        let data = if h & 0x8000 != 0 { raw.to_vec() } else { self.unpack(&raw, 8192)? };
         Some((data, pos + 2 + n as u64))
     }
 
@@ -105,11 +188,11 @@ impl<'a> Sq<'a> {
 
     fn data_block(&self, pos: u64, word: u32) -> Option<Vec<u8>> {
         let n = (word & 0xff_ffff) as usize;
-        let raw = self.img.get(pos as usize..pos as usize + n)?;
+        let raw = self.img.get(pos, n)?;
         if word & (1 << 24) != 0 {
             Some(raw.to_vec())
         } else {
-            self.unpack(raw, self.block_size)
+            self.unpack(&raw, self.block_size)
         }
     }
 
@@ -139,7 +222,7 @@ impl<'a> Sq<'a> {
         }
         if frag != u32::MAX {
             // fragment table: u64 pointers to metadata blocks of 512 16-byte entries
-            let ptr = u64le(self.img, self.frag_table as usize + 8 * (frag as usize / 512))?;
+            let ptr = src64(self.img, self.frag_table + 8 * (frag as u64 / 512))?;
             let e = self.meta(ptr, 16 * (frag as usize % 512), 16)?;
             let fb = self.data_block(u64le(&e, 0)?, u32le(&e, 8)?)?;
             out.extend_from_slice(fb.get(frag_off..frag_off + (size - out.len()))?);
@@ -153,22 +236,28 @@ impl<'a> Sq<'a> {
 /// gzip- or lzo-compressed squashfs image. None if the image is not such a squashfs 4, or the file is missing
 /// or larger than `max` bytes.
 pub fn read_file(img: &[u8], path: &str, max: usize) -> Option<Vec<u8>> {
-    let comp = u16le(img, 20)?;
-    if img.get(..4)? != b"hsqs" || !(comp == COMP_GZIP || comp == COMP_LZO) || u16le(img, 28)? != 4 {
+    read_file_from(&img, path, max)
+}
+
+/// As [`read_file`], from any [`Source`].
+pub fn read_file_from(img: &dyn Source, path: &str, max: usize) -> Option<Vec<u8>> {
+    let sb = img.get(0, 96)?;
+    let comp = u16le(&sb, 20)?;
+    if &sb[..4] != b"hsqs" || !(comp == COMP_GZIP || comp == COMP_LZO) || u16le(&sb, 28)? != 4 {
         return None;
     }
     let sq = Sq {
         img,
         comp,
-        block_size: u32le(img, 12)? as usize,
-        inode_table: u64le(img, 64)?,
-        dir_table: u64le(img, 72)?,
-        frag_table: u64le(img, 80)?,
+        block_size: u32le(&sb, 12)? as usize,
+        inode_table: u64le(&sb, 64)?,
+        dir_table: u64le(&sb, 72)?,
+        frag_table: u64le(&sb, 80)?,
     };
     if !(4096..=1 << 20).contains(&sq.block_size) {
         return None;
     }
-    let root = u64le(img, 32)?;
+    let root = u64le(&sb, 32)?;
     let (mut block, mut off) = (root >> 16, (root & 0xffff) as usize);
     for part in path.split('/').filter(|p| !p.is_empty()) {
         (block, off) = sq.lookup(block, off, part.as_bytes())?;
@@ -182,6 +271,33 @@ mod tests {
     use sha2::{Digest, Sha256};
     // mksquashfs -comp gzip of: etc/ota_info, etc/zeros (5000 zero bytes), usr/lib/big.bin (300000 random bytes)
     const IMG: &[u8] = include_bytes!("../tests/data/small.sqfs");
+
+    #[test]
+    fn paged_source_gives_the_same_files_and_fetches_little() {
+        use super::{read_file_from, Paged};
+        let src = Paged::new(IMG.len() as u64, |off, len| IMG.get(off as usize..off as usize + len).map(|b| b.to_vec()));
+        assert_eq!(read_file_from(&src, "etc/ota_info", 4096).unwrap(), b"ota_board_name=TEST\nota_version=9.8.7.6\n");
+        assert!(src.fetched() < IMG.len() as u64, "{} of {}", src.fetched(), IMG.len());
+        let big = read_file_from(&src, "usr/lib/big.bin", 1 << 20).unwrap();
+        assert_eq!(big, read_file(IMG, "usr/lib/big.bin", 1 << 20).unwrap());
+        assert!(src.fetched() <= IMG.len() as u64); // pages are fetched once
+        // outside the image, and a source that fails
+        assert!(read_file_from(&Paged::new(50, |_, _| None), "etc/ota_info", 4096).is_none());
+        assert!(read_file_from(&Paged::new(IMG.len() as u64, |_, _| None), "etc/ota_info", 4096).is_none());
+    }
+
+    /// With NOCRY_TEST_ROOTFS set to a real system image: the version file costs a small part of it.
+    #[test]
+    fn real_system_needs_little() {
+        use super::{read_file_from, Paged};
+        let Some(path) = std::env::var_os("NOCRY_TEST_ROOTFS") else { return };
+        let img = std::fs::read(path).unwrap();
+        let src = Paged::new(img.len() as u64, |off, len| img.get(off as usize..off as usize + len).map(|b| b.to_vec()));
+        let info = read_file_from(&src, "etc/ota_info", 64 * 1024).or_else(|| read_file_from(&src, "etc/version", 4096)).unwrap();
+        assert_eq!(Some(info), read_file(&img, "etc/ota_info", 64 * 1024).or_else(|| read_file(&img, "etc/version", 4096)));
+        println!("fetched {} of {} bytes", src.fetched(), img.len());
+        assert!(src.fetched() < 4 << 20);
+    }
 
     #[test]
     fn reads_files() {

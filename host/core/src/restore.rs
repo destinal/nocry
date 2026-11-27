@@ -105,9 +105,9 @@ fn read_opt(p: &Path) -> Result<Option<Vec<u8>>> {
 
 /// `unsquashfs -cat rootfs etc/ota_info` -> (board, version)
 /// Reads etc/ota_info out of the rootfs squashfs (no external tools).
-fn ota_info(rootfs: &[u8]) -> (Option<String>, Option<String>) {
+fn ota_info(rootfs: &dyn crate::squashfs::Source) -> (Option<String>, Option<String>) {
     let read = || -> Option<String> {
-        let out = crate::squashfs::read_file(rootfs, "etc/ota_info", 64 * 1024)?;
+        let out = crate::squashfs::read_file_from(rootfs, "etc/ota_info", 64 * 1024)?;
         Some(String::from_utf8_lossy(&out).to_string())
     };
     let s = read().unwrap_or_default();
@@ -117,7 +117,7 @@ fn ota_info(rootfs: &[u8]) -> (Option<String>, Option<String>) {
     }
     // the K1 family's newer generation (Linux 5.10, late 2025): etc/hardware and etc/version
     let line = |path: &str| {
-        crate::squashfs::read_file(rootfs, path, 4096)
+        crate::squashfs::read_file_from(rootfs, path, 4096)
             .map(|b| String::from_utf8_lossy(&b).trim().to_string())
             .filter(|s| !s.is_empty() && s.len() < 64 && s.bytes().all(|c| c.is_ascii_graphic()))
     };
@@ -180,7 +180,7 @@ impl Package {
         if let Some(b) = &boot {
             check_boot(b)?;
         }
-        let (ota_board, ota_version) = ota_info(&rootfs);
+        let (ota_board, ota_version) = ota_info(&rootfs.as_slice());
         let support = crate::boards::firmware_support(&rootfs);
         // the K1 family's newer generation is published only for printers with the CFS-C upgrade
         let remark = crate::squashfs::read_file(&rootfs, "etc/hardware", 4096).map(|_| {
@@ -663,7 +663,17 @@ pub fn firmware_in(t: &Target, layout: &Gpt, part: &str) -> Option<(String, Stri
         return None;
     }
     t.drop_cache(p.offset(), used);
-    let img = t.read(p.offset(), used as usize).ok()?;
+    // only the parts of the system that hold the answer are read (a megabyte or two, not all of it)
+    let base = p.offset();
+    let img = crate::squashfs::Paged::new(used, |off, len| t.read(base + off, len).ok());
+    if std::env::var_os("NOCRY_DEBUG").is_some() {
+        let r = ota_info(&img);
+        crate::say!("(debug) {part}: fetched {} of {used} bytes for the firmware version", img.fetched());
+        return match r {
+            (Some(b), Some(v)) => Some((b, v)),
+            _ => None,
+        };
+    }
     match ota_info(&img) {
         (Some(b), Some(v)) => Some((b, v)),
         _ => None,
