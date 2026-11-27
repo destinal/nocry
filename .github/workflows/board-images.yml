@@ -3,7 +3,7 @@
 # the nocry-rescue image. Runs when those sources change and on request; the result is the
 # "board-images" artifact of the run and, for main, the files of the pre-release "board-images",
 # which tools/get-images.sh downloads so that nobody has to wait for this build.
-# The release workflow builds the same images (without nocry-rescue) for the packages.
+# The release workflow builds the same images for the packages.
 name: board-images
 on:
   push:

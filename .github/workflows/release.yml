@@ -14,7 +14,7 @@ env:
 
 jobs:
   images:
-    name: Board images (SPL, U-Boot stages, recovery Linux)
+    name: Board images (SPL, U-Boot stages, recovery Linux, nocry-rescue)
     runs-on: ubuntu-22.04
     timeout-minutes: 240
     steps:
@@ -36,9 +36,13 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil   # mkpictures.py reads the PNGs
           tools/rtos-build/build.sh "$PWD/out-rtos"
           VARIANT=k1 tools/rtos-build/build.sh "$PWD/out-rtos"
-      - name: Build recovery Linux
+      - name: Build recovery Linux and nocry-rescue
         if: steps.cache.outputs.cache-hit != 'true'
-        run: tools/recovery-build/build.sh "$RUNNER_TEMP/recovery-work" "$PWD/out-recovery" || { tail -60 "$RUNNER_TEMP"/recovery-work/*.log; exit 1; }
+        env:    # the rescue system carries the loader and boot logo images it can install
+          BURNER_OUT: ${{ github.workspace }}/out-burner
+          NOCRYBOOT_OUT: ${{ github.workspace }}/out-nocryboot
+          RTOS_OUT: ${{ github.workspace }}/out-rtos
+        run: RESCUE=1 tools/recovery-build/build.sh "$RUNNER_TEMP/recovery-work" "$PWD/out-recovery" || { tail -60 "$RUNNER_TEMP"/recovery-work/*.log; exit 1; }
       - name: Collect
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -52,7 +56,7 @@ jobs:
           mkdir -p dist-images/nocry-rtos
           cp out-rtos/nocry-rtos.bin dist-images/nocry-rtos/nocry-rtos-nebula.bin
           cp out-rtos/nocry-rtos-k1.bin dist-images/nocry-rtos/
-          cp out-recovery/nocry-recovery.uImage dist-images/
+          cp out-recovery/nocry-recovery.uImage out-recovery/nocry-rescue.uImage dist-images/
           (cd dist-images && find . -type f | sort | xargs sha256sum | tee SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
@@ -213,13 +217,13 @@ jobs:
           prerelease: true
           files: out/*
           body: |
-            **Early pre-release.** Tested on Linux with a Creality Nebula Pad and a K1 mainboard (earlier versions also on macOS). On Windows the app runs, but talking to a board has **not been tested**: use "Set up driver…" in the window once (one administrator prompt; see "Windows driver" in the README).
+            **Beta.** Tested on Linux with a Creality Nebula Pad and a K1 mainboard (earlier versions also on macOS). On Windows the app runs, but talking to a board has **not been tested**: use "Set up driver…" in the window once (one administrator prompt; see "Windows driver" in the README).
 
             - Linux: `nocry-*-x86_64.AppImage` (make it executable; the window offers the one-time udev rule setup)
             - Windows: `nocry-*-windows-x64-setup.exe` (installs for the current user, no administrator rights), or `nocry-*-windows-x64-portable.zip` (unzip anywhere and run `nocry-gui.exe`; nothing is installed)
             - macOS (Apple silicon): `nocry-*-macos-arm64.dmg` (unsigned: right-click the app and choose Open the first time)
-            - `nocry-board-images-*.tar.gz`: what nocry loads onto or installs on the board (SPL, U-Boot stages, recovery Linux, the nocryboot loader, the boot logo image), built from the sources and patches in this repository
+            - `nocry-board-images-*.tar.gz`: what nocry loads onto or installs on the board (SPL, U-Boot stages, recovery Linux, nocry-rescue, the nocryboot loader, the boot logo image), built from the sources and patches in this repository
 
-            New in alpha.4: K1-family boards; **nocryboot**, an open boot loader that falls back to the other firmware slot and enters USB boot mode by itself when nothing can be started (Advanced, "Boot loader…"; Creality's is kept on the board); firmware on trial; the nocry boot logo (default on the Nebula Pad family, Creality's logo one tick away). Replacing the boot loader is for people who can reach the BOOT button if it goes wrong. See `docs/nocryboot.md`.
+            New in 0.2: **nocry-rescue**, a rescue system kept on the board itself (Nebula Pad family). Hold the screen while powering on and it starts, with no computer attached: a touch interface for Wi-Fi, firmware slots, installing firmware from the catalog, file system checks, resets, and the same functions as web pages for a phone or computer on the network. Store it with `nocry rescue --install` (needs the nocryboot loader 0.2, "Boot loader…" in the window). Also: NebulaOS in the firmware catalog; boards reached over Wi-Fi (found by mDNS) from the window and the command line; slot copies and erases run on the board itself; progress and Cancel for every long operation; more precise wording throughout.
 
             Take a backup before changing anything on a board.

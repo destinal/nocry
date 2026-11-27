@@ -20,18 +20,18 @@ show() {
     c=$(cat $CODE 2>/dev/null); code="#${c%???} ${c#???}"
     case "$(val mode)" in
       ap)
-        nocry-banner "#nocry-rescue" "" \
-            "Wi-Fi network   $(val ssid)" "password        $(val password)" \
-            "then open       http://$(val address)" "" "pairing code" "$code" ;;
+        nocry-banner "#nocry" "#rescue" "" \
+            "Wi-Fi network  $(val ssid)" "password  $(val password)" \
+            "then open" "http://$(val address)" "" "pairing code" "$code" ;;
       client)
-        nocry-banner "#nocry-rescue" "" \
-            "on Wi-Fi        $(val ssid)" "open            http://$(val address)" "" "pairing code" "$code" ;;
+        nocry-banner "#nocry" "#rescue" "" \
+            "on Wi-Fi  $(val ssid)" "open" "http://$(val address)" "" "pairing code" "$code" ;;
       joining)
-        nocry-banner "#nocry-rescue" "" "joining Wi-Fi   $(val ssid)" "" "one moment..." ;;
+        nocry-banner "#nocry" "#rescue" "" "joining Wi-Fi  $(val ssid)" "" "one moment..." ;;
       none)
-        nocry-banner "#nocry-rescue" "" "no Wi-Fi found" "connect by USB" "" "pairing code" "$code" ;;
+        nocry-banner "#nocry" "#rescue" "" "no Wi-Fi found" "connect by USB" "" "pairing code" "$code" ;;
       *)
-        nocry-banner "#nocry-rescue" "" "starting..." ;;
+        nocry-banner "#nocry" "#rescue" "" "starting..." ;;
     esac
 }
 
@@ -42,20 +42,20 @@ confirm_hold() {
     grep -q 'nocry.rescue=touch' /proc/cmdline || return 0
     n=3
     while [ $n -gt 0 ]; do
-        nocry-banner "#nocry rescue" "" "Keep holding the screen" "to start the rescue system" "" "#$n"
+        nocry-banner "#nocry" "#rescue" "" "Keep holding" "the screen" "" "#$n"
         i=0
         while [ $i -lt 4 ]; do
             nocry-touch --held; r=$?
             # let go: back to the firmware. A chip that does not answer is not a reason to leave.
             if [ $r = 1 ]; then
-                nocry-banner "#nocry rescue" "" "Starting the printer" "normally..."
+                nocry-banner "#nocry" "#rescue" "" "Released:" "booting the firmware"
                 sync; reboot -f; sleep 30
             fi
             sleep 0.25; i=$((i+1))
         done
         n=$((n-1))
     done
-    nocry-banner "#nocry rescue" "" "You can let go."
+    nocry-banner "#nocry" "#rescue" "" "Release the screen."
     sleep 1
 }
 

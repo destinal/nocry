@@ -854,7 +854,9 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
         if !slot_a {
             let txt = String::from_utf8_lossy(&head[..head.iter().position(|&c| c == 0).unwrap_or(32).min(32)]).into_owned();
             notes.push(format!("ota partition says {txt:?}; resetting so U-Boot boots slot A (what is being installed)"));
-            add("ota (reset to slot A)".into(), vec![(ota.offset(), Src::Zeros(ota.size()))]);
+            // only the slot record (the first sector): the sectors after it hold nocryboot's
+            // boot record and its note about the rescue image, which stay valid
+            add("ota (reset to slot A)".into(), vec![(ota.offset(), Src::Zeros(512))]);
         }
     } else {
         add("ota".into(), vec![(ota.offset(), Src::Zeros(ota.size()))]);

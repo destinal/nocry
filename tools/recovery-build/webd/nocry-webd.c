@@ -298,11 +298,11 @@ static void page_login(struct buf *b, const char *error)
 	head(b, NULL);
 	puts_(b, "<div class=c><h2>Pairing code</h2>");
 	note(b, "e", error);
-	puts_(b, "<p>This printer board is running its rescue system. Type the six digits shown on the board's screen.</p>"
+	puts_(b, "<p>Rescue system active. Enter the six-digit pairing code shown on the board's screen.</p>"
 		 "<form method=post action=/login><input type=text name=code inputmode=numeric maxlength=7 autocomplete=off autofocus "
 		 "style=\"font-size:1.6em;letter-spacing:.2em;text-align:center\">"
 		 "<button class=w>Continue</button></form>"
-		 "<p class=t>The code proves you are at the printer. It is asked once; it changes when the board restarts.</p></div>");
+		 "<p class=t>The pairing code confirms physical access. Requested once per session; it changes at every boot of the board.</p></div>");
 }
 
 static void wifi_card(struct buf *b, const char *st)
@@ -311,23 +311,23 @@ static void wifi_card(struct buf *b, const char *st)
 	field(st, "mode", mode, sizeof mode); field(st, "ssid", ssid, sizeof ssid); field(st, "address", addr, sizeof addr);
 	field(st, "source", src, sizeof src); field(st, "hint", hint, sizeof hint);
 	if (!strcmp(mode, "ap")) {
-		puts_(b, "<div class=\"c hi\"><h2>Put the board on your Wi-Fi</h2>");
+		puts_(b, "<div class=\"c hi\"><h2>Access point mode</h2>");
 		if (!strncmp(src, "failed:", 7)) {
-			puts_(b, "<p class=e>The board could not join <b>"); esc(b, src + 7);
-			puts_(b, "</b>: wrong password, or the network is out of range.");
+			puts_(b, "<p class=e>Connection to <b>"); esc(b, src + 7);
+			puts_(b, "</b> failed: authentication failed or the network is out of range.");
 			if (!strncmp(hint, "nonascii", 8))
-				puts_(b, " <b>The password contained a character that is not on a plain keyboard</b>, such as a curly apostrophe "
-					 "(&rsquo;) instead of a straight one ('). Phones swap these in by themselves: hold the apostrophe key and pick the straight one.");
+				puts_(b, " <b>The password contained a non-ASCII character</b>, such as a typographic apostrophe "
+					 "(&rsquo;) instead of a straight one ('). Phone keyboards substitute these automatically: hold the apostrophe key and select the straight one.");
 			puts_(b, "</p>");
 		}
-		puts_(b, "<p>Right now it runs its own small network, which is slow and has no internet. On your Wi-Fi a computer "
-			 "with nocry can reach it, and it is many times faster.</p>"
-			 "<a class=\"b w\" href=/wifi>Join your Wi-Fi network</a></div>");
+		puts_(b, "<p>The board is running its own access point: slow, no internet access. On a Wi-Fi network it is reachable by "
+			 "nocry on a computer, and transfers are many times faster.</p>"
+			 "<a class=\"b w\" href=/wifi>Connect to a Wi-Fi network</a></div>");
 	} else if (!strcmp(mode, "client")) {
-		puts_(b, "<div class=c><h2>Wi-Fi</h2><p>On <b>"); esc(b, ssid); puts_(b, "</b>, address "); esc(b, addr);
+		puts_(b, "<div class=c><h2>Wi-Fi</h2><p>Connected to <b>"); esc(b, ssid); puts_(b, "</b>, address "); esc(b, addr);
 		puts_(b, ".</p><a class=\"b q\" href=/wifi>Change network</a></div>");
 	} else {
-		puts_(b, "<div class=c><h2>Wi-Fi</h2><p>"); esc(b, !strcmp(mode, "joining") ? "Joining a network\xe2\x80\xa6" : "No working Wi-Fi.");
+		puts_(b, "<div class=c><h2>Wi-Fi</h2><p>"); esc(b, !strcmp(mode, "joining") ? "Connecting\xe2\x80\xa6" : "Not connected.");
 		puts_(b, "</p><a class=\"b q\" href=/wifi>Networks</a></div>");
 	}
 }
@@ -348,12 +348,12 @@ static int job_card(struct buf *b, const char *job)
 		snprintf(n, sizeof n, "<div class=bar><i style=\"width:%d%%\"></i></div><p>%d%% &middot; %llu of %llu MB", pct, pct, d >> 20, t >> 20);
 		puts_(b, n);
 		if (msg[0]) { puts_(b, " &middot; "); esc(b, msg); }
-		puts_(b, "</p><p class=t>This page updates by itself. Leave the board switched on.</p>"
-			 "<form method=post action=/job/cancel><button class=q>Cancel</button></form></div>");
+		puts_(b, "</p><p class=t>This page refreshes automatically. Keep the board powered.</p>"
+			 "<form method=post action=/job/cancel><button class=q>Cancel job</button></form></div>");
 		return 1;
 	}
 	puts_(b, "<div class=c><h2>"); esc(b, what); puts_(b, "</h2><p class=");
-	puts_(b, !strcmp(state, "done") ? "ok>Finished: " : !strcmp(state, "cancelled") ? "e>Stopped: " : "e>Failed: ");
+	puts_(b, !strcmp(state, "done") ? "ok>Completed: " : !strcmp(state, "cancelled") ? "e>Cancelled: " : "e>Failed: ");
 	esc(b, msg[0] ? msg : state);
 	if (strcmp(state, "done")) {
 		char risk[220]; field(job, "risk", risk, sizeof risk);
@@ -368,12 +368,12 @@ static void slot_row(struct buf *b, const char *st, char letter, int active, int
 	char key[16], fw[128], ok[8], L[2] = { (char)toupper(letter), 0 }, other[2] = { letter == 'a' ? 'B' : 'A', 0 }, l[2] = { letter, 0 };
 	snprintf(key, sizeof key, "%c_firmware", letter); field(st, key, fw, sizeof fw);
 	snprintf(key, sizeof key, "%c_complete", letter); field(st, key, ok, sizeof ok);
-	puts_(b, "<p><b>Slot "); puts_(b, L); puts_(b, "</b>"); if (active) puts_(b, " &middot; <b>starts</b>");
+	puts_(b, "<p><b>Slot "); puts_(b, L); puts_(b, "</b>"); if (active) puts_(b, " &middot; <b>active</b>");
 	puts_(b, "<br>"); esc(b, fw[0] ? fw : "unknown"); puts_(b, "</p>");
 	if (busy || strcmp(ok, "yes")) return;
 	if (!active) {
 		puts_(b, "<form method=post action=/slot/switch><input type=hidden name=slot value="); puts_(b, l);
-		puts_(b, "><button>Start slot "); puts_(b, L); puts_(b, "</button></form>");
+		puts_(b, "><button>Set slot "); puts_(b, L); puts_(b, " active</button></form>");
 	}
 	puts_(b, "<form method=post action=/slot/copy><input type=hidden name=from value="); puts_(b, l);
 	puts_(b, "><button class=q>Copy to slot "); puts_(b, other); puts_(b, "</button></form>");
@@ -390,21 +390,21 @@ static void page_home(struct buf *b, const char *flash, int flash_ok)
 	wifi_card(b, st);
 	field(bs, "active", active, sizeof active); field(bs, "model", model, sizeof model); field(bs, "note", notev, sizeof notev);
 	puts_(b, "<div class=c><h2>Firmware</h2>");
-	if (model[0]) { puts_(b, "<p class=t>Board set up as: "); esc(b, model); puts_(b, "</p>"); }
+	if (model[0]) { puts_(b, "<p class=t>Model: "); esc(b, model); puts_(b, "</p>"); }
 	if (!strncmp(notev, "nocryboot:failed=", 17) || !strncmp(notev, "nocryboot:incomplete=", 21) || !strncmp(notev, "nocryboot:unconfirmed=", 22)) {
-		puts_(b, "<p class=e>The boot loader noted a problem with slot "); esc(b, strchr(notev, '=') + 1);
-		puts_(b, !strncmp(notev, "nocryboot:incomplete", 20) ? ": its firmware is incomplete." : ": it did not start properly, so the other slot was used.");
+		puts_(b, "<p class=e>Boot loader record, slot "); esc(b, strchr(notev, '=') + 1);
+		puts_(b, !strncmp(notev, "nocryboot:incomplete", 20) ? ": firmware incomplete." : ": boot failed; the other slot was booted.");
 		puts_(b, "</p>");
 	}
 	slot_row(b, bs, 'a', active[0] == 'a', running);
 	puts_(b, "<hr style=\"border:0;border-top:1px solid #8884\">");
 	slot_row(b, bs, 'b', active[0] == 'b', running);
-	puts_(b, "<p class=t>The board holds two firmware slots and starts one of them. Settings and files are shared by both.</p>"
+	puts_(b, "<p class=t>Two firmware slots; the active slot boots. Settings and files (rootfs_data, userdata) are shared by both.</p>"
 		 "<a class=\"b w\" href=/install>Install firmware</a></div>");
 	puts_(b, "<div class=c><h2>More</h2>"
-		 "<a class=\"b q w\" href=/repair>Repair: undo modifications, check the file system, factory reset</a>"
-		 "<a class=\"b q w\" href=/files>Files: browse, download, delete, replace</a>"
-		 "<a class=\"b q w\" href=/board>Board: storage health, backup, logs, identity, restart</a>"
+		 "<a class=\"b q w\" href=/repair>Repair: fsck, wipe system overlay, factory reset</a>"
+		 "<a class=\"b q w\" href=/files>Files: browse, download, delete, upload</a>"
+		 "<a class=\"b q w\" href=/board>Board: eMMC health, backup, logs, identity, reboot</a>"
 		 "<a class=\"b q w\" href=/boot>Boot loader and boot logo</a></div>");
 	free(st); free(job); free(bs);
 }
@@ -418,19 +418,20 @@ static void page_repair(struct buf *b)
 	head(b, running ? "<meta http-equiv=refresh content=3>" : NULL);
 	job_card(b, job);
 	if (!running) {
-		puts_(b, "<div class=c><h2>Remove system modifications</h2>"
-			 "<p>Clears changes made to the system itself: installed mods, helper scripts, changed system settings. "
-			 "Your files, print history and printer configuration stay. Try this first when the printer stopped starting after a mod. "
-			 "(Creality's firmware keeps such changes apart from your files; NebulaOS does not use this area.)</p>"
-			 "<form method=post action=/reset><input type=hidden name=kind value=mods><button class=q>Remove system modifications</button></form></div>"
-			 "<div class=c><h2>Check the file system</h2>"
-			 "<p>Switching a printer off at the wall can damage the file system that holds your settings and files, and the printer then hangs at its logo. "
-			 "This finds and repairs such damage.</p>"
-			 "<form method=post action=/check><input type=hidden name=which value=data><button class=q>Check files and settings</button></form>"
-			 "<form method=post action=/check><input type=hidden name=which value=settings><button class=q>Check system changes</button></form></div>"
+		puts_(b, "<div class=c><h2>Wipe system overlay</h2>"
+			 "<p>Erases rootfs_data: all changes to the root file system (installed mods, helper scripts, system configuration). "
+			 "userdata (files, print history, printer configuration) is preserved. First step when the firmware no longer boots after a modification. "
+			 "(Creality firmware keeps these changes in rootfs_data; NebulaOS does not use it.)</p>"
+			 "<form method=post action=/reset><input type=hidden name=kind value=mods><button class=q>Wipe system overlay</button></form></div>"
+			 "<div class=c><h2>File system check (fsck)</h2>"
+			 "<p>Power loss can corrupt the userdata or rootfs_data file system; the printer then hangs at the boot logo. "
+			 "Runs e2fsck and repairs errors.</p>"
+			 "<form method=post action=/check><input type=hidden name=which value=data><button class=q>Check userdata (fsck)</button></form>"
+			 "<form method=post action=/check><input type=hidden name=which value=settings><button class=q>Check rootfs_data (fsck)</button></form></div>"
 			 "<div class=c><h2>Factory reset</h2>"
-			 "<p>Erases all settings and files. The firmware, the slots and the board's serial number stay. "
-			 "Save what you want to keep first: <a href=/files>Files</a>.</p>"
+			 "<p>Erases rootfs_data and userdata: all settings and files. The firmware in both slots and the serial number are preserved. "
+			 "A rescue image stored on userdata is erased too; reinstall it from a computer afterwards. "
+			 "Back up first: <a href=/files>Files</a>.</p>"
 			 "<form method=post action=/reset><input type=hidden name=kind value=all><button class=d>Factory reset</button></form></div>");
 	}
 	back(b);
@@ -443,39 +444,39 @@ static void page_board(struct buf *b, const char *flash, int flash_ok)
 	char v[96], w[96], mode[24];
 	head(b, NULL);
 	note(b, flash_ok ? "ok" : "e", flash);
-	puts_(b, "<div class=c><h2>Storage</h2>");
+	puts_(b, "<div class=c><h2>eMMC health</h2>");
 	field(h, "wear_a", v, sizeof v); field(h, "wear_b", w, sizeof w);
-	puts_(b, "<p>The storage chip's own estimate of how much of its life is used: <b>"); esc(b, v); puts_(b, "&nbsp;%</b>");
-	if (strcmp(v, w)) { puts_(b, " and <b>"); esc(b, w); puts_(b, "&nbsp;%</b> for its two kinds of cells"); }
+	puts_(b, "<p>Wear (device life-time estimate, used): <b>"); esc(b, v); puts_(b, "&nbsp;%</b>");
+	if (strcmp(v, w)) { puts_(b, " and <b>"); esc(b, w); puts_(b, "&nbsp;%</b> (type A / B)"); }
 	field(h, "spare", v, sizeof v); puts_(b, ". Spare blocks: "); esc(b, v); puts_(b, ".");
-	field(h, "chip", v, sizeof v); if (v[0]) { puts_(b, " <span class=t>(chip "); esc(b, v); puts_(b, ")</span>"); }
-	puts_(b, "</p><p class=t>A chip near or past 100&nbsp;% explains file systems that keep getting damaged.</p>");
+	field(h, "chip", v, sizeof v); if (v[0]) { puts_(b, " <span class=t>(device "); esc(b, v); puts_(b, ")</span>"); }
+	puts_(b, "</p><p class=t>Wear near or above 100&nbsp;% explains recurring file system corruption.</p>");
 	field(h, "data_state", v, sizeof v);
 	if (!strcmp(v, "readable")) {
 		char t[24], u[24], f[24];
 		field(h, "data_total_mb", t, sizeof t); field(h, "data_used_mb", u, sizeof u); field(h, "data_free_mb", f, sizeof f);
-		puts_(b, "<p>Settings and files: "); esc(b, u); puts_(b, " MB used of "); esc(b, t); puts_(b, " MB, "); esc(b, f); puts_(b, " MB free.");
-		if (atol(f) < 50) puts_(b, " <b>Almost full: a printer with no free space may not start. Delete something under <a href=/files>Files</a>.</b>");
+		puts_(b, "<p>userdata: "); esc(b, u); puts_(b, " MB used of "); esc(b, t); puts_(b, " MB, "); esc(b, f); puts_(b, " MB free.");
+		if (atol(f) < 50) puts_(b, " <b>Nearly full: the firmware may fail to boot without free space. Delete files under <a href=/files>Files</a>.</b>");
 		puts_(b, "</p>");
-	} else puts_(b, "<p>Settings and files: no readable file system (blank after a reset, or damaged; see <a href=/repair>Repair</a>).</p>");
-	puts_(b, "</div><div class=c><h2>Save from the board</h2>"
-		 "<p><a class=\"b q\" href=/dl/logs>Logs</a> What the printer and this rescue system recorded, in one file: attach it when you ask for help.</p>"
-		 "<p><a class=\"b q\" href=/dl/config>Printer configuration</a> The printer's configuration files, to keep before a reset.</p>"
-		 "<p><a class=\"b q\" href=/dl/identity>Identity record</a> The board's serial number and network address as stored on it. Keep it private.</p>"
-		 "<p><a class=\"b q\" href=/dl/backup>Full backup</a> Everything on the board in one compressed file (it holds the identity too). "
-		 "Several gigabytes of storage are read and sent: over Wi-Fi this takes an hour or more, so start it and leave the page open. "
-		 "To put it back: unpack it and use Restore backup in nocry on a computer.</p></div>");
+	} else puts_(b, "<p>userdata: no readable file system (blank after a reset, or corrupted; see <a href=/repair>Repair</a>).</p>");
+	puts_(b, "</div><div class=c><h2>Downloads</h2>"
+		 "<p><a class=\"b q\" href=/dl/logs>Logs</a> Printer and rescue system logs in one archive. Attach it to support requests.</p>"
+		 "<p><a class=\"b q\" href=/dl/config>Printer configuration</a> The printer's configuration files. Download before a reset.</p>"
+		 "<p><a class=\"b q\" href=/dl/identity>Identity record</a> The serial number and MAC address record as stored on the board. Keep it private.</p>"
+		 "<p><a class=\"b q\" href=/dl/backup>Full backup</a> Full eMMC image, compressed (includes the identity record). "
+		 "Several gigabytes are read and sent: an hour or more over Wi-Fi; keep this page open. "
+		 "To restore: decompress it and use Restore backup in nocry on a computer.</p></div>");
 	field(bs, "model", v, sizeof v); field(bs, "mainboard", w, sizeof w);
-	puts_(b, "<div class=c><h2>Board</h2><p>Set up as: "); esc(b, v[0] ? v : "unknown"); puts_(b, ", mainboard "); esc(b, w[0] ? w : "unknown"); puts_(b, ".</p></div>");
+	puts_(b, "<div class=c><h2>Board</h2><p>Model: "); esc(b, v[0] ? v : "unknown"); puts_(b, ", mainboard "); esc(b, w[0] ? w : "unknown"); puts_(b, ".</p></div>");
 	field(st, "mode", mode, sizeof mode);
 	if (!strcmp(mode, "client")) {
 		field(st, "ssid", v, sizeof v);
-		puts_(b, "<div class=c><h2>Give the printer this Wi-Fi network</h2><p>Writes <b>"); esc(b, v);
-		puts_(b, "</b> and its password into the installed firmware's settings, so the printer joins it by itself when it starts normally. "
-			 "For a printer whose screen cannot be used.</p><form method=post action=/wifi/save><button class=q>Save this network for the printer</button></form></div>");
+		puts_(b, "<div class=c><h2>Save Wi-Fi credentials to firmware</h2><p>Writes <b>"); esc(b, v);
+		puts_(b, "</b> and its password to the installed firmware's Wi-Fi configuration; the printer then connects to it on a normal boot. "
+			 "For a printer whose screen is unusable.</p><form method=post action=/wifi/save><button class=q>Save credentials to firmware</button></form></div>");
 	}
-	puts_(b, "<div class=c><h2>Restart</h2><p>Leaves the rescue system and starts the board normally, from the slot marked to start.</p>"
-		 "<form method=post action=/restart><button>Restart the board</button></form></div>");
+	puts_(b, "<div class=c><h2>Reboot</h2><p>Leaves rescue and boots the active slot.</p>"
+		 "<form method=post action=/restart><button>Reboot</button></form></div>");
 	back(b);
 	free(h); free(bs); free(st);
 }
@@ -489,7 +490,7 @@ static void page_files(struct buf *b, const char *dir, const char *flash, int fl
 	puts_(b, "<div class=c><h2>Files: /"); esc(b, dir); puts_(b, "</h2>");
 	if (st != 0) { note(b, "e", ls && *ls ? ls : "The folder cannot be read."); }
 	else {
-		puts_(b, "<p class=t>The printer's settings and files (its /usr/data). Deleting cannot be undone.</p>");
+		puts_(b, "<p class=t>userdata (/usr/data in the firmware). Deletion is permanent.</p>");
 		if (dir[0]) {
 			char up[512]; char *sl;
 			snprintf(up, sizeof up, "%s", dir); sl = strrchr(up, '/'); if (sl) *sl = 0; else up[0] = 0;
@@ -509,8 +510,8 @@ static void page_files(struct buf *b, const char *dir, const char *flash, int fl
 			puts_(b, "\"><input type=hidden name=p value=\""); esc(b, path); puts_(b, "\"><button class=q style=\"margin:0;padding:.2em .6em\">Delete</button></form></div>");
 			any = 1;
 		}
-		if (!any) puts_(b, "<p>This folder is empty.</p>");
-		puts_(b, "</div><div class=c><h2>Put a file here</h2><p class=t>For example a corrected printer.cfg. A file of the same name is replaced. Up to 8 MB.</p>"
+		if (!any) puts_(b, "<p>Empty folder.</p>");
+		puts_(b, "</div><div class=c><h2>Upload a file</h2><p class=t>E.g. a corrected printer.cfg. An existing file of the same name is overwritten. 8 MB maximum.</p>"
 			 "<form method=post action=\"/files/upload?p="); urlenc(b, dir);
 		puts_(b, "\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload</button></form>");
 	}
@@ -539,27 +540,27 @@ static void page_install(struct buf *b, const char *flash, int flash_ok)
 		field(rep, "firmware", fw, sizeof fw); field(rep, "on_board", on, sizeof on); field(rep, "slot", slot, sizeof slot);
 		field(rep, "to_write", tw, sizeof tw); field(rep, "converting", conv, sizeof conv); field(rep, "need_choice", need, sizeof need);
 		field(rep, "mode", m, sizeof m);
-		puts_(b, "<div class=\"c hi\"><h2>Ready to install</h2><p><b>"); esc(b, fw); puts_(b, "</b>");
-		if (!strcmp(m, "slot")) { puts_(b, " into slot <b>"); esc(b, slot[0] == 'b' ? "B" : "A"); puts_(b, "</b>, the one that is not in use. The firmware that starts now stays as it is."); }
-		else puts_(b, ", replacing the firmware that starts now. Your settings and files are kept.");
-		puts_(b, "</p><p>On the board now: "); esc(b, on[0] > ' ' ? on : "no readable firmware"); puts_(b, ". To be written: "); mb(b, tw); puts_(b, ".</p>");
-		if (conv[0]) { puts_(b, "<p class=e>This changes the printer type the board is set up for: "); esc(b, conv); puts_(b, ".</p>"); }
+		puts_(b, "<div class=\"c hi\"><h2>Review install</h2><p><b>"); esc(b, fw); puts_(b, "</b>");
+		if (!strcmp(m, "slot")) { puts_(b, " into slot <b>"); esc(b, slot[0] == 'b' ? "B" : "A"); puts_(b, "</b>, the inactive slot. The active slot is not changed."); }
+		else puts_(b, ", overwriting the active slot. Settings and files are preserved.");
+		puts_(b, "</p><p>Installed: "); esc(b, on[0] > ' ' ? on : "no readable firmware"); puts_(b, ". To write: "); mb(b, tw); puts_(b, ".</p>");
+		if (conv[0]) { puts_(b, "<p class=e>This changes the board's configured printer model: "); esc(b, conv); puts_(b, ".</p>"); }
 		puts_(b, "<p class=t>");
 		for (line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save))
 			if (!strncmp(line, "note=", 5)) { esc(b, line + 5); puts_(b, "<br>"); }
 		puts_(b, "</p>");
-		if (need[0]) puts_(b, "<p class=e>This firmware serves several printer types and the board does not say which one it is. Use nocry on a computer for this installation.</p>");
-		else if (!strtoull(tw, NULL, 10)) puts_(b, "<p class=ok>The board already holds exactly this firmware. Nothing needs to be written.</p>");
-		else puts_(b, "<form method=post action=/install/go><button>Install now</button></form>");
+		if (need[0]) puts_(b, "<p class=e>This firmware supports several printer models and the board's model is not set. Use nocry on a computer for this install.</p>");
+		else if (!strtoull(tw, NULL, 10)) puts_(b, "<p class=ok>This exact firmware is already installed. Nothing to write.</p>");
+		else puts_(b, "<form method=post action=/install/go><button>Install</button></form>");
 		puts_(b, "<form method=post action=/install/discard><button class=q>Discard</button></form></div>");
 		free(copy);
 	} else {
 		int stl; char *ls = run(doer, "fw-list", NULL, NULL, 32768, &stl), *line, *save; int any = 0;
 		puts_(b, "<div class=c><h2>Install firmware</h2>");
 		if (!strcmp(mode, "ap"))
-			puts_(b, "<p class=e>The board is on its own network, which has no internet. To download firmware, <a href=/wifi>put it on your Wi-Fi</a> first. "
-				 "Uploading a file from this device works either way.</p>");
-		puts_(b, "<form method=post action=/install/fetch><label>From the internet</label>");
+			puts_(b, "<p class=e>Access point mode: no internet access. To download firmware, <a href=/wifi>connect to a Wi-Fi network</a> first. "
+				 "Upload from this device works in either mode.</p>");
+		puts_(b, "<form method=post action=/install/fetch><label>Firmware catalog</label>");
 		for (line = ls ? strtok_r(ls, "\n", &save) : NULL; line; line = strtok_r(NULL, "\n", &save)) {
 			char *f[6]; int i;
 			for (i = 0, f[0] = line; i < 5 && f[i]; i++) { f[i + 1] = strchr(f[i], '\t'); if (f[i + 1]) *f[i + 1]++ = 0; }
@@ -569,17 +570,17 @@ static void page_install(struct buf *b, const char *flash, int flash_ok)
 			puts_(b, "> "); esc(b, f[1]); puts_(b, " "); esc(b, f[2]); puts_(b, "<small>"); esc(b, f[3]); puts_(b, ", "); mb(b, f[4]); puts_(b, "</small></label>");
 			any = 1;
 		}
-		if (!any) puts_(b, "<p>No firmware list for this board (its printer type is not set, or this rescue system has no installer).</p>");
-		puts_(b, "<label>How</label>"
-			 "<label class=n><input type=radio name=mode value=keep checked> Replace the firmware that starts; keep my settings and files</label>"
-			 "<label class=n><input type=radio name=mode value=slot> Put it in the other slot; the firmware that starts now stays</label>");
-		if (any) puts_(b, "<button class=w>Download and check</button>");
-		puts_(b, "</form><form method=post action=/install/refresh><button class=q>Look for newer versions</button></form>"
-			 "<p class=t>Nothing is written to the board yet: the firmware is downloaded, verified and checked against this board first, and you are shown what would be done. "
-			 "For a clean start, install first and then use Factory reset under Repair.</p></div>"
-			 "<div class=c><h2>From this device</h2><p class=t>A firmware file you have: a Creality update (.img), a .ingenic package, or a NebulaOS .img. Up to 700 MB.</p>");
-		puts_(b, "<form method=post action=\"/install/upload?mode=keep\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload and check</button></form>"
-			 "<form method=post action=\"/install/upload?mode=slot\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload and check, for the other slot</button></form></div>");
+		if (!any) puts_(b, "<p>No firmware catalog for this board (printer model not set, or this rescue system has no installer).</p>");
+		puts_(b, "<label>Target slot</label>"
+			 "<label class=n><input type=radio name=mode value=keep checked> Active slot: overwrites the active firmware; settings and files are preserved</label>"
+			 "<label class=n><input type=radio name=mode value=slot> Inactive slot: the active slot is not changed</label>");
+		if (any) puts_(b, "<button class=w>Download and verify</button>");
+		puts_(b, "</form><form method=post action=/install/refresh><button class=q>Refresh catalog</button></form>"
+			 "<p class=t>Nothing is written yet: the image is downloaded, verified and checked against this board, then shown for confirmation. "
+			 "For a clean install, install first, then run Factory reset under Repair.</p></div>"
+			 "<div class=c><h2>Upload firmware</h2><p class=t>A Creality update (.img), a .ingenic package, or a NebulaOS .img. 700 MB maximum.</p>");
+		puts_(b, "<form method=post action=\"/install/upload?mode=keep\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload and verify (active slot)</button></form>"
+			 "<form method=post action=\"/install/upload?mode=slot\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload and verify (inactive slot)</button></form></div>");
 		free(ls);
 	}
 	back(b);
@@ -596,15 +597,15 @@ static void page_boot(struct buf *b, const char *flash, int flash_ok)
 	int s1, s2; char *lo = run(doer, "loader", NULL, NULL, 4096, &s1), *lg = run(doer, "logo", NULL, NULL, 4096, &s2);
 	head(b, NULL);
 	if (flash) { puts_(b, flash_ok ? "<div class=ok>" : "<div class=e>"); pre(b, flash); puts_(b, "</div><p></p>"); }
-	puts_(b, "<div class=c><h2>Boot loader</h2><p class=t>The first program the board runs from its storage. nocryboot is an open one that goes to the other "
-		 "firmware slot when one cannot be started, and into USB boot mode by itself when nothing can. The factory loader is kept on the board when it is replaced.</p>");
+	puts_(b, "<div class=c><h2>Boot loader</h2><p class=t>The first code the board executes from eMMC. nocryboot is an open boot loader: it falls back to the other "
+		 "firmware slot when one fails to boot, and enters USB boot mode when neither boots. The factory loader is kept on the board when replaced.</p>");
 	pre(b, lo);
 	if (s1 == 0) puts_(b, "<form method=post action=/boot/loader><input type=hidden name=what value=install><button class=q>Install nocryboot</button></form>"
-			      "<form method=post action=/boot/loader><input type=hidden name=what value=factory><button class=q>Put the factory loader back</button></form>");
-	puts_(b, "</div><div class=c><h2>Boot logo</h2><p class=t>What the screen shows for the first seconds after power-on.</p>");
+			      "<form method=post action=/boot/loader><input type=hidden name=what value=factory><button class=q>Restore factory loader</button></form>");
+	puts_(b, "</div><div class=c><h2>Boot logo</h2><p class=t>Shown for the first seconds after power-on.</p>");
 	pre(b, lg);
-	if (s2 == 0) puts_(b, "<form method=post action=/boot/logo><input type=hidden name=what value=nocry><button class=q>Use the nocry logo</button></form>"
-			      "<form method=post action=/boot/logo><input type=hidden name=what value=firmware><button class=q>Use the firmware's logo</button></form>");
+	if (s2 == 0) puts_(b, "<form method=post action=/boot/logo><input type=hidden name=what value=nocry><button class=q>Use nocry logo</button></form>"
+			      "<form method=post action=/boot/logo><input type=hidden name=what value=firmware><button class=q>Use firmware logo</button></form>");
 	puts_(b, "</div>"); back(b);
 	free(lo); free(lg);
 }
@@ -614,9 +615,9 @@ static void page_wifi(struct buf *b, const char *error, const char *keep_ssid)
 	char *st = slurp(statefile, 1024), *scan = run(wifi, "scan", NULL, NULL, 16384, NULL), *line, *save, mode[32]; int any = 0;
 	field(st, "mode", mode, sizeof mode);
 	head(b, NULL);
-	puts_(b, "<div class=c><h2>Join a Wi-Fi network</h2>");
+	puts_(b, "<div class=c><h2>Connect to a Wi-Fi network</h2>");
 	note(b, "e", error);
-	puts_(b, "<p class=t>Only 2.4&nbsp;GHz networks are in reach of this board.</p><form method=post action=/wifi/join><label>Network</label>");
+	puts_(b, "<p class=t>This board supports 2.4&nbsp;GHz networks only.</p><form method=post action=/wifi/join><label>Network</label>");
 	for (line = strtok_r(scan, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
 		char *t1 = strchr(line, '\t'), *t2 = t1 ? strchr(t1 + 1, '\t') : NULL; int sig;
 		if (!t2 || !t2[1]) continue;
@@ -628,13 +629,13 @@ static void page_wifi(struct buf *b, const char *error, const char *keep_ssid)
 		puts_(b, sig >= -60 ? "strong" : sig >= -72 ? "medium" : "weak"); puts_(b, "</small></label>");
 		any = 1;
 	}
-	if (!any) puts_(b, "<p>No networks were found. Type the name below.</p>");
-	puts_(b, "<label for=o>Or another name (hidden network)</label><input id=o type=text name=other maxlength=32 autocapitalize=none autocorrect=off>"
-		 "<label for=p>Wi-Fi password</label><input id=p type=password name=pass maxlength=63 autocomplete=off>"
-		 "<button class=w>Join this network</button></form>"
-		 "<p class=t>The board then leaves the network it is on. If it cannot join, its own network \"nocry\" comes back within a minute.</p></div>");
+	if (!any) puts_(b, "<p>No networks found. Enter the SSID below.</p>");
+	puts_(b, "<label for=o>Other SSID (hidden network)</label><input id=o type=text name=other maxlength=32 autocapitalize=none autocorrect=off>"
+		 "<label for=p>Password</label><input id=p type=password name=pass maxlength=63 autocomplete=off>"
+		 "<button class=w>Connect</button></form>"
+		 "<p class=t>The board disconnects from its current network. If the connection fails, the access point \"nocry\" resumes within a minute.</p></div>");
 	if (!strcmp(mode, "client"))
-		puts_(b, "<div class=c><form method=post action=/wifi/own><button class=q>Go back to the board's own network</button></form></div>");
+		puts_(b, "<div class=c><form method=post action=/wifi/own><button class=q>Switch to access point mode</button></form></div>");
 	puts_(b, "<a class=\"b q\" href=/>Back</a>");
 	free(st); free(scan);
 }
@@ -644,13 +645,13 @@ static void page_moving(struct buf *b, const char *ssid)
 	head(b, NULL);
 	puts_(b, "<div class=c><h2>Changing network</h2>");
 	if (ssid) {
-		puts_(b, "<p class=ok>The board is joining <b>"); esc(b, ssid); puts_(b, "</b>.</p>"
-			 "<p><b>If it works,</b> the board's screen shows the network and its new address there. Put this device on that network "
-			 "and open that address; nocry on a computer finds the board by itself. You stay signed in.</p>"
-			 "<p><b>If it does not,</b> the network \"nocry\" comes back within a minute: join it again and check the password.</p>");
+		puts_(b, "<p class=ok>Connecting to <b>"); esc(b, ssid); puts_(b, "</b>.</p>"
+			 "<p><b>On success,</b> the board's screen shows the SSID and the new address. Connect this device to that network "
+			 "and open that address; nocry on a computer discovers the board automatically. The session stays valid.</p>"
+			 "<p><b>On failure,</b> the access point \"nocry\" resumes within a minute: reconnect to it and check the password.</p>");
 	} else {
-		puts_(b, "<p class=ok>The board is opening its own network \"nocry\" (password nocry111).</p>"
-			 "<p>Join it, then open http://192.168.77.1</p>");
+		puts_(b, "<p class=ok>Starting the access point \"nocry\" (password nocry111).</p>"
+			 "<p>Connect to it, then open http://192.168.77.1</p>");
 	}
 	puts_(b, "</div>");
 }
@@ -662,7 +663,7 @@ static void page_confirm(struct buf *b, const char *title, const char *text, con
 	puts_(b, "<div class=c><h2>"); esc(b, title); puts_(b, "</h2><p>"); esc(b, text);
 	puts_(b, "</p><form method=post action="); puts_(b, action); puts_(b, "><input type=hidden name=yes value=1>");
 	if (name) { puts_(b, "<input type=hidden name="); puts_(b, name); puts_(b, " value=\""); esc(b, value); puts_(b, "\">"); }
-	puts_(b, danger ? "<button class=d>" : "<button>"); esc(b, go); puts_(b, "</button></form><a class=\"b q\" href=/>Keep things as they are</a></div>");
+	puts_(b, danger ? "<button class=d>" : "<button>"); esc(b, go); puts_(b, "</button></form><a class=\"b q\" href=/>Cancel</a></div>");
 }
 
 /* ------------------------------------------------------------------ requests -- */
@@ -794,7 +795,7 @@ static void serve(int s)
 	if (is(req, "POST /login")) {
 		time_t now = time(NULL);
 		form(body, "code", v1, sizeof v1);
-		if (now < locked_until) page_login(&b, "Too many wrong codes. Wait a minute, then try again.");
+		if (now < locked_until) page_login(&b, "Too many wrong pairing codes. Locked for one minute.");
 		else if (code_ok(v1)) {
 			const char *t = new_session(); char h[160];
 			wrong_codes = 0;
@@ -809,7 +810,7 @@ static void serve(int s)
 		} else {
 			sleep(2);
 			if (++wrong_codes >= 5) { wrong_codes = 0; locked_until = time(NULL) + 60; }
-			page_login(&b, "That is not the code on the board's screen.");
+			page_login(&b, "Wrong pairing code.");
 		}
 		reply(s, "200 OK", NULL, &b);
 	} else if (!signed_in(req)) {
@@ -824,9 +825,9 @@ static void serve(int s)
 		form(body, "ssid", v1, sizeof v1); form(body, "other", v2, sizeof v2); form(body, "pass", v3, sizeof v3);
 		if (v2[0]) snprintf(v1, sizeof v1, "%s", v2);
 		pl = strlen(v3);
-		if (!v1[0] || strlen(v1) > 32) page_wifi(&b, "Choose a network, or type its name.", NULL);
-		else if (pl && (pl < 8 || pl > 63)) page_wifi(&b, "A Wi-Fi password has 8 to 63 characters. Leave it empty only for an open network.", v1);
-		else if (strchr(v3, '"')) page_wifi(&b, "A password with a double quote (\") cannot be entered here. Use nocry on a computer instead.", v1);
+		if (!v1[0] || strlen(v1) > 32) page_wifi(&b, "Select a network or enter an SSID.", NULL);
+		else if (pl && (pl < 8 || pl > 63)) page_wifi(&b, "WPA passwords are 8 to 63 characters. Leave it empty only for an open network.", v1);
+		else if (strchr(v3, '"')) page_wifi(&b, "A password containing a double quote (\") cannot be entered here. Use nocry on a computer.", v1);
 		else {
 			page_moving(&b, v1);
 			reply(s, "200 OK", NULL, &b);
@@ -845,14 +846,14 @@ static void serve(int s)
 		form(body, "slot", v1, sizeof v1); form(body, "yes", yes, sizeof yes);
 		if (strcmp(v1, "a") && strcmp(v1, "b")) { redirect(s, "/"); free(b.p); return; }
 		if (!yes[0]) {
-			page_confirm(&b, v1[0] == 'a' ? "Start slot A?" : "Start slot B?",
-				     "The board then starts the firmware in this slot the next time it is switched on. Nothing is erased; settings and files are shared by both slots. "
-				     "If the two slots hold different kinds of firmware, the printer's mainboard firmware may be changed by the one that starts.",
-				     "/slot/switch", "slot", v1, "Start this slot", 0);
+			page_confirm(&b, v1[0] == 'a' ? "Set slot A active?" : "Set slot B active?",
+				     "This slot boots from the next power-on. No data is changed; settings and files are shared by both slots. "
+				     "If the two slots hold different kinds of firmware, the active firmware may change the printer's mainboard firmware.",
+				     "/slot/switch", "slot", v1, "Set active", 0);
 		} else {
 			char *out = run(doer, "switch", v1, NULL, 512, &st);
-			if (st == 0) page_home(&b, v1[0] == 'a' ? "Slot A starts at the next power-on." : "Slot B starts at the next power-on.", 1);
-			else page_home(&b, out && *out ? out : "The slot could not be switched.", 0);
+			if (st == 0) page_home(&b, v1[0] == 'a' ? "Slot A is active from the next power-on." : "Slot B is active from the next power-on.", 1);
+			else page_home(&b, out && *out ? out : "Active slot not changed.", 0);
 			free(out);
 		}
 		reply(s, "200 OK", NULL, &b);
@@ -861,9 +862,9 @@ static void serve(int s)
 		if (strcmp(v1, "a") && strcmp(v1, "b")) { redirect(s, "/"); free(b.p); return; }
 		if (!yes[0]) {
 			page_confirm(&b, v1[0] == 'a' ? "Copy slot A to slot B?" : "Copy slot B to slot A?",
-				     "The other slot gets an exact, verified copy of this slot's firmware; what it holds now is replaced. "
-				     "Which slot starts, and your settings and files, are not changed. It takes a few minutes.",
-				     "/slot/copy", "from", v1, "Copy", 1);
+				     "The other slot is overwritten with an exact, verified copy of this slot's firmware. "
+				     "The active slot, settings and files are not changed. Takes a few minutes.",
+				     "/slot/copy", "from", v1, "Overwrite", 1);
 			reply(s, "200 OK", NULL, &b);
 		} else {
 			char *out = run(doer, "copy", v1, NULL, 512, &st);
@@ -877,12 +878,13 @@ static void serve(int s)
 		all = !strcmp(v1, "all");
 		if (!all && strcmp(v1, "mods")) { redirect(s, "/"); free(b.p); return; }
 		if (!yes[0]) {
-			page_confirm(&b, all ? "Factory reset?" : "Remove system modifications?",
-				     all ? "All settings and files on the printer are erased: Wi-Fi settings, print history, uploaded files, calibration, the printer configuration. "
-					   "This cannot be undone. The firmware in both slots and the board's serial number stay."
-					 : "Everything changed in the system itself is removed: installed mods and helper scripts, changed system files. "
-					   "This cannot be undone. Your files, print history and printer configuration stay.",
-				     "/reset", "kind", v1, all ? "Erase everything" : "Remove modifications", 1);
+			page_confirm(&b, all ? "Factory reset?" : "Wipe system overlay?",
+				     all ? "Erases rootfs_data and userdata: all settings and files (Wi-Fi settings, print history, uploaded files, calibration, the printer configuration). "
+					   "A rescue image stored on userdata is erased too; reinstall it from a computer afterwards. "
+					   "This cannot be undone. The firmware in both slots and the serial number are preserved."
+					 : "Erases rootfs_data: all changes to the root file system (installed mods and helper scripts, changed system files). "
+					   "This cannot be undone. userdata (files, print history, printer configuration) is preserved.",
+				     "/reset", "kind", v1, all ? "Erase all" : "Wipe overlay", 1);
 			reply(s, "200 OK", NULL, &b);
 		} else {
 			char *out = run(doer, "reset", v1, NULL, 512, &st);
@@ -915,24 +917,24 @@ static void serve(int s)
 		free(out);
 	} else if (is(req, "POST /install/refresh")) {
 		char *out = run(doer, "fw-list", "refresh", NULL, 512, &st);
-		page_install(&b, st == 0 ? "The list is up to date." : "The list could not be updated (is the board on a network with internet?). The list it came with is still shown.", st == 0);
+		page_install(&b, st == 0 ? "Catalog refreshed." : "The catalog could not be refreshed (no internet access?). The built-in catalog is still shown.", st == 0);
 		free(out);
 		reply(s, "200 OK", NULL, &b);
 	} else if (is(req, "POST /install/upload")) {
 		char name[160], *out, *pth;
 		form(query, "mode", v2, sizeof v2);
 		if (strcmp(v2, "keep") && strcmp(v2, "slot")) snprintf(v2, sizeof v2, "keep");
-		if (clen > FW_MAX) page_install(&b, "That file is larger than 700 MB.", 0);
+		if (clen > FW_MAX) page_install(&b, "File larger than 700 MB.", 0);
 		else {
 			pth = run(doer, "fw-upload-path", NULL, NULL, 512, &st);
-			if (st != 0) page_install(&b, pth && *pth ? pth : "There is nowhere to put the file.", 0);
+			if (st != 0) page_install(&b, pth && *pth ? pth : "No storage available for the upload.", 0);
 			else if (upload_to_file(s, req, body, n - (body - req), clen, pth, name, sizeof name)) {
 				free(run(doer, "fw-discard", NULL, NULL, 64, NULL));
-				page_install(&b, "The upload did not arrive completely. Choose the file and try again.", 0);
+				page_install(&b, "Upload incomplete. Select the file and retry.", 0);
 			} else {
 				out = run(doer, "fw-check", name, v2, 512, &st);
 				if (st == 0) { free(out); free(pth); redirect(s, "/install"); free(b.p); return; }
-				page_install(&b, out && *out ? out : "The file could not be checked.", 0);
+				page_install(&b, out && *out ? out : "The file could not be verified.", 0);
 				free(out);
 			}
 			free(pth);
@@ -941,7 +943,7 @@ static void serve(int s)
 	} else if (is(req, "POST /install/go")) {
 		char *job = run(doer, "fw-install", NULL, NULL, 512, &st);
 		if (st == 0) redirect(s, "/install");
-		else { page_install(&b, job && *job ? job : "The installation could not be started.", 0); reply(s, "200 OK", NULL, &b); }
+		else { page_install(&b, job && *job ? job : "The install could not be started.", 0); reply(s, "200 OK", NULL, &b); }
 		free(job);
 	} else if (is(req, "POST /install/discard")) {
 		free(run(doer, "fw-discard", NULL, NULL, 64, NULL));
@@ -954,18 +956,18 @@ static void serve(int s)
 		form(body, "what", v1, sizeof v1); form(body, "yes", yes, sizeof yes);
 		if (loader ? (strcmp(v1, "install") && strcmp(v1, "factory")) : (strcmp(v1, "nocry") && strcmp(v1, "firmware"))) { redirect(s, "/boot"); free(b.p); return; }
 		if (!yes[0]) {
-			page_confirm(&b, loader ? (v1[0] == 'i' ? "Install the nocryboot boot loader?" : "Put the factory boot loader back?")
+			page_confirm(&b, loader ? (v1[0] == 'i' ? "Install the nocryboot boot loader?" : "Restore the factory boot loader?")
 						: (v1[0] == 'n' ? "Use the nocry boot logo?" : "Use the firmware's boot logo?"),
-				     loader ? "The boot loader is the first program the board runs. If this goes wrong the board does not start by itself, and the way back is USB boot mode: "
-					      "hold BOOT, tap RESET, and use nocry on a computer. The loader that is replaced is kept on the board. It takes a few seconds; do not switch the board off."
-					    : (v1[0] == 'n' ? "The few seconds of screen after power-on change; nothing else does. The logo that is replaced is kept on the board. "
-							      "nocry's logo is made for Creality's firmware. On a slot that holds NebulaOS it has not been tested: "
-							      "if the screen stays dark after power-on, come back here and choose the firmware's logo."
-							    : "Each slot gets back the boot logo its firmware came with, from the copy kept on the board."),
-				     loader ? "/boot/loader" : "/boot/logo", "what", v1, loader ? "Change the boot loader" : "Change the boot logo", loader);
+				     loader ? "The boot loader is the first code the board executes. If the write fails the board does not boot by itself; recovery is through USB boot mode: "
+					      "hold BOOT, tap RESET, and use nocry on a computer. The replaced loader is kept on the board. Takes a few seconds; do not power off."
+					    : (v1[0] == 'n' ? "Changes only the screen contents during the first seconds after power-on. The replaced logo is kept on the board. "
+							      "The nocry logo is made for Creality firmware and is untested on a slot holding NebulaOS: "
+							      "if the screen stays dark after power-on, return here and select the firmware's logo."
+							    : "Restores each slot's original firmware boot logo from the copy kept on the board."),
+				     loader ? "/boot/loader" : "/boot/logo", "what", v1, loader ? "Change boot loader" : "Change boot logo", loader);
 		} else {
 			char *out = run(doer, verb, v1, NULL, 4096, &st);
-			page_boot(&b, out && *out ? out : (st == 0 ? "Done." : "It could not be done."), st == 0);
+			page_boot(&b, out && *out ? out : (st == 0 ? "Completed." : "Failed."), st == 0);
 			free(out);
 		}
 		reply(s, "200 OK", NULL, &b);
@@ -981,9 +983,9 @@ static void serve(int s)
 		form(body, "which", v1, sizeof v1); form(body, "yes", yes, sizeof yes);
 		if (strcmp(v1, "data") && strcmp(v1, "settings")) { redirect(s, "/repair"); free(b.p); return; }
 		if (!yes[0]) {
-			page_confirm(&b, "Check and repair the file system?",
-				     "Damage that is found is repaired. Files that were damaged beyond repair may be lost or end up in a folder called lost+found. It usually takes under a minute. Do not stop it once it runs.",
-				     "/check", "which", v1, "Check and repair", 0);
+			page_confirm(&b, "Run fsck?",
+				     "Runs e2fsck and repairs errors. Files damaged beyond repair may be lost or moved to lost+found. Usually takes under a minute. Do not interrupt it once started.",
+				     "/check", "which", v1, "Run fsck", 0);
 			reply(s, "200 OK", NULL, &b);
 		} else {
 			char *out = run(doer, "check", v1, NULL, 512, &st);
@@ -1013,41 +1015,41 @@ static void serve(int s)
 		if (!path[0]) { redirect(s, "/files"); free(b.p); return; }
 		if (!yes[0]) {
 			char text[700];
-			snprintf(text, sizeof text, "\"%s\" is removed from the printer for good. A folder has to be empty first.", path);
-			page_confirm(&b, "Delete this?", text, "/files/delete", "p", path, "Delete", 1);
+			snprintf(text, sizeof text, "\"%s\" is deleted permanently. A folder must be empty first.", path);
+			page_confirm(&b, "Delete?", text, "/files/delete", "p", path, "Delete", 1);
 		} else {
 			char *out = run(doer, "rm", path, NULL, 512, &st);
 			sl = strrchr(path, '/'); if (sl) *sl = 0; else path[0] = 0;
-			page_files(&b, path, st == 0 ? "Deleted." : (out && *out ? out : "It could not be deleted."), st == 0);
+			page_files(&b, path, st == 0 ? "Deleted." : (out && *out ? out : "Delete failed."), st == 0);
 			free(out);
 		}
 		reply(s, "200 OK", NULL, &b);
 	} else if (is(req, "POST /files/upload")) {
 		char *data, name[160], dest[700], *out; size_t len;
 		form(query, "p", path, sizeof path);
-		if (clen > UPLOAD_MAX) page_files(&b, path, "That file is larger than 8 MB.", 0);
-		else if (!upload(req, body, blen, &data, &len, name, sizeof name)) page_files(&b, path, "No file was chosen.", 0);
+		if (clen > UPLOAD_MAX) page_files(&b, path, "File larger than 8 MB.", 0);
+		else if (!upload(req, body, blen, &data, &len, name, sizeof name)) page_files(&b, path, "No file selected.", 0);
 		else {
 			snprintf(dest, sizeof dest, "%s%s%s", path, path[0] ? "/" : "", name);
 			out = feed(doer, "put", dest, data, len, &st);
-			page_files(&b, path, st == 0 ? "Uploaded." : (out && *out ? out : "The file could not be stored."), st == 0);
+			page_files(&b, path, st == 0 ? "Uploaded." : (out && *out ? out : "The file could not be written."), st == 0);
 			free(out);
 		}
 		reply(s, "200 OK", NULL, &b);
 	} else if (is(req, "POST /wifi/save")) {
 		char *out = run(doer, "wifi-save", NULL, NULL, 512, &st);
-		page_board(&b, st == 0 ? "The network is saved in the printer's settings." : (out && *out ? out : "It could not be saved."), st == 0);
+		page_board(&b, st == 0 ? "Credentials written to the installed firmware's Wi-Fi configuration." : (out && *out ? out : "Not saved."), st == 0);
 		free(out);
 		reply(s, "200 OK", NULL, &b);
 	} else if (is(req, "POST /restart")) {
 		form(body, "yes", yes, sizeof yes);
 		if (!yes[0]) {
-			page_confirm(&b, "Restart the board?", "The rescue system ends and the board starts normally. These pages go away; to come back here the rescue system has to be started again.",
-				     "/restart", NULL, NULL, "Restart", 0);
+			page_confirm(&b, "Reboot?", "Leaves rescue and boots the active slot. These pages stop responding; the rescue system must be started again to return.",
+				     "/restart", NULL, NULL, "Reboot", 0);
 			reply(s, "200 OK", NULL, &b);
 		} else {
 			head(&b, NULL);
-			puts_(&b, "<div class=c><h2>Restarting</h2><p class=ok>The board is restarting normally. This page will stop answering.</p></div>");
+			puts_(&b, "<div class=c><h2>Rebooting</h2><p class=ok>Booting the active slot. This page will stop responding.</p></div>");
 			reply(s, "200 OK", NULL, &b);
 			shutdown(s, SHUT_WR);
 			free(run(doer, "restart", NULL, NULL, 64, NULL));
@@ -1059,9 +1061,9 @@ static void serve(int s)
 		if (strcmp(state, "running")) redirect(s, "/");
 		else if (risk[0] && !yes[0]) {
 			head(&b, NULL);
-			puts_(&b, "<div class=c><h2>Stop before this is finished?</h2><p>"); esc(&b, risk);
-			puts_(&b, "</p><a class=b href=/>Keep going</a><form method=post action=/job/cancel><input type=hidden name=yes value=1>"
-				  "<button class=d>Stop anyway</button></form></div>");
+			puts_(&b, "<div class=c><h2>Cancel this job?</h2><p>"); esc(&b, risk);
+			puts_(&b, "</p><a class=b href=/>Cancel</a><form method=post action=/job/cancel><input type=hidden name=yes value=1>"
+				  "<button class=d>Cancel job</button></form></div>");
 			reply(s, "200 OK", NULL, &b);
 		} else {
 			free(run(doer, "cancel", NULL, NULL, 64, NULL));

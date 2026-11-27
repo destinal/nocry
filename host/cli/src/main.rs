@@ -45,9 +45,9 @@ struct Cli {
 /// What the board can do for its own repair (needs the recovery or rescue system of the same version)
 #[derive(Subcommand)]
 enum BoardCmd {
-    /// The storage chip's wear and how full the data partition is
+    /// eMMC health: wear, spare blocks and userdata usage
     Health,
-    /// Check and repair a file system: "data" (settings and files) or "settings" (system changes)
+    /// Run fsck (check and repair) on a file system: "data" (userdata) or "settings" (rootfs_data, the system overlay)
     Check { which: String },
     /// List a folder of the data partition (the printer's /usr/data)
     Ls {
@@ -74,34 +74,34 @@ enum BoardCmd {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Leave the recovery system: restart the board normally
+    /// Reboot: leaves the recovery system and boots the active slot
     Restart,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// The rescue system stored on the board itself (Nebula Pad, with the nocryboot loader 0.2 or
-    /// later): hold the screen while switching on and it starts, no computer needed. Without
-    /// options: say whether it is stored. --install stores it, --remove takes it away
+    /// The rescue image stored on the board (Nebula Pad, with the nocryboot loader 0.2 or
+    /// later): hold the screen at power-on to boot it, no computer needed. Without
+    /// options: show whether it is installed. --install installs it, --remove removes it
     Rescue {
         #[arg(long, conflicts_with = "remove")]
         install: bool,
         #[arg(long)]
         remove: bool,
-        /// the rescue image to store (default: nocry-rescue.uImage among the board images)
+        /// the rescue image to install (default: nocry-rescue.uImage among the board images)
         #[arg(long)]
         image: Option<PathBuf>,
     },
-    /// Repair actions run by the board itself: storage health, file system check, files, logs, restart
+    /// Repair actions run by the board itself: eMMC health, fsck, files, logs, reboot
     #[command(subcommand)]
     Board(BoardCmd),
-    /// The Wi-Fi of a board running nocry-rescue: show what it is on and what is in range.
-    /// --join makes it join a network (it returns to its own network if that fails);
-    /// --own opens its own network "nocry" again
+    /// The Wi-Fi of a board running nocry-rescue: show its connection and the networks in range.
+    /// --join connects it to a network (it returns to access point mode if that fails);
+    /// --own switches it to access point mode (SSID "nocry")
     Wifi {
         #[arg(long)]
         join: Option<String>,
-        /// password of the network to join (omit for an open network)
+        /// password of the network to connect to (omit for an open network)
         #[arg(long, default_value = "")]
         password: String,
         #[arg(long, conflicts_with = "join")]
@@ -156,7 +156,7 @@ enum Cmd {
     /// Start nocry fastboot (boots stage1+stage2 if the board is in USB boot mode); then use the
     /// stock `fastboot` tool: flash/erase/fetch by GPT name, mmc0, gpt, bootloader, kernel_a/_b...
     Fastboot,
-    /// Erase settings and files (rootfs_data, userdata) so they cannot be recovered: eMMC
+    /// Erase rootfs_data and userdata (all settings and files) so they cannot be recovered: eMMC
     /// secure erase where the card supports it, else overwrite; verified. Firmware stays.
     SecureErase {
         #[arg(long)]
@@ -165,17 +165,17 @@ enum Cmd {
     /// Unpack a firmware file (.ingenic package, update .img, or folder) into DIR:
     /// rtos.bin (zero.bin), kernel.bin (xImage), rootfs.squashfs
     Unpack { firmware: PathBuf, dir: PathBuf },
-    /// Show the two firmware slots, or with --set a|b choose the one that starts
+    /// Show the two firmware slots, or with --set a|b set the active slot
     Slots {
         #[arg(long)]
         set: Option<String>,
-        /// With --set: put the slot on trial for this many starts (1-9). Unless the started
-        /// system reports success in time, the nocryboot loader returns to the other slot
+        /// With --set: put the slot on trial for this many boots (1-9). Unless the booted
+        /// system reports success in time, the nocryboot loader reverts to the other slot
         #[arg(long = "try")]
         tries: Option<u8>,
     },
     /// Show which boot logo (the splash of the first seconds) each firmware slot has.
-    /// --nocry puts nocry's open boot logo there, --firmware brings the firmware's own back
+    /// --nocry installs nocry's open boot logo, --firmware restores the firmware's own
     /// (it is kept on the board). Dry run unless --yes
     #[command(alias = "picture")]
     Logo {
@@ -189,8 +189,8 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
-    /// Show the board's first-stage boot loader. --install puts nocryboot there (the factory
-    /// loader is kept on the board); --factory puts the factory loader back. Dry run unless --yes
+    /// Show the board's first-stage boot loader. --install installs nocryboot (the factory
+    /// loader is kept on the board); --factory restores the factory loader. Dry run unless --yes
     Loader {
         #[arg(long, conflicts_with = "factory")]
         install: bool,
@@ -207,8 +207,8 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
-    /// Copy the firmware of one slot (a or b) into the other, verified. The active slot,
-    /// settings and identity are not changed.
+    /// Copy the firmware of one slot (a or b) into the other, verified. The active slot
+    /// selection, rootfs_data, userdata and the identity record are not changed.
     CopySlot {
         from: String,
         #[arg(long)]
@@ -261,8 +261,8 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
-    /// List the Creality firmware nocry can download and install (--refresh asks Creality for
-    /// the current list)
+    /// Show the firmware catalog: what nocry can download and install (--refresh fetches the
+    /// current catalog from Creality)
     Catalog {
         #[arg(long)]
         refresh: bool,
@@ -271,8 +271,8 @@ enum Cmd {
         tsv: bool,
     },
     /// Install firmware the way the window does, with the same checks: FIRMWARE is a .ingenic
-    /// package, an update .img, or an unpacked folder. Keeps settings and files unless --clean;
-    /// --other-slot puts it into the slot that is not in use and changes nothing else.
+    /// package, an update .img, or an unpacked folder. User data is preserved unless --clean;
+    /// --other-slot installs to the inactive slot and changes nothing else.
     /// Shows what would be done; writes only with --yes
     Install {
         firmware: PathBuf,
@@ -296,7 +296,7 @@ enum Cmd {
         #[arg(long)]
         target: Option<PathBuf>,
     },
-    /// Download a firmware from the list (verified, cached). MODEL: NEBULA, F005, F003, F004;
+    /// Download a firmware from the firmware catalog (verified, cached). MODEL: NEBULA, F005, F003, F004;
     /// VERSION: e.g. 1.1.0.30 or "latest". Prints the local path for --os
     Fetch { model: String, version: String },
     /// Low-level access through fastboot (the recovery's nocry-fbd, or the U-Boot fastboot stage2)
@@ -617,7 +617,7 @@ fn main() -> Result<()> {
         }
         Cmd::SecureErase { yes } => {
             if !yes {
-                bail!("this erases all settings and files on the board for good; add --yes to do it");
+                bail!("this erases rootfs_data and userdata (all settings and files) for good; add --yes to do it");
             }
             let w = secure_wipe_data(soc, Via::Auto, None, None)?;
             for (n, m) in &w.partitions {
@@ -642,17 +642,17 @@ fn main() -> Result<()> {
             if join.is_none() && !own {
                 let w = nocry_core::session::wifi_status()?;
                 match w.mode.as_str() {
-                    "ap" => println!("the board is on its own network {} at {}", w.ssid, w.address),
-                    "client" => println!("the board is on {} at {}", w.ssid, w.address),
+                    "ap" => println!("access point mode: SSID {}, address {}", w.ssid, w.address),
+                    "client" => println!("connected to {}, address {}", w.ssid, w.address),
                     m => println!("Wi-Fi: {m}"),
                 }
                 if let Some(n) = w.source.strip_prefix("failed:") {
-                    println!("it could not join {n} (wrong password, or out of range)");
+                    println!("connection to {n} failed (authentication failed, or out of range)");
                 }
                 if !w.saved_from.is_empty() {
                     println!("the installed firmware has a saved network: {}", w.saved_names);
                 }
-                println!("in range (when the rescue system started):");
+                println!("in range (scanned when rescue booted):");
                 for (name, sig, lock) in &w.networks {
                     println!("  {sig:4} dBm  {}  {name}", if *lock { "password" } else { "open    " });
                 }
@@ -660,8 +660,8 @@ fn main() -> Result<()> {
                 let over_net = nocry_core::session::network_board().is_some();
                 nocry_core::session::wifi_change(join.as_deref(), &password)?;
                 match &join {
-                    Some(n) => println!("the board is joining {n}; if it cannot, its own network \"nocry\" comes back within a minute"),
-                    None => println!("the board is opening its own network \"nocry\""),
+                    Some(n) => println!("the board is connecting to {n}; on failure it returns to access point mode (SSID \"nocry\") within a minute"),
+                    None => println!("the board is switching to access point mode (SSID \"nocry\")"),
                 }
                 if over_net {
                     println!("looking for the board (put this computer on the same network)...");
@@ -675,17 +675,17 @@ fn main() -> Result<()> {
             if install {
                 let img = s::rescue_image(image.as_ref())?;
                 let pieces = s::rescue_install(&img)?;
-                println!("the rescue system is stored on the board and checked ({pieces} piece(s) on the disk)");
-                println!("to start it: hold the screen while switching the board on, and keep holding while it counts down");
+                println!("rescue image installed and verified ({pieces} piece(s) on the disk)");
+                println!("to boot it: hold the screen at power-on, and keep holding through the countdown");
                 println!("(that needs the nocryboot loader 0.2 or later: see `nocry loader`)");
             } else if remove {
                 s::rescue_remove()?;
-                println!("the rescue system is removed from the board");
+                println!("rescue image removed");
             } else {
                 match s::rescue_status()?.as_str() {
-                    "yes" => println!("the rescue system is stored on the board and intact"),
-                    "damaged" => println!("the rescue system was stored on the board, but it no longer reads back correctly (moved or overwritten); store it again with --install"),
-                    _ => println!("no rescue system is stored on the board (--install stores it)"),
+                    "yes" => println!("rescue image: installed, verified"),
+                    "damaged" => println!("rescue image: checksum mismatch (moved or overwritten); reinstall with --install"),
+                    _ => println!("rescue image: not installed (--install installs it)"),
                 }
             }
         }
@@ -694,11 +694,11 @@ fn main() -> Result<()> {
             match b {
                 BoardCmd::Health => {
                     let h = s::board_health()?;
-                    println!("storage chip {}: {} % of its life used{}, spare blocks: {}", h.chip, h.wear_a, if h.wear_b != h.wear_a { format!(" ({} % for its other kind of cells)", h.wear_b) } else { String::new() }, h.spare);
+                    println!("eMMC {}: wear {} % (type A){}, spare blocks: {}", h.chip, h.wear_a, if h.wear_b != h.wear_a { format!(", {} % (type B)", h.wear_b) } else { String::new() }, h.spare);
                     if h.data_state == "readable" {
-                        println!("settings and files: {} MB used of {} MB, {} MB free", h.data_used_mb, h.data_total_mb, h.data_free_mb);
+                        println!("userdata: {} MB used of {} MB, {} MB free", h.data_used_mb, h.data_total_mb, h.data_free_mb);
                     } else {
-                        println!("settings and files: {}", h.data_state);
+                        println!("userdata: {}", h.data_state);
                     }
                 }
                 BoardCmd::Check { which } => println!("{}", s::board_check(&which)?),
@@ -733,7 +733,7 @@ fn main() -> Result<()> {
                 }
                 BoardCmd::Restart => {
                     s::board_restart()?;
-                    println!("the board is restarting normally");
+                    println!("rebooting: the board boots the active slot");
                 }
             }
         }
@@ -812,7 +812,7 @@ fn main() -> Result<()> {
         Cmd::CopySlot { from, yes } => {
             let from = from.to_ascii_lowercase();
             if !yes {
-                bail!("this replaces the firmware in the other slot; add --yes to do it");
+                bail!("this overwrites the firmware in the other slot; add --yes to do it");
             }
             let s = copy_slot(soc, Via::Auto, &from, None, None)?;
             println!("A: {} {}\nB: {} {}\nactive: {}", s.a.firmware_name, s.a.firmware_version, s.b.firmware_name, s.b.firmware_version, s.active.to_uppercase());
@@ -886,7 +886,7 @@ fn main() -> Result<()> {
                 }
                 return Ok(());
             }
-            println!("firmware list of {} ({})", c.built, if c.updated { "updated from Creality" } else { "built in" });
+            println!("firmware catalog of {} ({})", c.built, if c.updated { "updated from Creality" } else { "built in" });
             for m in &c.models {
                 println!("{} ({})", m.name, m.key);
                 for f in &m.firmwares {

@@ -7,7 +7,7 @@
 # compiling it takes about an hour and needs Docker. To compile it yourself instead:
 #
 #   tools/get-images.sh            download the set built from the newest sources (main)
-#   tools/get-images.sh v0.1.0-alpha.4     download the set of that release
+#   tools/get-images.sh v0.2.0-beta.1     download the set of that release
 #   tools/get-images.sh --build [...]      build locally (tools/build-images.sh, same arguments)
 #
 # Downloads come from this project's GitHub releases; the "board-images" one is replaced by the
@@ -31,7 +31,7 @@ tag=${1:-board-images}
 case "$tag" in
   board-images) file=nocry-board-images.tar.gz ;;
   v*) file=nocry-board-images-${tag#v}.tar.gz ;;
-  *) echo "error: give a release tag such as v0.1.0-alpha.4, or nothing for the newest set" >&2; exit 2 ;;
+  *) echo "error: give a release tag such as v0.2.0-beta.1, or nothing for the newest set" >&2; exit 2 ;;
 esac
 
 tmp=$(mktemp -d)

@@ -108,7 +108,7 @@ public:
         {
             auto *h = new QHBoxLayout(udevBanner);
             h->setContentsMargins(0, 0, 0, 0);
-            auto *l = new QLabel(tr("<b>One-time setup needed.</b> Linux does not let programs talk to the board until a small system rule is installed."));
+            auto *l = new QLabel(tr("<b>Setup required.</b> A udev rule is needed before nocry can open the board's USB devices."));
             l->setWordWrap(true);
             auto *b = new QPushButton(tr("Install rule…"));
             h->addWidget(l, 1);
@@ -124,7 +124,7 @@ public:
         {
             auto *h = new QHBoxLayout(udevBanner);
             h->setContentsMargins(0, 0, 0, 0);
-            auto *l = new QLabel(tr("<b>One-time setup needed.</b> Windows cannot talk to the board until a USB driver is set up for it."));
+            auto *l = new QLabel(tr("<b>Setup required.</b> The board's USB devices must be assigned to the WinUSB driver."));
             l->setWordWrap(true);
             auto *b = new QPushButton(tr("Set up driver…"));
             h->addWidget(l, 1);
@@ -141,10 +141,10 @@ public:
         bootHelpButton = new QPushButton(tr("How to enter USB boot mode…"));
         hintRow->addWidget(bootHelpButton, 0, Qt::AlignTop);
         netButton = new QPushButton(tr("Connect over the network…"));
-        netButton->setToolTip(tr("For a board that shows the nocry rescue screen: work on it over Wi-Fi, without a USB cable."));
+        netButton->setToolTip(tr("Connect to a board running nocry-rescue over Wi-Fi instead of USB."));
         hintRow->addWidget(netButton, 0, Qt::AlignTop);
         wifiButton = new QPushButton(tr("Board's Wi-Fi…"));
-        wifiButton->setToolTip(tr("For a board running the nocry rescue system: see which Wi-Fi network it is on, or make it join another."));
+        wifiButton->setToolTip(tr("Show the Wi-Fi connection of a board running nocry-rescue, or connect it to another network."));
         wifiButton->setVisible(false);
         hintRow->addWidget(wifiButton, 0, Qt::AlignTop);
         connect(wifiButton, &QPushButton::clicked, this, [this] { startWifi(); });
@@ -159,7 +159,7 @@ public:
         // shell access to the running recovery: what works right now, and how to use it
         shellLine = new QLabel;
         shellLine->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        shellButton = new QPushButton(tr("How to get a shell…"));
+        shellButton = new QPushButton(tr("Shell access…"));
         auto *shellRow = new QHBoxLayout;
         shellRow->addWidget(shellLine, 1);
         shellRow->addWidget(shellButton);
@@ -183,22 +183,22 @@ public:
             (*l)->setTextInteractionFlags(Qt::TextSelectableByMouse);
         }
         form->addRow(tr("Model:"), model);
-        form->addRow(tr("Firmware:"), slot);
-        form->addRow(tr("Other slot:"), otherSlot);
+        form->addRow(tr("Active slot:"), slot);
+        form->addRow(tr("Inactive slot:"), otherSlot);
         form->addRow(tr("Serial number:"), serial);
         form->addRow(tr("MAC address:"), mac);
         form->addRow(tr("Mainboard:"), board);
-        form->addRow(tr("Storage:"), storage);
+        form->addRow(tr("eMMC:"), storage);
         readButton = new QPushButton(tr("Refresh"));
-        readButton->setToolTip(tr("Read the board's details again"));
+        readButton->setToolTip(tr("Read the board again"));
         boxRow->addWidget(readButton, 0, Qt::AlignTop | Qt::AlignRight);
         hv->addWidget(box);
 
-        backupButton = new ActionButton(tr("Back up…"), tr("Save everything on the board to a file."));
-        restoreButton = new ActionButton(tr("Restore backup…"), tr("Put a saved backup back onto the board."));
-        installButton = new ActionButton(tr("Install firmware…"), tr("Repair, update or reinstall the printer's software."));
-        switchButton = new ActionButton(tr("Switch Active Slot…"), tr("Choose which installed firmware starts, or copy one slot to the other."));
-        resetButton = new ActionButton(tr("Factory reset…"), tr("Erase settings and files; keep the firmware."));
+        backupButton = new ActionButton(tr("Back up…"), tr("Full eMMC image to a file, verified."));
+        restoreButton = new ActionButton(tr("Restore backup…"), tr("Write a full backup image to the board."));
+        installButton = new ActionButton(tr("Install firmware…"), tr("Install, update or repair firmware."));
+        switchButton = new ActionButton(tr("Firmware slots…"), tr("Set the active slot, or copy one slot to the other."));
+        resetButton = new ActionButton(tr("Factory reset…"), tr("Erase rootfs_data and userdata. Firmware is kept."));
         auto *grid = new QGridLayout;
         grid->addWidget(backupButton, 0, 0);
         grid->addWidget(restoreButton, 0, 1);
@@ -220,8 +220,8 @@ public:
         parts->setSelectionMode(QAbstractItemView::SingleSelection);
         auto *adv = new QWidget;
         auto *av = new QVBoxLayout(adv);
-        auto *advNote = new QLabel(tr("For people who know what these do. Writing the wrong thing here can stop the printer from starting; "
-                                      "nocry can always rebuild the board from USB boot mode, but settings and files would be lost."));
+        auto *advNote = new QLabel(tr("Low-level operations. A wrong write can leave the board unbootable. "
+                                      "nocry can always rebuild the board from USB boot mode, but rootfs_data and userdata (settings and files) would be lost."));
         advNote->setWordWrap(true);
         av->addWidget(advNote);
         av->addWidget(parts, 1);
@@ -229,9 +229,9 @@ public:
         partRestoreButton = new QPushButton(tr("Restore partition…"));
         partEraseButton = new QPushButton(tr("Erase partition…"));
         identityButton = new QPushButton(tr("Edit serial number and MAC…"));
-        eraseAllButton = new QPushButton(tr("Erase entire storage…"));
+        eraseAllButton = new QPushButton(tr("Erase entire eMMC…"));
         loaderButton = new QPushButton(tr("Boot loader…"));
-        loaderButton->setToolTip(tr("See which first-stage boot loader the board has; install the open nocryboot loader or go back to the factory one"));
+        loaderButton->setToolTip(tr("Show the first-stage boot loader; install nocryboot or restore the factory loader"));
         auto *prow = new QHBoxLayout;
         prow->addWidget(partBackupButton);
         prow->addWidget(partRestoreButton);
@@ -243,7 +243,7 @@ public:
         irow->addWidget(eraseAllButton);
         irow->addWidget(loaderButton);
         pictureButton = new QPushButton(tr("Boot logo…"));
-        pictureButton->setToolTip(tr("Choose the picture shown for the first seconds after power-on: nocry's or the firmware's own"));
+        pictureButton->setToolTip(tr("Select the boot logo shown at power-on: nocry's or the firmware's"));
         irow->addWidget(pictureButton);
         irow->addStretch(1);
         av->addLayout(irow);
@@ -264,8 +264,8 @@ public:
         auto *logTab = new QWidget;
         auto *lv = new QVBoxLayout(logTab);
         lv->addWidget(log, 1);
-        boardLogButton = new QPushButton(tr("Show the board's own log…"));
-        boardLogButton->setToolTip(tr("The kernel log of the recovery system running on the board, for diagnosing problems"));
+        boardLogButton = new QPushButton(tr("Board log…"));
+        boardLogButton->setToolTip(tr("Kernel log of the recovery system running on the board"));
         lv->addWidget(boardLogButton, 0, Qt::AlignLeft);
         tabs->addTab(logTab, tr("Activity log"));
         connect(boardLogButton, &QPushButton::clicked, this, [this] { showBoardLog(); });
@@ -291,7 +291,7 @@ public:
         connect(installButton, &QPushButton::clicked, this, [this] { chooseInstall(); });
         connect(restoreButton, &QPushButton::clicked, this, [this] {
             const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-            const QString f = QFileDialog::getOpenFileName(this, tr("Choose a backup"), dir, tr("Disk images (*.img);;All files (*)"));
+            const QString f = QFileDialog::getOpenFileName(this, tr("Select backup image"), dir, tr("Disk images (*.img);;All files (*)"));
             if (!f.isEmpty())
                 startRestore(f, false, false);
         });
@@ -340,7 +340,7 @@ public:
             pollState();
             lastResult = o;
             if (o.value("ok").toBool()) {
-                const QString msg = tr("The backup is complete and verified.\n\nFile: %1\nSize: %2\nTime: %3 min %4 s\nSHA-256: %5")
+                const QString msg = tr("Backup complete and verified.\n\nFile: %1\nSize: %2\nTime: %3 min %4 s\nSHA-256: %5")
                     .arg(QDir::toNativeSeparators(path), QLocale().formattedDataSize(qint64(o.value("bytes").toDouble())))
                     .arg(int(o.value("seconds").toDouble()) / 60).arg(int(o.value("seconds").toDouble()) % 60)
                     .arg(o.value("sha256").toString());
@@ -368,7 +368,7 @@ public:
         if (busy)
             return;
         setBusy(true);
-        stateHint->setText(tr("Downloading the firmware."));
+        stateHint->setText(tr("Downloading firmware."));
         cancelButton->setEnabled(true);
         cancelButton->setVisible(true);
         const QByteArray url = fw.value("url").toString().toUtf8(), file = fw.value("file").toString().toUtf8(), dir = dataDir();
@@ -415,11 +415,11 @@ public:
         if (!execute)
             allowCancel();      // only reading and comparing so far
         else if (keepData == 2)
-            allowCancel(tr("The slot being installed is left incomplete and cannot be started until the installation is run again. "
-                           "The board keeps starting the firmware it starts now."));
+            allowCancel(tr("The target slot is left incomplete and cannot boot until the installation is run again. "
+                           "The active slot is not affected."));
         else
-            allowCancel(tr("The firmware on the board is being replaced and is incomplete right now. If you stop, the board will not start "
-                           "until the installation is run again to the end.\n\nnocry can always do that: USB boot mode does not depend on what is installed."));
+            allowCancel(tr("The firmware on the board is partly written. If you cancel, the board will not boot "
+                           "until the installation is run again to completion.\n\nThat is always possible: USB boot mode does not depend on what is installed."));
         const QByteArray p = os.toUtf8();
         const QByteArray safety = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
@@ -449,7 +449,7 @@ public:
                 fwName = o.value("firmware_board").toString();
             const QString fw = tr("%1 firmware %2").arg(fwName, o.value("firmware_version").toString()).simplified();
             if (!o.value("ok").toBool()) {
-                log->appendPlainText(wasCancelled(o) ? (execute ? tr("Installation stopped before it was finished.") : tr("Stopped.")) : tr("Install failed: %1").arg(o.value("error").toString()));
+                log->appendPlainText(wasCancelled(o) ? (execute ? tr("Installation cancelled before completion.") : tr("Cancelled.")) : tr("Install failed: %1").arg(o.value("error").toString()));
                 if (!quiet && !wasCancelled(o))
                     QMessageBox::critical(this, execute ? tr("Installation failed") : tr("Cannot install this firmware"), o.value("error").toString());
             } else if (o.value("bytes_to_write").toDouble() == 0) {
@@ -461,16 +461,16 @@ public:
                     QMessageBox::information(this, tr("Nothing to do"), msg);
             } else if (execute && keepData == 2) {
                 infoStale = true;
-                const QString msg = tr("%1 is installed in slot %2 and verified.\n\nThe board still starts the firmware it started before. To start the new one, use Switch Active Slot.")
+                const QString msg = tr("%1 installed in slot %2 and verified.\n\nThe active slot is not changed. To boot the new firmware, set slot %2 active (Firmware slots).")
                     .arg(fw, o.value("target_slot").toString().toUpper());
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, tr("Installation complete"), msg);
             } else if (execute) {
                 infoStale = true;
-                QString msg = tr("%1 is installed and verified.\n\nUnplug the board, then power it on normally. The first start can take a few minutes.").arg(fw);
+                QString msg = tr("%1 installed and verified.\n\nUnplug the board and power it on. The first boot can take a few minutes.").arg(fw);
                 if (!o.value("safety_copy").toString().isEmpty())
-                    msg += tr("\n\nA safety copy of the board's partition table and identity from before the installation was saved to:\n%1").arg(QDir::toNativeSeparators(o.value("safety_copy").toString()));
+                    msg += tr("\n\nPre-install copy of the partition table and identity record saved to:\n%1").arg(QDir::toNativeSeparators(o.value("safety_copy").toString()));
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, tr("Installation complete"), msg);
@@ -499,17 +499,17 @@ public:
             runAdvanced(tr("Copying slot %1 to slot %2").arg(F, T), [from, sd] { return takeJson(nocry_copy_slot_json(from.constData(), sd.constData())); },
                 [F, T](const QJsonObject &o) {
                     const QJsonObject t = o.value(T.toLower()).toObject();
-                    return tr("Slot %1 now holds a verified copy of slot %2 (%3 %4).\n\nThe board still starts slot %5.")
+                    return tr("Slot %1 now holds a verified copy of slot %2 (%3 %4).\n\nActive slot: %5 (not changed).")
                         .arg(T, F, t.value("firmware_name").toString(), t.value("firmware_version").toString(), o.value("active").toString().toUpper());
                 }, true,
-                tr("Slot %1 is left with an incomplete copy and cannot be started until the copy is run again. "
-                   "If slot %1 is the one the board starts, the board will not start until then.").arg(T));
+                tr("Slot %1 is left with an incomplete copy and cannot boot until the copy is run again. "
+                   "If slot %1 is the active slot, the board will not boot until then.").arg(T));
             return;
         }
         if (busy)
             return;
         setBusy(true);
-        log->appendPlainText(switchTo.isEmpty() ? tr("Reading the firmware slots…") : tr("Switching to slot %1…").arg(switchTo.toUpper()));
+        log->appendPlainText(switchTo.isEmpty() ? tr("Reading the firmware slots…") : tr("Setting slot %1 active…").arg(switchTo.toUpper()));
         const QByteArray slotArg = switchTo.toUtf8();
         const QByteArray safety = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
@@ -522,13 +522,13 @@ public:
             if (!o.value("ok").toBool()) {
                 log->appendPlainText(tr("Error: %1").arg(o.value("error").toString()));
                 if (!quiet && !wasCancelled(o))
-                    QMessageBox::critical(this, tr("Switch Active Slot"), o.value("error").toString());
+                    QMessageBox::critical(this, tr("Firmware slots"), o.value("error").toString());
             } else if (!switchTo.isEmpty()) {
                 infoStale = true;
-                const QString msg = tr("Slot %1 will start the next time the board is powered on.").arg(o.value("active").toString().toUpper());
+                const QString msg = tr("Slot %1 is now the active slot. It boots at the next power-on.").arg(o.value("active").toString().toUpper());
                 log->appendPlainText(msg);
                 if (!quiet)
-                    QMessageBox::information(this, tr("Switch Active Slot"), msg);
+                    QMessageBox::information(this, tr("Firmware slots"), msg);
             } else {
                 const QString pick = chooseSlot(o);
                 if (!pick.isEmpty()) {
@@ -553,8 +553,8 @@ public:
         setBusy(true);
         if (execute)
             stateHint->setText(tr("Restoring. Do not unplug the board."));
-        allowCancel(execute ? tr("The board then holds a mix of what it had and what the backup has. It will probably not start until the restore "
-                                 "is run again to the end.\n\nnocry can always do that: USB boot mode does not depend on what is on the board.")
+        allowCancel(execute ? tr("The board is left with a mix of its previous contents and the backup's. It will probably not boot until the restore "
+                                 "is run again to completion.\n\nThat is always possible: USB boot mode does not depend on what is on the board.")
                             : QString());
         log->appendPlainText(execute ? tr("Restoring %1").arg(QDir::toNativeSeparators(image)) : tr("Checking %1").arg(QDir::toNativeSeparators(image)));
         const QByteArray p = image.toUtf8();
@@ -568,7 +568,7 @@ public:
             pollState();
             lastResult = o;
             if (!o.value("ok").toBool()) {
-                log->appendPlainText(wasCancelled(o) ? (execute ? tr("Restore stopped before it was finished.") : tr("Stopped.")) : tr("Restore failed: %1").arg(o.value("error").toString()));
+                log->appendPlainText(wasCancelled(o) ? (execute ? tr("Restore cancelled before completion.") : tr("Cancelled.")) : tr("Restore failed: %1").arg(o.value("error").toString()));
                 if (!quiet && !wasCancelled(o))
                     QMessageBox::critical(this, execute ? tr("Restore failed") : tr("Cannot restore this file"), o.value("error").toString());
             } else if (!execute) {
@@ -580,8 +580,8 @@ public:
             } else {
                 infoStale = true;
                 const QString msg = o.value("bytes_written").toDouble() == 0
-                    ? tr("The board already matches this backup. Nothing needed to be written.")
-                    : tr("The backup is restored and verified (%1 written).\n\nUnplug the board, then power it on normally.").arg(QLocale().formattedDataSize(qint64(o.value("bytes_written").toDouble())));
+                    ? tr("The board already matches this backup. Nothing was written.")
+                    : tr("Backup restored and verified (%1 written).\n\nUnplug the board and power it on.").arg(QLocale().formattedDataSize(qint64(o.value("bytes_written").toDouble())));
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, tr("Restore backup"), msg);
@@ -624,7 +624,7 @@ public:
                 if (!quiet)
                     QMessageBox::information(this, what, msg);
             } else if (wasCancelled(o)) {
-                log->appendPlainText(tr("%1: stopped before it was finished.").arg(what));
+                log->appendPlainText(tr("%1: cancelled before completion.").arg(what));
             } else {
                 log->appendPlainText(tr("%1 failed: %2").arg(what, o.value("error").toString()));
                 if (!quiet)
@@ -640,13 +640,13 @@ public:
     void startPicture(int want)
     {
         if (want >= 0) {
-            runAdvanced(want == 1 ? tr("Setting the nocry boot logo") : tr("Bringing the firmware's boot logo back"),
+            runAdvanced(want == 1 ? tr("Setting the nocry boot logo") : tr("Restoring the firmware's boot logo"),
                 [want] { return takeJson(nocry_picture_json(want, 1)); },
                 [want](const QJsonObject &o) {
                     if (!o.value("changed").toBool())
-                        return tr("Nothing had to be changed.");
-                    return want == 1 ? tr("The printer now shows the nocry logo when it powers on. The firmware's own logo is kept on the board.")
-                                     : tr("The printer now shows the firmware's own logo (Creality's) when it powers on.");
+                        return tr("No change needed.");
+                    return want == 1 ? tr("Boot logo set to nocry's. The firmware's logo is kept on the board.")
+                                     : tr("Boot logo set to the firmware's (Creality's).");
                 });
             return;
         }
@@ -682,9 +682,9 @@ public:
     {
         auto name = [&](const QString &slot) {
             const QString k = o.value(slot).toString();
-            QString t = k == "nocry" ? tr("nocry") : k == "firmware" ? tr("the firmware's own (Creality logo)") : tr("no firmware in this slot");
+            QString t = k == "nocry" ? tr("nocry") : k == "firmware" ? tr("firmware (Creality logo)") : tr("no firmware");
             if (k == "nocry" && o.value(slot + "_kept").toBool())
-                t += tr(" — the firmware's own is kept and can be brought back");
+                t += tr(" — firmware logo kept on the board, can be restored");
             return t;
         };
         const QString a = o.value("a").toString(), b = o.value("b").toString();
@@ -693,10 +693,10 @@ public:
         QDialog d(this);
         d.setWindowTitle(tr("Boot Logo"));
         auto *v = new QVBoxLayout(&d);
-        auto *intro = new QLabel(tr("For the first seconds after power-on, before the printer's software is up, the board shows a logo. "
-                                   "It comes from a small program stored with each firmware slot, which also switches the screen on.\n\n"
-                                   "nocry has an open one that shows the nocry logo with the printer model. Creality's own is kept on the board when it is replaced, "
-                                   "so you can go back at any time. A firmware update from the printer itself brings Creality's back for the slot it updates."));
+        auto *intro = new QLabel(tr("The boot logo is shown from power-on until the firmware is up. "
+                                   "It is drawn by a pre-boot program stored with each firmware slot, which also initialises the screen.\n\n"
+                                   "nocry provides an open replacement that shows the nocry logo and the printer model. Creality's is kept on the board when replaced "
+                                   "and can be restored at any time. A firmware update run from the printer itself restores Creality's in the slot it updates."));
         intro->setWordWrap(true);
         intro->setMinimumWidth(560);
         v->setSizeConstraint(QLayout::SetMinimumSize);
@@ -706,18 +706,18 @@ public:
         f->addRow(tr("Slot B:"), new QLabel(name("b")));
         v->addLayout(f);
         if (!o.value("available").toBool())
-            v->addWidget(new QLabel(tr("This copy of nocry has no boot logo for this board family.")));
+            v->addWidget(new QLabel(tr("This build of nocry has no boot logo for this board family.")));
         else if (!o.value("proven").toBool()) {
-            auto *l = new QLabel(tr("Warning: nocry's boot logo has not been tested on this board family's own screens. If it does not set the screen up correctly, "
-                                    "the screen can stay dark even after the printer has started. You can then bring the firmware's logo back from USB boot mode."));
+            auto *l = new QLabel(tr("Warning: nocry's boot logo is untested on this board family's screens. If it initialises the screen incorrectly, "
+                                    "the screen can stay dark even after the firmware has booted. The firmware's logo can then be restored from USB boot mode."));
             l->setWordWrap(true);
             v->addWidget(l);
         }
         int choice = 0;
         auto *row = new QHBoxLayout;
-        auto *useNocry = new QPushButton(tr("Use the nocry logo"));
+        auto *useNocry = new QPushButton(tr("Use nocry logo"));
         useNocry->setEnabled(o.value("available").toBool() && anyFirmware);
-        auto *useFw = new QPushButton(tr("Use the firmware's logo"));
+        auto *useFw = new QPushButton(tr("Use firmware logo"));
         useFw->setEnabled(canBack);
         row->addWidget(useNocry);
         row->addWidget(useFw);
@@ -738,12 +738,12 @@ public:
     {
         const QByteArray f = file.toUtf8(), sd = safetyDir();
         if (action != 0) {
-            runAdvanced(action == 1 ? tr("Installing the nocryboot boot loader") : tr("Putting the factory boot loader back"),
+            runAdvanced(action == 1 ? tr("Installing the nocryboot boot loader") : tr("Restoring the factory boot loader"),
                 [action, f, sd] { return takeJson(nocry_loader_json(action, f.isEmpty() ? nullptr : f.constData(), 1, sd.constData())); },
                 [](const QJsonObject &o) {
-                    return tr("The board now has: %1\n\nIt was written and read back correctly. Unplug the board and power it on normally.\n\n"
-                              "If the screen stays dark for more than a minute, put the board in USB boot mode with the BOOT button; "
-                              "nocry can always put the previous loader back from there.").arg(o.value("loader").toString());
+                    return tr("Boot loader on the board: %1\n\nWritten and verified by read-back. Unplug the board and power it on.\n\n"
+                              "If the screen stays dark for more than a minute, enter USB boot mode with the BOOT button; "
+                              "nocry can always restore the previous loader from there.").arg(o.value("loader").toString());
                 });
             return;
         }
@@ -785,17 +785,17 @@ public:
         QDialog d(this);
         d.setWindowTitle(tr("Boot Loader"));
         auto *v = new QVBoxLayout(&d);
-        auto *intro = new QLabel(tr("The boot loader is the first program the board runs from its storage. It starts the boot logo and then the firmware.\n\n"
-                                   "nocryboot is an open replacement for Creality's. Unlike the factory loader it does not hang when a firmware slot is damaged: "
-                                   "it starts the other slot, and if neither can be started it puts the board in USB boot mode by itself, so nocry can repair it "
-                                   "without the BOOT button. It can also try newly installed firmware for a few starts and go back if it never comes up."));
+        auto *intro = new QLabel(tr("The first-stage boot loader is the first code the board runs from the eMMC. It starts the boot logo, then the firmware.\n\n"
+                                   "nocryboot is an open replacement for Creality's loader. Unlike the factory loader it does not hang on a damaged firmware slot: "
+                                   "it boots the other slot, and if neither is bootable it enters USB boot mode by itself, so the board can be repaired "
+                                   "without the BOOT button. It also supports trial boots: newly installed firmware gets a limited number of boots, and the loader reverts to the other slot if it never comes up."));
         intro->setWordWrap(true);
         v->addWidget(intro);
         auto *f = new QFormLayout;
-        f->addRow(tr("On the board:"), new QLabel(o.value("loader").toString()));
-        f->addRow(tr("Factory loader kept on the board:"), new QLabel(kept ? tr("yes") : kind == "factory" ? tr("not needed (it is the one in use)") : tr("no")));
+        f->addRow(tr("Installed:"), new QLabel(o.value("loader").toString()));
+        f->addRow(tr("Factory loader kept on the board:"), new QLabel(kept ? tr("yes") : kind == "factory" ? tr("not needed (the factory loader is installed)") : tr("no")));
         if (!o.value("available").toString().isEmpty())
-            f->addRow(tr("This nocry can install:"), new QLabel(o.value("available").toString()));
+            f->addRow(tr("Available:"), new QLabel(o.value("available").toString()));
         v->addLayout(f);
         if (!blocked.isEmpty()) {
             auto *l = new QLabel(tr("nocryboot cannot be installed on this board: %1.").arg(blocked));
@@ -806,25 +806,25 @@ public:
         auto *row = new QHBoxLayout;
         auto *inst = new QPushButton(kind == "nocryboot" ? tr("Update nocryboot…") : tr("Install nocryboot…"));
         inst->setEnabled(blocked.isEmpty() && !upToDate);
-        auto *fac = new QPushButton(tr("Put the factory loader back…"));
+        auto *fac = new QPushButton(tr("Restore factory loader…"));
         fac->setEnabled(kind != "factory");
         row->addWidget(inst);
         row->addWidget(fac);
         row->addStretch(1);
         v->addLayout(row);
         if (upToDate)
-            v->addWidget(new QLabel(tr("The board already has this nocryboot.")));
+            v->addWidget(new QLabel(tr("This nocryboot version is already installed.")));
         connect(inst, &QPushButton::clicked, &d, [&] {
             QString file;
-            QString info = tr("The loader is replaced by: %1\n\n").arg(o.value("available").toString());
+            QString info = tr("The loader will be replaced by: %1\n\n").arg(o.value("available").toString());
             if (kind == "factory")
-                info += tr("The factory loader is kept on the board itself and on this computer, so it can be put back at any time.");
+                info += tr("The factory loader is kept on the board and on this computer and can be restored at any time.");
             else if (kept)
-                info += tr("The factory loader kept on the board stays there.");
+                info += tr("The factory loader copy on the board is kept.");
             else
                 info += tr("This board has no copy of its factory loader. If you have a backup of this board made before nocryboot was installed, "
-                           "choose it in the next step and nocry keeps the factory loader from it on the board.");
-            info += tr("\n\nFirmware, settings, files and the identity are not touched. If the new loader should not start, the BOOT button and nocry bring the old one back.");
+                           "select it in the next step; nocry stores the factory loader from it on the board.");
+            info += tr("\n\nFirmware, rootfs_data, userdata and the identity record are not modified. If the new loader does not boot, the previous one can be restored from USB boot mode (BOOT button).");
             QMessageBox box(QMessageBox::Warning, tr("Boot loader"), tr("Install nocryboot on this board?"), QMessageBox::Cancel, &d);
             box.setInformativeText(info);
             auto *go = box.addButton(tr("Install"), QMessageBox::DestructiveRole);
@@ -833,22 +833,22 @@ public:
             if (box.clickedButton() != go)
                 return;
             if (kind != "factory" && !kept)
-                file = QFileDialog::getOpenFileName(&d, tr("Backup with the factory loader (Cancel to go on without)"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("Backups and loaders (*.img *.bin);;All files (*)"));
+                file = QFileDialog::getOpenFileName(&d, tr("Backup containing the factory loader (Cancel to continue without)"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("Backups and loaders (*.img *.bin);;All files (*)"));
             choice = {1, file};
             d.accept();
         });
         connect(fac, &QPushButton::clicked, &d, [&] {
             QString file;
             if (!kept) {
-                QMessageBox::information(&d, tr("Boot loader"), tr("No copy of the factory loader is kept on this board. Choose a backup of this board made before nocryboot was installed; nocry takes the loader from it."));
-                file = QFileDialog::getOpenFileName(&d, tr("Backup with the factory loader"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("Backups and loaders (*.img *.bin);;All files (*)"));
+                QMessageBox::information(&d, tr("Boot loader"), tr("No copy of the factory loader is kept on this board. Select a backup of this board made before nocryboot was installed; the loader is taken from it."));
+                file = QFileDialog::getOpenFileName(&d, tr("Backup containing the factory loader"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("Backups and loaders (*.img *.bin);;All files (*)"));
                 if (file.isEmpty())
                     return;
             }
-            QMessageBox box(QMessageBox::Warning, tr("Boot loader"), tr("Put Creality's factory loader back?"), QMessageBox::Cancel, &d);
-            box.setInformativeText(tr("The board then behaves as it did from the factory: a damaged firmware slot leaves it dark, and only the BOOT button gets it into USB boot mode. "
-                                      "A firmware trial that is under way is ended.\n\nFirmware, settings, files and the identity are not touched."));
-            auto *go = box.addButton(tr("Put it back"), QMessageBox::DestructiveRole);
+            QMessageBox box(QMessageBox::Warning, tr("Boot loader"), tr("Restore Creality's factory loader?"), QMessageBox::Cancel, &d);
+            box.setInformativeText(tr("Factory behaviour returns: a damaged firmware slot leaves the board dark, and USB boot mode is reachable only with the BOOT button. "
+                                      "A trial boot in progress is ended.\n\nFirmware, rootfs_data, userdata and the identity record are not modified."));
+            auto *go = box.addButton(tr("Restore"), QMessageBox::DestructiveRole);
             box.setDefaultButton(QMessageBox::Cancel);
             box.exec();
             if (box.clickedButton() != go)
@@ -879,27 +879,27 @@ public:
         const QByteArray n = name.toUtf8(), f = file.toUtf8(), sd = safetyDir();
         runAdvanced(tr("Restoring partition %1").arg(name), [n, f, sd] { return takeJson(nocry_partition_restore_json(n.constData(), f.constData(), sd.constData())); },
             [name](const QJsonObject &o) {
-                return o.value("bytes_written").toDouble() == 0 ? tr("Partition %1 already held exactly this data. Nothing was written.").arg(name)
+                return o.value("bytes_written").toDouble() == 0 ? tr("Partition %1 already matches this file. Nothing was written.").arg(name)
                                                                 : tr("Partition %1 was written and verified (%2 changed).").arg(name, QLocale().formattedDataSize(qint64(o.value("bytes_written").toDouble())));
             }, true,
-            tr("Partition %1 then holds a mix of its old contents and the file's. Whatever uses it will probably not work until the restore is run again to the end.").arg(name));
+            tr("Partition %1 is left with a mix of its old contents and the file's. Whatever depends on it will probably fail until the restore is run again to completion.").arg(name));
     }
     void startPartErase(const QString &name)
     {
         const QByteArray n = name.toUtf8(), sd = safetyDir();
         runAdvanced(tr("Erasing partition %1").arg(name), [n, sd] { return takeJson(nocry_partition_erase_json(n.constData(), sd.constData())); },
             [name](const QJsonObject &) { return tr("Partition %1 is erased (all zeros) and verified.").arg(name); }, true,
-            tr("Partition %1 is then partly erased: neither its old contents nor empty. Whatever uses it will probably not work until it is erased completely or written again.").arg(name));
+            tr("Partition %1 is left partly erased: neither its old contents nor empty. Whatever depends on it will probably fail until it is fully erased or rewritten.").arg(name));
     }
     void startEraseAll()
     {
         const QByteArray sd = safetyDir();
-        runAdvanced(tr("Erasing the entire storage"), [sd] { return takeJson(nocry_erase_disk_json(sd.constData())); },
+        runAdvanced(tr("Erasing the entire eMMC"), [sd] { return takeJson(nocry_erase_disk_json(sd.constData())); },
             [](const QJsonObject &) {
-                return tr("The board's storage is completely erased. The board is blank and will only start in USB boot mode.\n\nUse Install firmware to rebuild it.");
+                return tr("eMMC fully erased. The board is blank and boots only into USB boot mode.\n\nUse Install firmware to rebuild it.");
             }, true,
-            tr("The storage is then partly erased. What has been erased so far is gone and is not brought back by stopping; the board will most likely "
-               "only start in USB boot mode, as after a complete erase."));
+            tr("The eMMC is left partly erased. Data erased so far is not recovered by cancelling; the board will most likely "
+               "boot only into USB boot mode, as after a complete erase."));
     }
     void startSecureWipe()
     {
@@ -909,19 +909,19 @@ public:
                 QStringList how;
                 for (const auto &p : o.value("partitions").toArray()) {
                     const QString m = p.toObject().value("method").toString();
-                    how << (m == "secure-discard" ? tr("the storage chip's secure erase") : m == "discard" ? tr("the storage chip's erase command") : tr("overwriting with zeros"));
+                    how << (m == "secure-discard" ? tr("eMMC secure erase") : m == "discard" ? tr("eMMC discard") : tr("zero overwrite"));
                 }
                 how.removeDuplicates();
-                return tr("Settings and files are erased (%1, using %2) and every part was checked to be empty.\n\nUnplug the board, then power it on normally. The first start takes longer while the printer sets itself up again.")
+                return tr("rootfs_data and userdata erased (%1, method: %2) and verified empty.\n\nUnplug the board and power it on. The first boot takes longer while the firmware recreates both file systems.")
                     .arg(QLocale().formattedDataSize(qint64(o.value("bytes").toDouble())), how.join(tr(" and ")));
             }, true,
-            tr("Settings and files are then partly erased: what is gone stays gone, and the rest may still be readable. "
-               "The printer may not start properly until the erase is run to the end."));
+            tr("rootfs_data and userdata are left partly erased: erased data is gone, the rest may still be readable. "
+               "The printer may not boot correctly until the erase is run to completion."));
     }
     void startIdentity(const QString &sn, const QString &mac, const QString &model, const QString &board)
     {
         const QByteArray a = sn.toUtf8(), b = mac.toUtf8(), c = model.toUtf8(), e = board.toUtf8(), sd = safetyDir();
-        runAdvanced(tr("Writing the identity"), [a, b, c, e, sd] { return takeJson(nocry_set_identity_json(a.constData(), b.constData(), c.constData(), e.constData(), sd.constData())); },
+        runAdvanced(tr("Writing the identity record"), [a, b, c, e, sd] { return takeJson(nocry_set_identity_json(a.constData(), b.constData(), c.constData(), e.constData(), sd.constData())); },
             [](const QJsonObject &o) {
                 return tr("Identity written and verified.\n\nSerial number: %1\nMAC address: %2\nModel: %3").arg(o.value("sn").toString(), o.value("mac").toString(), o.value("model").toString());
             });
@@ -934,7 +934,7 @@ public:
             return;
         setBusy(true);
         stateHint->setText(tr("Resetting. Do not unplug the board."));
-        allowCancel(tr("Settings and files are then partly erased. The printer may not start properly until a factory reset is run to the end."));
+        allowCancel(tr("The data partitions are left partly erased. The printer may not boot correctly until a factory reset is run to completion."));
         log->appendPlainText(tr("Factory reset…"));
         const QByteArray safety = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
@@ -946,14 +946,14 @@ public:
             pollState();
             lastResult = o;
             if (!o.value("ok").toBool()) {
-                log->appendPlainText(wasCancelled(o) ? tr("Factory reset stopped before it was finished.") : tr("Factory reset failed: %1").arg(o.value("error").toString()));
+                log->appendPlainText(wasCancelled(o) ? tr("Factory reset cancelled before completion.") : tr("Factory reset failed: %1").arg(o.value("error").toString()));
                 if (!quiet && !wasCancelled(o))
                     QMessageBox::critical(this, tr("Factory reset failed"), o.value("error").toString());
             } else {
                 infoStale = true;
                 const QString msg = o.value("executed").toBool()
-                    ? tr("Factory reset complete. Unplug the board, then power it on normally. The first start takes longer while the printer sets itself up again.")
-                    : tr("The board's settings and files are already blank. Nothing needed to be erased.");
+                    ? tr("Factory reset complete. Unplug the board and power it on. The first boot takes longer while the firmware recreates the erased file systems.")
+                    : tr("The data partitions are already blank. Nothing was erased.");
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, tr("Factory reset"), msg);
@@ -989,8 +989,8 @@ public:
     {
         setBusy(true);
         progressLabel->setText(tr("Writing — 96 MB of 143 MB"));
-        allowCancel(tr("The firmware on the board is being replaced and is incomplete right now. If you stop, the board will not start "
-                       "until the installation is run again to the end.\n\nnocry can always do that: USB boot mode does not depend on what is installed."));
+        allowCancel(tr("The firmware on the board is partly written. If you cancel, the board will not boot "
+                       "until the installation is run again to completion.\n\nThat is always possible: USB boot mode does not depend on what is installed."));
         requestCancel();
         setBusy(false);
     }
@@ -1046,27 +1046,27 @@ private:
         if (converting) {
             // the most important thing on this screen: say it first, in plain words
             if (after == "Nebula Pad")
-                info = tr("You are changing this board from %1 firmware to that of a retail Nebula Pad. It will no longer be set up for the %1 and will work as a generic Nebula Pad instead.").arg(beforeName);
+                info = tr("This converts the board from %1 firmware to retail Nebula Pad firmware. It will no longer be configured for the %1 and will operate as a generic Nebula Pad.").arg(beforeName);
             else if (before == "Nebula Pad")
-                info = tr("You are changing this Nebula Pad from retail Nebula Pad firmware to that of the %1. It will no longer function on generic printers and will only be suitable for use on the %1.").arg(afterName);
+                info = tr("This converts the Nebula Pad from retail firmware to %1 firmware. It will no longer work with generic printers, only with the %1.").arg(afterName);
             else
-                info = tr("You are changing this board from %1 firmware to that of the %2. It will no longer work on the %1 and will only be suitable for use on the %2.").arg(beforeName, afterName);
-            info += tr("\n\nIf you aren't absolutely sure this is what you want to do, click Cancel.\n\n");
+                info = tr("This converts the board from %1 firmware to %2 firmware. It will no longer work on the %1, only on the %2.").arg(beforeName, afterName);
+            info += tr("\n\nCancel unless this conversion is intended.\n\n");
         }
-        info += tr("Currently on the board: %1\nTo be written: %2")
+        info += tr("Installed: %1\nTo write: %2")
             .arg(curName.isEmpty() ? tr("no readable firmware") : tr("%1 firmware %2").arg(curName, curVer).simplified(),
                  QLocale().formattedDataSize(qint64(o.value("bytes_to_write").toDouble())));
         if (o.value("blank_board").toBool())
-            info = tr("This board is blank. nocry will rebuild it from scratch: partition table, bootloader, firmware and identity.\n\n") + info;
+            info = tr("This board is blank. It will be rebuilt: partition table, boot loader, firmware and identity record.\n\n") + info;
         if (keepData == 2)
-            info += tr("\n\nIt goes into slot %1, the one that is not in use. The firmware that runs now stays where it is and keeps starting until you choose the other slot with Switch Active Slot. Settings and files are shared by both slots and are not changed.")
+            info += tr("\n\nTarget: slot %1, the inactive slot. The active slot is not changed and keeps booting until slot %1 is set active (Firmware slots). rootfs_data and userdata are shared by both slots and are not changed.")
                         .arg(o.value("target_slot").toString().toUpper());
         else if (keepData && !o.value("blank_board").toBool())
-            info += tr("\n\nYour settings, files, serial number and the other firmware slot are kept.");
+            info += tr("\n\nuserdata, the identity record and the other firmware slot are preserved. rootfs_data (system overlay) is kept only if the firmware version is unchanged; see the details.");
         else
-            info += tr("\n\nClean install: all settings and files on the printer will be erased. The serial number and MAC address are kept.");
+            info += tr("\n\nClean install: rootfs_data and userdata (all settings and files) are erased, and firmware slot B is erased. The serial number and MAC address are kept.");
         if (o.value("identity_generated").toBool())
-            info += tr("\n\nThis board has no valid serial number, so a new serial number and MAC address will be generated.");
+            info += tr("\n\nThe board has no valid serial number: a new serial number and MAC address will be generated.");
         QStringList det;
         for (const auto &n : o.value("notes").toArray())
             det << n.toString();
@@ -1092,7 +1092,7 @@ private:
             ? tr("Slot %1 — %2 firmware %3").arg(letter, s.value("firmware_name").toString(), s.value("firmware_version").toString())
             : tr("Slot %1 — empty or incomplete").arg(letter);
         if (active)
-            t += tr("  (starts now)");
+            t += tr("  (active)");
         return t;
     }
 
@@ -1108,9 +1108,9 @@ private:
         if (quiet)
             return QString();
         QDialog d(this);
-        d.setWindowTitle(tr("Switch Active Slot"));
+        d.setWindowTitle(tr("Firmware Slots"));
         auto *v = new QVBoxLayout(&d);
-        v->addWidget(new QLabel(tr("The board holds two firmware slots. Choose the one that starts when it is powered on:")));
+        v->addWidget(new QLabel(tr("Active slot (boots at power-on):")));
         auto *ra = new QRadioButton(slotText("A", a, active == "a"));
         auto *rb = new QRadioButton(slotText("B", b, active == "b"));
         ra->setEnabled(a.value("bootable").toBool());
@@ -1119,8 +1119,8 @@ private:
         v->addWidget(ra);
         v->addWidget(rb);
         if (!a.value("bootable").toBool() || !b.value("bootable").toBool())
-            v->addWidget(new QLabel(tr("A slot without complete firmware cannot be selected.")));
-        v->addWidget(new QLabel(tr("Settings and files are shared by both slots and are not changed.")));
+            v->addWidget(new QLabel(tr("A slot without complete firmware cannot be set active.")));
+        v->addWidget(new QLabel(tr("rootfs_data and userdata are shared by both slots and are not changed.")));
         // copying one slot's firmware over the other
         QString copyFrom;
         auto *copyRow = new QHBoxLayout;
@@ -1131,15 +1131,15 @@ private:
             cb->setEnabled(src.value("bootable").toBool());
             copyRow->addWidget(cb);
             connect(cb, &QPushButton::clicked, &d, [&, f, F, T, src, dst] {
-                QString info = tr("Slot %1 will get an exact copy of the firmware in slot %2 (%3 %4).").arg(T, F, src.value("firmware_name").toString(), src.value("firmware_version").toString());
+                QString info = tr("Slot %1 will be overwritten with slot %2 (%3 %4).").arg(T, F, src.value("firmware_name").toString(), src.value("firmware_version").toString());
                 if (dst.value("bootable").toBool())
-                    info += tr("\n\nThe firmware now in slot %1 (%2 %3) will be replaced.").arg(T, dst.value("firmware_name").toString(), dst.value("firmware_version").toString());
+                    info += tr("\n\nThis replaces the firmware in slot %1 (%2 %3).").arg(T, dst.value("firmware_name").toString(), dst.value("firmware_version").toString());
                 if (active == T.toLower())
-                    info += tr("\n\nSlot %1 is the active slot: this replaces the firmware the board starts.").arg(T);
-                info += tr("\n\nWhich slot starts, and your settings and files, are not changed.");
+                    info += tr("\n\nSlot %1 is the active slot: this replaces the active firmware.").arg(T);
+                info += tr("\n\nThe active slot selection, rootfs_data and userdata are not changed.");
                 QMessageBox box(QMessageBox::Warning, tr("Copy slot"), tr("Copy slot %1 to slot %2?").arg(F, T), QMessageBox::Cancel, &d);
                 box.setInformativeText(info);
-                auto *go = box.addButton(tr("Copy"), QMessageBox::DestructiveRole);
+                auto *go = box.addButton(tr("Overwrite"), QMessageBox::DestructiveRole);
                 box.setDefaultButton(QMessageBox::Cancel);
                 box.exec();
                 if (box.clickedButton() == go) {
@@ -1151,7 +1151,7 @@ private:
         copyRow->addStretch(1);
         v->addLayout(copyRow);
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-        bb->button(QDialogButtonBox::Ok)->setText(tr("Switch"));
+        bb->button(QDialogButtonBox::Ok)->setText(tr("Set active"));
         v->addWidget(bb);
         auto update = [=] { bb->button(QDialogButtonBox::Ok)->setEnabled((ra->isChecked() ? "a" : "b") != active); };
         connect(ra, &QRadioButton::toggled, &d, update);
@@ -1170,14 +1170,14 @@ private:
     {
         const bool other = o.value("different_board").toBool();
         const QString im = o.value("image_model").toString(), isn = o.value("image_sn_tail").toString();
-        QString info = tr("Everything on the board — firmware, settings, files and identity — will be replaced with the contents of this backup. Only the parts that differ are written.\n\nBackup: %1")
+        QString info = tr("The entire eMMC — firmware, rootfs_data, userdata and identity record — will be replaced with this backup. Only differing blocks are written.\n\nBackup: %1")
             .arg(QFileInfo(image).fileName());
         if (!im.isEmpty())
             info += tr("\nMade from: %1, serial number ending in %2").arg(im, isn);
         if (other)
-            info += tr("\n\nWarning: this backup was made from a different board (this board's serial number ends in %1). Restoring it copies that board's serial number and MAC address onto this one. Two boards with the same identity can conflict on your network and with Creality Cloud.\n\nIf you aren't absolutely sure this is what you want to do, click Cancel.").arg(o.value("device_sn_tail").toString());
+            info += tr("\n\nWarning: this backup was made from a different board (this board's serial number ends in %1). Restoring it copies that board's serial number and MAC address onto this one. Two boards with the same identity can conflict on a network and with Creality Cloud.\n\nCancel unless this is intended.").arg(o.value("device_sn_tail").toString());
         if (!o.value("has_checksum").toBool())
-            info += tr("\n\nNote: there is no checksum file next to this backup, so the file itself cannot be checked for damage first.");
+            info += tr("\n\nNote: this backup has no .sha256 file, so the file cannot be checked for corruption first.");
         log->appendPlainText(info);
         if (autoRestore)
             return (other && autoRestore != 2) ? 0 : (other ? 2 : 1);
@@ -1210,7 +1210,7 @@ private:
         if (busy)
             return;
         nocry_string_free(nocry_net_connect_json(nullptr, nullptr));
-        log->appendPlainText(tr("Disconnected from %1. The board keeps running its rescue system.").arg(networkAddress));
+        log->appendPlainText(tr("Disconnected from %1. The board stays in rescue.").arg(networkAddress));
         networkAddress.clear();
         pollState();
     }
@@ -1230,9 +1230,9 @@ private:
         NetDialog d(this);
         d.setWindowTitle(tr("Connect over the network"));
         auto *v = new QVBoxLayout(&d);
-        auto *intro = new QLabel(tr("A board that shows the nocry rescue screen can be worked on over Wi-Fi, without a USB cable.\n\n"
-                                    "This computer has to be on the same network as the board. If the board is not on your network, "
-                                    "join the Wi-Fi network shown on its screen first."));
+        auto *intro = new QLabel(tr("A board running nocry-rescue can be used over Wi-Fi instead of USB.\n\n"
+                                    "This computer must be on the same network as the board. If the board is in access point mode, "
+                                    "connect this computer to the SSID shown on its screen first."));
         intro->setWordWrap(true);
         intro->setMinimumWidth(500);
         v->addWidget(intro);
@@ -1251,7 +1251,7 @@ private:
         addrRow->addWidget(again);
         form->addRow(tr("Board:"), addrRow);
         auto *code = new QLineEdit;
-        code->setPlaceholderText(tr("the 6 digits on the board's screen"));
+        code->setPlaceholderText(tr("6 digits, shown on the board's screen"));
         code->setMaxLength(12);
         form->addRow(tr("Pairing code:"), code);
         v->addLayout(form);
@@ -1277,7 +1277,7 @@ private:
 
         auto search = [&d, addr, again, status, valid] {
             again->setEnabled(false);
-            status->setText(tr("Looking for boards on the network…"));
+            status->setText(tr("Searching for boards on the network…"));
             auto *w = new QFutureWatcher<QJsonObject>(&d);
             connect(w, &QFutureWatcher<QJsonObject>::finished, &d, [w, addr, again, status, valid] {
                 const QJsonArray boards = w->result().value("boards").toArray();
@@ -1297,8 +1297,8 @@ private:
                 else
                     addr->setEditText(typed);
                 status->setText(boards.isEmpty()
-                    ? tr("No board answered. Check that this computer is on the same network as the board, or type the address shown on the board's screen.")
-                    : tr("Type the pairing code shown on the board's screen."));
+                    ? tr("No board found. Check that this computer is on the same network as the board, or enter the address shown on the board's screen.")
+                    : tr("Enter the pairing code shown on the board's screen."));
                 valid();
             });
             w->setFuture(QtConcurrent::run([] { return takeJson(nocry_net_discover_json(2500)); }));
@@ -1320,7 +1320,7 @@ private:
                     x->setEnabled(true);
                 if (o.value("ok").toBool()) {
                     QSettings(QStringLiteral("nocry"), QStringLiteral("nocry")).setValue("network/address", a);
-                    log->appendPlainText(tr("Connected to %1 over the network (encrypted, paired with the code on its screen).").arg(a));
+                    log->appendPlainText(tr("Connected to %1 over the network (encrypted, paired by code).").arg(a));
                     networkAddress = a;
                     d.accept();
                     return;
@@ -1346,7 +1346,7 @@ private:
         if (busy)
             return;
         setBusy(true);
-        stateHint->setText(tr("Asking the board about its Wi-Fi."));
+        stateHint->setText(tr("Reading the board's Wi-Fi state."));
         auto *w = new QFutureWatcher<QJsonObject>(this);
         connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w] {
             const QJsonObject o = w->result();
@@ -1372,19 +1372,19 @@ private:
         const QString mode = o.value("mode").toString(), ssid = o.value("ssid").toString(), addr = o.value("address").toString(), src = o.value("source").toString();
         QString t;
         if (mode == "client")
-            t = tr("The board is on the Wi-Fi network <b>%1</b>, address %2.").arg(ssid.toHtmlEscaped(), addr.toHtmlEscaped());
+            t = tr("Connected to <b>%1</b>, address %2.").arg(ssid.toHtmlEscaped(), addr.toHtmlEscaped());
         else if (mode == "ap")
-            t = tr("The board is running its own Wi-Fi network <b>%1</b> (address %2).").arg(ssid.toHtmlEscaped(), addr.toHtmlEscaped());
+            t = tr("Access point mode, SSID <b>%1</b>, address %2.").arg(ssid.toHtmlEscaped(), addr.toHtmlEscaped());
         else if (mode == "joining")
-            t = tr("The board is joining <b>%1</b> right now.").arg(ssid.toHtmlEscaped());
+            t = tr("Connecting to <b>%1</b>…").arg(ssid.toHtmlEscaped());
         else
-            t = tr("The board has no working Wi-Fi.");
+            t = tr("Not connected.");
         if (src == "saved")
-            t += tr(" It joined the network the installed firmware had saved.");
+            t += tr(" Credentials taken from the installed firmware's saved network.");
         else if (src.startsWith("failed:"))
-            t += tr("<br><b>It could not join %1</b>: wrong password, or the network is out of range.").arg(src.mid(7).toHtmlEscaped());
+            t += tr("<br><b>Connection to %1 failed</b>: authentication failed or the network is out of range.").arg(src.mid(7).toHtmlEscaped());
         else if (mode == "ap" && !o.value("saved_from").toString().isEmpty())
-            t += tr(" The installed firmware's saved network (%1) could not be joined.").arg(o.value("saved_names").toString().toHtmlEscaped());
+            t += tr(" Connection to the installed firmware's saved network (%1) failed.").arg(o.value("saved_names").toString().toHtmlEscaped());
         return t;
     }
 
@@ -1402,7 +1402,7 @@ private:
         sum->setWordWrap(true);
         sum->setMinimumWidth(480);
         v->addWidget(sum);
-        v->addWidget(new QLabel(tr("Make it join this network (2.4 GHz only):")));
+        v->addWidget(new QLabel(tr("Connect to a network (2.4 GHz only):")));
         auto *list = new QListWidget;
         list->setMinimumHeight(140);
         for (const auto &nv : o.value("networks").toArray()) {
@@ -1415,7 +1415,7 @@ private:
         }
         v->addWidget(list);
         if (list->count() == 0)
-            list->addItem(tr("(the board found no networks when it started; type the name below)"));
+            list->addItem(tr("(no networks found at startup; enter the SSID below)"));
         auto *form = new QFormLayout;
         auto *name = new QLineEdit;
         name->setMaxLength(32);
@@ -1427,21 +1427,21 @@ private:
         auto *passRow = new QHBoxLayout;
         passRow->addWidget(pass, 1);
         passRow->addWidget(showPass);
-        form->addRow(tr("Network name:"), name);
+        form->addRow(tr("SSID:"), name);
         form->addRow(tr("Password:"), passRow);
         v->addLayout(form);
         auto *note = new QLabel(overNet
-            ? tr("The board then leaves the network it is on, so this connection ends. Put this computer on the chosen network too: nocry looks for the board there and connects again by itself. "
-                 "If the board cannot join, it goes back to its own network within a minute.")
-            : tr("If the board cannot join, it goes back to its own network within a minute. Its screen shows where it is."));
+            ? tr("The board leaves its current network, so this connection ends. Connect this computer to the selected network; nocry searches for the board there and reconnects. "
+                 "If the connection fails, the board returns to access point mode within a minute.")
+            : tr("If the connection fails, the board returns to access point mode within a minute. Its screen shows the current state."));
         note->setWordWrap(true);
         note->setMinimumWidth(480);
         v->addWidget(note);
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
-        QPushButton *join = bb->addButton(tr("Join"), QDialogButtonBox::AcceptRole);
+        QPushButton *join = bb->addButton(tr("Connect"), QDialogButtonBox::AcceptRole);
         QPushButton *own = nullptr;
         if (o.value("mode").toString() == "client")
-            own = bb->addButton(tr("Back to its own network"), QDialogButtonBox::ActionRole);
+            own = bb->addButton(tr("Switch to access point mode"), QDialogButtonBox::ActionRole);
         v->addWidget(bb);
         connect(list, &QListWidget::currentItemChanged, &d, [name](QListWidgetItem *it) {
             if (it && it->data(Qt::UserRole).isValid())
@@ -1472,7 +1472,7 @@ private:
             return;
         setBusy(true);
         const QString where = action == 1 ? ssid : QStringLiteral("nocry");
-        stateHint->setText(action == 1 ? tr("Telling the board to join %1.").arg(ssid) : tr("Telling the board to open its own network."));
+        stateHint->setText(action == 1 ? tr("Connecting the board to %1.").arg(ssid) : tr("Switching the board to access point mode."));
         log->appendPlainText(stateHint->text());
         const QByteArray s = ssid.toUtf8(), p = password.toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
@@ -1491,7 +1491,7 @@ private:
             if (!o.value("over_network").toBool()) {       // by USB: the cable stays, nothing to find again
                 setBusy(false);
                 pollState();
-                const QString msg = tr("The board is changing its Wi-Fi to %1. That takes up to a minute; its screen shows the result, and \"Board's Wi-Fi…\" shows it here.").arg(where);
+                const QString msg = tr("The board is switching its Wi-Fi to %1. This can take up to a minute; the result is shown on its screen and under \"Board's Wi-Fi…\".").arg(where);
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, tr("Board's Wi-Fi"), msg);
@@ -1499,9 +1499,9 @@ private:
             }
             // over the network: the connection is gone; look for the board where it comes up
             networkAddress.clear();
-            stateTitle->setText(tr("Looking for the board…"));
-            stateHint->setText(tr("Put this computer on the Wi-Fi network %1. nocry connects again by itself when it sees the board (up to 3 minutes).").arg(where));
-            progressLabel->setText(tr("Looking for the board on the network"));
+            stateTitle->setText(tr("Searching for the board…"));
+            stateHint->setText(tr("Connect this computer to the Wi-Fi network %1. nocry reconnects when it finds the board (up to 3 minutes).").arg(where));
+            progressLabel->setText(tr("Searching for the board on the network"));
             allowCancel();
             auto *f = new QFutureWatcher<QJsonObject>(this);
             connect(f, &QFutureWatcher<QJsonObject>::finished, this, [this, f, where, action] {
@@ -1513,8 +1513,8 @@ private:
                     const QString a = r.value("address").toString();
                     const bool fellBack = a.startsWith("192.168.77.") && action == 1;
                     const QString msg = fellBack
-                        ? tr("The board is back on its own network (%1): it could not join %2. Check the password and that the network is a 2.4 GHz one in range, then try again.").arg(a, where)
-                        : tr("Connected again: the board is at %1.").arg(a);
+                        ? tr("The board is back in access point mode (%1): connection to %2 failed. Check the password and that the network is 2.4 GHz and in range, then retry.").arg(a, where)
+                        : tr("Reconnected: the board is at %1.").arg(a);
                     log->appendPlainText(msg);
                     networkConnected(a);
                     if (!quiet)
@@ -1522,8 +1522,8 @@ private:
                 } else {
                     pollState();
                     const QString msg = wasCancelled(r)
-                        ? tr("Stopped looking. The board keeps running; use \"Connect over the network…\" when this computer is on its network. The pairing code on its screen is unchanged.")
-                        : tr("%1\n\nThe board keeps running. Its screen shows which network it is on and its address; use \"Connect over the network…\" from a computer on that network.").arg(r.value("error").toString());
+                        ? tr("Search cancelled. The board keeps running; use \"Connect over the network…\" once this computer is on its network. The pairing code is unchanged.")
+                        : tr("%1\n\nThe board keeps running. Its screen shows its network and address; use \"Connect over the network…\" from a computer on that network.").arg(r.value("error").toString());
                     log->appendPlainText(msg);
                     if (!quiet && !wasCancelled(r))
                         QMessageBox::warning(this, tr("Board's Wi-Fi"), msg);
@@ -1559,13 +1559,13 @@ private:
 
     static QString partitionRole(const QString &n)
     {
-        if (n == "sn_mac") return tr("It holds the serial number, MAC address and model.");
-        if (n == "ota") return tr("It records which firmware slot starts.");
-        if (n.startsWith("rtos")) return tr("It holds the real-time firmware that starts before Linux.");
-        if (n.startsWith("kernel")) return tr("It holds the Linux kernel of a firmware slot.");
-        if (n == "rootfs" || n == "rootfs2") return tr("It holds the system of a firmware slot.");
-        if (n == "rootfs_data") return tr("It holds settings and system changes.");
-        if (n == "userdata") return tr("It holds the printer's files and configuration.");
+        if (n == "sn_mac") return tr("Identity record: serial number, MAC address, model.");
+        if (n == "ota") return tr("Active slot record.");
+        if (n.startsWith("rtos")) return tr("Real-time firmware that runs before Linux.");
+        if (n.startsWith("kernel")) return tr("Linux kernel of a firmware slot.");
+        if (n == "rootfs" || n == "rootfs2") return tr("Root file system of a firmware slot.");
+        if (n == "rootfs_data") return tr("System overlay: settings and system changes.");
+        if (n == "userdata") return tr("User data: the printer's files and configuration.");
         return QString();
     }
 
@@ -1590,11 +1590,11 @@ private:
         if (name.isEmpty())
             return;
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-        const QString file = QFileDialog::getOpenFileName(this, tr("Choose the data for partition %1").arg(name), dir, tr("Disk images (*.img *.bin *.squashfs);;All files (*)"));
+        const QString file = QFileDialog::getOpenFileName(this, tr("Select image for partition %1").arg(name), dir, tr("Disk images (*.img *.bin *.squashfs);;All files (*)"));
         if (file.isEmpty())
             return;
-        if (confirmDanger(tr("Restore partition"), tr("Replace the contents of partition \"%1\"?").arg(name),
-                tr("%1\n\nIt will be overwritten with:\n%2 (%3)\n\nnocry does not check that this file belongs in this partition.")
+        if (confirmDanger(tr("Restore partition"), tr("Overwrite partition \"%1\"?").arg(name),
+                tr("%1\n\nSource:\n%2 (%3)\n\nThe file is not checked for suitability for this partition.")
                     .arg(partitionRole(name), QDir::toNativeSeparators(file), QLocale().formattedDataSize(QFileInfo(file).size())).trimmed(),
                 tr("Overwrite partition")))
             startPartRestore(name, file);
@@ -1606,25 +1606,25 @@ private:
         if (name.isEmpty())
             return;
         if (confirmDanger(tr("Erase partition"), tr("Erase partition \"%1\"?").arg(name),
-                tr("%1\n\nThe whole partition is filled with zeros. This cannot be undone except from a backup.").arg(partitionRole(name)).trimmed(),
+                tr("%1\n\nThe partition is zero-filled. Not reversible except from a backup.").arg(partitionRole(name)).trimmed(),
                 tr("Erase partition")))
             startPartErase(name);
     }
 
     void chooseEraseAll()
     {
-        if (!confirmDanger(tr("Erase entire storage"), tr("Erase everything on this board?"),
-                tr("This wipes the partition table, the bootloader, both firmware slots, all settings and files, and the board's serial number and MAC address.\n\n"
-                   "Afterwards the board is blank. It will not start by itself; it can only be rebuilt with nocry from USB boot mode, and it gets a new, generated "
-                   "serial number unless you enter the old one again.\n\nMake a backup first if there is anything you may want back."),
+        if (!confirmDanger(tr("Erase entire eMMC"), tr("Erase the entire eMMC?"),
+                tr("Erases the partition table, the boot loader, both firmware slots, rootfs_data and userdata (all settings and files), and the identity record (serial number and MAC address).\n\n"
+                   "The board is then blank and does not boot. It can only be rebuilt with nocry from USB boot mode, and receives a new, generated "
+                   "serial number unless the old one is entered again.\n\nBack up first if anything may be needed later."),
                 tr("Continue…")))
             return;
         bool ok = false;
-        const QString t = QInputDialog::getText(this, tr("Erase entire storage"), tr("Type ERASE to confirm:"), QLineEdit::Normal, QString(), &ok);
+        const QString t = QInputDialog::getText(this, tr("Erase entire eMMC"), tr("Type ERASE to confirm:"), QLineEdit::Normal, QString(), &ok);
         if (ok && t.trimmed() == QStringLiteral("ERASE"))
             startEraseAll();
         else if (ok)
-            QMessageBox::information(this, tr("Erase entire storage"), tr("Nothing was erased."));
+            QMessageBox::information(this, tr("Erase entire eMMC"), tr("Nothing was erased."));
     }
 
     void chooseIdentity()
@@ -1632,8 +1632,8 @@ private:
         QDialog d(this);
         d.setWindowTitle(tr("Serial number and MAC address"));
         auto *v = new QVBoxLayout(&d);
-        auto *note = new QLabel(tr("These identify the board to the printer's software, your network and Creality Cloud. Use the values printed on the "
-                                   "board's label where you can. Two devices with the same MAC address conflict on a network."));
+        auto *note = new QLabel(tr("These identify the board to the firmware, the network and Creality Cloud. Use the values printed on the "
+                                   "board's label where possible. Two devices with the same MAC address conflict on a network."));
         note->setWordWrap(true);
         note->setMinimumWidth(480);
         v->addWidget(note);
@@ -1664,13 +1664,13 @@ private:
         v->addLayout(form);
         auto *gen = new QPushButton(tr("Generate new random values"));
         auto *copy = new QPushButton(tr("Copy to clipboard"));
-        copy->setToolTip(tr("Copy the four values as shown here, for your notes"));
+        copy->setToolTip(tr("Copy the four values as shown"));
         auto *brow = new QHBoxLayout;
         brow->addWidget(gen);
         brow->addWidget(copy);
         brow->addStretch(1);
         v->addLayout(brow);
-        auto *modelNote = new QLabel(tr("The model must match the installed firmware, or the printer gets no configuration. To change printer type, use Install firmware instead."));
+        auto *modelNote = new QLabel(tr("The model must match the installed firmware, or the printer gets no configuration. To change the printer type, use Install firmware."));
         modelNote->setWordWrap(true);
         v->addWidget(modelNote);
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -1714,7 +1714,7 @@ private:
         if (modelId != modelValue()) changes += tr("Model: %1 → %2\n").arg(modelId.isEmpty() ? dash : modelId, modelValue());
         if (board->text() != brd->text().trimmed()) changes += tr("Mainboard: %1 → %2\n").arg(board->text(), brd->text().trimmed());
         if (changes.isEmpty()) {
-            QMessageBox::information(this, tr("Serial number and MAC address"), tr("Nothing was changed."));
+            QMessageBox::information(this, tr("Serial number and MAC address"), tr("No changes."));
             return;
         }
         if (confirmDanger(tr("Serial number and MAC address"), tr("Write this identity to the board?"), changes.trimmed(), tr("Write identity")))
@@ -1723,12 +1723,12 @@ private:
 
     void chooseReset()
     {
-        QMessageBox box(QMessageBox::Warning, tr("Factory reset"), tr("Reset this board to factory settings?"), QMessageBox::Cancel, this);
-        box.setInformativeText(tr("All settings, calibration, Wi-Fi details and files on the printer will be erased. The printer sets itself up again the next time it starts.\n\n"
-                                  "The installed firmware, both firmware slots, the serial number and the MAC address are kept."));
+        QMessageBox box(QMessageBox::Warning, tr("Factory reset"), tr("Factory reset?"), QMessageBox::Cancel, this);
+        box.setInformativeText(tr("Erases rootfs_data and userdata: all settings, calibration, Wi-Fi credentials and files. The firmware recreates both file systems at the next boot.\n\n"
+                                  "Both firmware slots, the serial number and the MAC address are kept."));
         // two options in one message box: a small widget holding both check boxes
-        auto *keep = new QCheckBox(tr("Keep the user storage partition (advanced)"));
-        auto *secure = new QCheckBox(tr("Secure erase: also destroy the old data so it cannot be recovered (takes longer)"));
+        auto *keep = new QCheckBox(tr("Keep userdata: wipe the system overlay (rootfs_data) only"));
+        auto *secure = new QCheckBox(tr("Secure erase: make the old data unrecoverable (takes longer)"));
         connect(secure, &QCheckBox::toggled, keep, [keep](bool on) { keep->setEnabled(!on); if (on) keep->setChecked(false); });
         box.setCheckBox(secure);
         if (auto *grid = qobject_cast<QGridLayout *>(box.layout()))
@@ -1770,8 +1770,8 @@ private:
         d.setWindowTitle(what == "model" ? tr("Printer type") : tr("Mainboard"));
         auto *v = new QVBoxLayout(&d);
         auto *l = new QLabel(what == "model"
-            ? tr("This firmware is for several printers, and the board does not say which one it is in.\n\nWhich printer is this board for? The firmware loads that printer's settings; with the wrong choice the printer will not work properly.")
-            : tr("The board does not say which mainboard version it is.\n\nThe version is printed on the board (for example CR4CU220812S11). Which one is it?"));
+            ? tr("This firmware supports several printers, and the board does not identify which one it is in.\n\nSelect the printer this board is for. The firmware loads that printer's configuration; with the wrong choice the printer will not work correctly.")
+            : tr("The board does not identify its mainboard version.\n\nSelect the version printed on the board (for example CR4CU220812S11)."));
         l->setWordWrap(true);
         l->setMinimumWidth(420);
         v->addWidget(l);
@@ -1799,8 +1799,8 @@ private:
         auto *v = new QVBoxLayout(&d);
 
         // --- where the firmware comes from
-        auto *fromList = new QRadioButton(tr("Download"));
-        auto *fromFile = new QRadioButton(tr("Use a file on this computer"));
+        auto *fromList = new QRadioButton(tr("Download from the firmware catalog"));
+        auto *fromFile = new QRadioButton(tr("Local file"));
         auto *srcGroup = new QButtonGroup(&d);
         srcGroup->addButton(fromList);
         srcGroup->addButton(fromFile);
@@ -1818,7 +1818,7 @@ private:
         auto *hint = new QLabel;
         hint->setWordWrap(true);
         auto *listInfo = new QLabel;
-        auto *refresh = new QPushButton(tr("Check for new versions"));
+        auto *refresh = new QPushButton(tr("Refresh catalog"));
         auto *rrow = new QHBoxLayout;
         rrow->addWidget(listInfo, 1);
         rrow->addWidget(refresh);
@@ -1845,11 +1845,11 @@ private:
         v->addWidget(fileBox);
 
         // --- how to install
-        auto *clean = new QRadioButton(tr("Clean install (Recommended) — erase settings and files, like a new printer"));
-        auto *keep = new QRadioButton(tr("Keep my data — repair or update the system; settings and files stay"));
+        auto *clean = new QRadioButton(tr("Clean install (recommended) — erases rootfs_data and userdata (all settings and files)"));
+        auto *keep = new QRadioButton(tr("Keep user data — repair or update; userdata is preserved"));
         auto *modeGroup = new QButtonGroup(&d);
         modeGroup->addButton(clean);
-        auto *other = new QRadioButton(tr("Install to the other slot — keep the current firmware as it is, add this one beside it"));
+        auto *other = new QRadioButton(tr("Install to inactive slot — the active slot is not changed"));
         modeGroup->addButton(keep);
         modeGroup->addButton(other);
         clean->setChecked(true);
@@ -1858,13 +1858,13 @@ private:
         v->addWidget(keep);
         v->addWidget(other);
         v->addSpacing(8);
-        auto *pic = new QCheckBox(tr("Show the nocry boot logo when the printer powers on (untick to keep the Creality logo)"));
-        pic->setToolTip(tr("The logo of the first seconds after power-on comes from a small program stored with the firmware. nocry can put its own open one there.\n"
-                           "Creality's is kept on the board and can be brought back at any time (Advanced, Boot logo).\n"
-                           "On K1-family boards Creality's stays for now: nocry's has not been tested on their screens yet."));
+        auto *pic = new QCheckBox(tr("Use the nocry boot logo (untick to keep Creality's)"));
+        pic->setToolTip(tr("The boot logo is drawn by a pre-boot program stored with the firmware; nocry can install its own open one.\n"
+                           "Creality's is kept on the board and can be restored at any time (Advanced, Boot logo).\n"
+                           "On K1-family boards Creality's is kept for now: nocry's is untested on their screens."));
         pic->setChecked(true);
         v->addWidget(pic);
-        v->addWidget(new QLabel(tr("Nothing is written until you confirm on the next screen.")));
+        v->addWidget(new QLabel(tr("Nothing is written until confirmed in the next step.")));
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         bb->button(QDialogButtonBox::Ok)->setText(tr("Continue"));
         v->addWidget(bb);
@@ -1879,7 +1879,7 @@ private:
                 QString t = tr("%1 — released %2, %3").arg(f.value("version").toString(), f.value("released").toString(),
                                                            QLocale().formattedDataSize(qint64(f.value("size").toDouble())));
                 if (f.value("downloaded").toBool())
-                    t += tr(" (already downloaded)");
+                    t += tr(" (downloaded)");
                 versionBox->addItem(t);
             }
             const QString key = m.value("key").toString();
@@ -1892,7 +1892,7 @@ private:
                     : tr("NebulaOS is made for the Ender-3 V3 KE and the retail Nebula Pad only. nocry will not install it on this board."));
             else
                 hint->setText(!mine.isEmpty() && key != mine
-                    ? tr("This is firmware for a different printer than this board is set up for. Installing it converts the board.")
+                    ? tr("This firmware is for a different printer than the board is configured for. Installing it converts the board.")
                     : QString());
             hint->setVisible(!hint->text().isEmpty());
         };
@@ -1924,8 +1924,8 @@ private:
                 if (models[i].toObject().value("key").toString() == QString::fromUtf8(wantKey))
                     sel = i;
             modelBox->setCurrentIndex(sel);
-            listInfo->setText(cat.value("updated").toBool() ? tr("List updated %1").arg(cat.value("built").toString())
-                                                            : tr("List from %1").arg(cat.value("built").toString()));
+            listInfo->setText(cat.value("updated").toBool() ? tr("Catalog updated %1").arg(cat.value("built").toString())
+                                                            : tr("Catalog from %1").arg(cat.value("built").toString()));
         };
         auto update = [&] {
             const bool lst = fromList->isChecked();
@@ -1946,7 +1946,7 @@ private:
         update();
         connect(refresh, &QPushButton::clicked, &d, [&] {
             refresh->setEnabled(false);
-            listInfo->setText(tr("Checking for new versions…"));
+            listInfo->setText(tr("Fetching the firmware catalog…"));
             auto *w = new QFutureWatcher<QJsonObject>(&d);
             connect(w, &QFutureWatcher<QJsonObject>::finished, &d, [&, w] {
                 const QJsonObject o = w->result();
@@ -1956,19 +1956,19 @@ private:
                     fillModels(o);
                 } else {
                     fillModels(takeJson(nocry_catalog_json(dir.constData(), 0)));
-                    QMessageBox::warning(&d, tr("Check for new versions"), tr("Could not update the list: %1\n\nThe list already in the program is still usable.").arg(o.value("error").toString()));
+                    QMessageBox::warning(&d, tr("Refresh catalog"), tr("Catalog refresh failed: %1\n\nThe existing catalog remains usable.").arg(o.value("error").toString()));
                 }
                 update();
             });
             w->setFuture(QtConcurrent::run([dir] { return takeJson(nocry_catalog_json(dir.constData(), 1)); }));
         });
         connect(file, &QPushButton::clicked, &d, [&] {
-            const QString f = QFileDialog::getOpenFileName(&d, tr("Choose firmware"), QString(), tr("Firmware (*.img *.ingenic);;All files (*)"));
+            const QString f = QFileDialog::getOpenFileName(&d, tr("Select firmware"), QString(), tr("Firmware (*.img *.ingenic);;All files (*)"));
             if (!f.isEmpty())
                 path->setText(f);
         });
         connect(folder, &QPushButton::clicked, &d, [&] {
-            const QString f = QFileDialog::getExistingDirectory(&d, tr("Choose unpacked update folder"));
+            const QString f = QFileDialog::getExistingDirectory(&d, tr("Select unpacked update folder"));
             if (!f.isEmpty())
                 path->setText(f);
         });
@@ -2077,10 +2077,10 @@ private:
         if (!busy)
             return;
         if (!cancelRisk.isEmpty() && !quiet) {
-            QMessageBox box(QMessageBox::Warning, tr("Stop now?"), tr("Stop before this is finished?"), QMessageBox::NoButton, this);
+            QMessageBox box(QMessageBox::Warning, tr("Cancel operation"), tr("Cancel this operation?"), QMessageBox::NoButton, this);
             box.setInformativeText(cancelRisk);
-            auto *stop = box.addButton(tr("Stop anyway"), QMessageBox::DestructiveRole);
-            auto *go = box.addButton(tr("Keep going"), QMessageBox::RejectRole);
+            auto *stop = box.addButton(tr("Cancel operation"), QMessageBox::DestructiveRole);
+            auto *go = box.addButton(tr("Continue"), QMessageBox::RejectRole);
             box.setDefaultButton(go);
             box.setEscapeButton(go);
             box.exec();
@@ -2089,8 +2089,8 @@ private:
                 return;
         }
         cancelButton->setEnabled(false);
-        stateHint->setText(tr("Stopping at the next safe point…"));
-        log->appendPlainText(tr("Stop requested."));
+        stateHint->setText(tr("Cancelling at the next safe point…"));
+        log->appendPlainText(tr("Cancel requested."));
         nocry_cancel();
     }
 
@@ -2122,7 +2122,7 @@ private:
         updateButtons();
         if (b) {
             stateTitle->setText(tr("Working…"));
-            stateHint->setText(tr("Leave the board connected."));
+            stateHint->setText(tr("Do not unplug the board."));
         }
     }
 
@@ -2177,20 +2177,20 @@ private:
             stateHint->setText(tr("Connect the board by USB, then hold BOOT, tap RESET and release BOOT."));
         } else if (net && netUp) {
             stateTitle->setText(tr("Board connected over the network"));
-            stateHint->setText(tr("Rescue system at %1. Nothing on the board is changed until you choose an action.").arg(networkAddress));
+            stateHint->setText(tr("nocry-rescue at %1. Nothing on the board is changed until an action is started.").arg(networkAddress));
         } else if (net) {
-            stateTitle->setText(tr("The board is not answering"));
-            stateHint->setText(tr("Nothing at %1 answers. Check that the board still shows its rescue screen and that this computer is on the same network; nocry keeps trying. "
-                                  "A board that was restarted shows a new pairing code: disconnect and connect again.").arg(networkAddress));
+            stateTitle->setText(tr("Board not responding"));
+            stateHint->setText(tr("No response from %1. Check that the board is still in rescue and that this computer is on the same network; nocry keeps retrying. "
+                                  "A rebooted board shows a new pairing code: disconnect and connect again.").arg(networkAddress));
         } else if (s == "usb-boot") {
             stateTitle->setText(tr("Board in USB boot mode"));
-            stateHint->setText(tr("Ready. Nothing on the board is changed until you choose an action."));
+            stateHint->setText(tr("Ready. Nothing on the board is changed until an action is started."));
         } else if (s == "fastboot") {
             stateTitle->setText(tr("Board connected (loader running)"));
             stateHint->setText(tr("Ready."));
         } else if (s == "recovery") {
             stateTitle->setText(tr("Board connected"));
-            stateHint->setText(tr("The recovery system is running from memory."));
+            stateHint->setText(tr("Recovery system running from RAM."));
         } else if (s == "unsupported") {
             stateTitle->setText(tr("This board is not supported"));
             stateHint->setText(tr("An Ingenic board in USB boot mode is connected, but it uses a different processor than the X2000 family nocry works with. "
@@ -2224,9 +2224,9 @@ private:
             if (shell.value("adb_ready").toBool())
                 adb = tr("ADB: ready");
             else if (!shell.value("adb_installed").toBool())
-                adb = tr("ADB: the adb tool is not installed on this computer");
+                adb = tr("ADB: adb not installed");
             else if (!shell.value("adb_state").toString().isEmpty())
-                adb = tr("ADB: board seen, but %1").arg(shell.value("adb_state").toString());
+                adb = tr("ADB: board detected, state %1").arg(shell.value("adb_state").toString());
             else
                 adb = tr("ADB: not connected");
             const QString con = port.isEmpty() ? tr("Serial console: not found") : tr("Serial console: %1").arg(port);
@@ -2258,8 +2258,8 @@ private:
                 d.setWindowTitle(tr("Board log"));
                 auto *v = new QVBoxLayout(&d);
                 v->addWidget(new QLabel(o.value("kind").toString() == "previous"
-                    ? tr("Log left in memory by the previous start of the recovery system (the board was reset since):")
-                    : tr("Kernel log of the recovery system running on the board now:")));
+                    ? tr("Log kept in RAM from the previous recovery boot (the board was reset since):")
+                    : tr("Kernel log of the running recovery system:")));
                 auto *t = new QPlainTextEdit(o.value("text").toString());
                 t->setReadOnly(true);
                 t->setLineWrapMode(QPlainTextEdit::NoWrap);
@@ -2314,7 +2314,7 @@ private:
         const QString conTool = tr("picocom is in every distribution's packages (screen %1 115200 also works). To leave picocom: Ctrl-A, then Ctrl-X.").arg(port.isEmpty() ? QStringLiteral("<port>") : port);
 #endif
         QDialog d(this);
-        d.setWindowTitle(tr("Getting a shell on the board"));
+        d.setWindowTitle(tr("Shell access"));
         auto *v = new QVBoxLayout(&d);
         auto para = [&](const QString &t) {
             auto *l = new QLabel(t);
@@ -2336,29 +2336,29 @@ private:
             row->addWidget(b);
             v->addLayout(row);
         };
-        para(tr("While the recovery system runs, the board offers a root shell in two ways. It runs from memory: "
-                "nothing you do in it changes the printer unless you write to its storage (/dev/mmcblk0)."));
-        para(tr("<b>ADB</b> — the easier one, with file copy (adb push, adb pull)."));
+        para(tr("The running recovery system provides a root shell over ADB and over a USB serial console. It runs from RAM: "
+                "nothing done in it changes the printer unless you write to the eMMC (/dev/mmcblk0)."));
+        para(tr("<b>ADB</b> — includes file transfer (adb push, adb pull)."));
         if (shell.value("adb_ready").toBool()) {
-            para(tr("Ready. In a terminal, run:"));
+            para(tr("Ready. Run:"));
             command(adbCmd);
         } else if (!shell.value("adb_installed").toBool()) {
-            para(tr("The adb tool is not installed on this computer. %1 Then press Refresh in the main window and run:").arg(adbInstall));
+            para(tr("adb is not installed. %1 Then press Refresh in the main window and run:").arg(adbInstall));
             command(adbCmd);
         } else {
             para(tr("adb is installed but does not list the board as ready%1. Unplug and reconnect the board, or press Refresh. The command will be:")
-                     .arg(shell.value("adb_state").toString().isEmpty() ? QString() : tr(" (it says \"%1\")").arg(shell.value("adb_state").toString())));
+                     .arg(shell.value("adb_state").toString().isEmpty() ? QString() : tr(" (state \"%1\")").arg(shell.value("adb_state").toString())));
             command(adbCmd);
         }
         para(tr("<b>USB serial console</b> — works without adb."));
         if (port.isEmpty()) {
-            para(tr("No serial port from the board was found on this computer."));
+            para(tr("No serial port from the board was found."));
         } else {
             para(tr("The board's console is on %1. %2").arg(port, conTool));
             command(conCmd);
-            para(tr("Press Enter once to get the prompt."));
+            para(tr("Press Enter for a prompt."));
         }
-        para(tr("Only one program can use the board at a time for nocry's own actions, but a shell can stay open while you use this window."));
+        para(tr("Only one program at a time can run nocry actions on the board; a shell can stay open meanwhile."));
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
         connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
         v->addWidget(bb);
@@ -2423,7 +2423,7 @@ private:
                 text = QString::fromLocal8Bit(f.readAll()).trimmed();
             log->appendPlainText(tr("Driver setup:\n%1").arg(text));
             if (code == 0) {
-                QMessageBox::information(this, tr("Set up driver"), tr("The driver is set up. If the board is connected, unplug it and plug it in again."));
+                QMessageBox::information(this, tr("Set up driver"), tr("Driver installed. If the board is connected, reconnect it."));
             } else if (code == 1223) {
                 QMessageBox::information(this, tr("Set up driver"), tr("The administrator prompt was declined; nothing was changed."));
             } else {
@@ -2476,7 +2476,7 @@ private:
             return;
         }
         if (QMessageBox::question(this, tr("Install rule"),
-                tr("nocry will install the file /etc/udev/rules.d/60-nocry.rules. It lets the logged-in user open the board's USB devices and stops the desktop from mounting the board's storage.\n\nYou will be asked for your password once."),
+                tr("Installs /etc/udev/rules.d/60-nocry.rules. The rule lets the logged-in user open the board's USB devices and stops the desktop from mounting the board's eMMC.\n\nA password prompt appears once."),
                 QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
             return;
         auto *proc = new QProcess(this);
@@ -2484,7 +2484,7 @@ private:
             proc->deleteLater();
             if (code == 0 && udevRuleInstalled()) {
                 udevBanner->setVisible(false);
-                QMessageBox::information(this, tr("Install rule"), tr("The rule is installed. If the board is connected, unplug it and plug it in again."));
+                QMessageBox::information(this, tr("Install rule"), tr("Rule installed. If the board is connected, reconnect it."));
             } else {
                 showManual(tr("The rule was not installed (the password prompt was cancelled or failed)."));
             }
@@ -2496,7 +2496,7 @@ private:
     void showBootHelp()
     {
         QDialog d(this);
-        d.setWindowTitle(tr("Entering USB boot mode"));
+        d.setWindowTitle(tr("USB Boot Mode"));
         auto *v = new QVBoxLayout(&d);
         auto *which = new QComboBox;
         which->addItem(tr("Nebula Pad (retail, Ender-3 V3 KE, CR-10 SE, Ender-5 Max)"), QStringLiteral("nebula"));
@@ -2515,11 +2515,11 @@ private:
             const QPixmap p(QStringLiteral(":/boards/%1.png").arg(k));
             pic->setPixmap(p);
             pic->setVisible(!p.isNull());
-            const QString common = tr("<ol><li>Connect the board to this computer with a USB cable that carries data, not a charge-only one.</li>"
+            const QString common = tr("<ol><li>Connect the board to this computer with a USB data cable (not charge-only).</li>"
                                       "<li>Press and hold <b>BOOT</b>.</li><li>While holding it, press and release <b>RESET</b>.</li>"
                                       "<li>Release <b>BOOT</b>.</li></ol>"
-                                      "This window then shows \"Board in USB boot mode\". Nothing on the board changes by doing this; "
-                                      "unplugging the board or pressing RESET alone returns it to normal.");
+                                      "This window then shows \"Board in USB boot mode\". Entering it changes nothing on the board; "
+                                      "unplugging the board or pressing RESET alone returns it to a normal boot.");
             if (k == "k1")
                 steps->setText(tr("<p>The two buttons sit together near one corner of the mainboard: with the Micro-USB port facing down, they are at the top left. "
                                   "The upper one is BOOT (marked \"mode\" on some boards), the lower one is RESET.</p>") + common);
@@ -2562,11 +2562,11 @@ private:
                                                 : tr("empty");
         };
         if (sl.isEmpty()) {
-            slot->setText(tr("None — this board is blank. Use Install firmware."));
+            slot->setText(tr("None: blank board. Use Install firmware."));
             otherSlot->setText(QStringLiteral("—"));
         } else {
             const bool aActive = sl == "a";
-            slot->setText(tr("%1 — slot %2, active").arg(describe(o.value(aActive ? "slot_a" : "slot_b")), aActive ? "A" : "B"));
+            slot->setText(tr("%1 — slot %2").arg(describe(o.value(aActive ? "slot_a" : "slot_b")), aActive ? "A" : "B"));
             otherSlot->setText(tr("%1 — slot %2").arg(describe(o.value(aActive ? "slot_b" : "slot_a")), aActive ? "B" : "A"));
         }
         storage->setText(loc.formattedDataSize(qint64(o.value("emmc_bytes").toDouble())));

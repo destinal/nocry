@@ -1319,7 +1319,7 @@ pub fn set_active_slot(
     }
     t.write_verified(ota, &rec, "ota")?;
     s.active = slot.into();
-    say!("slot {} will start at the next power-on", slot.to_uppercase());
+    say!("slot {} is now the active slot; it boots at the next power-on", slot.to_uppercase());
     Ok(s)
 }
 
@@ -1349,7 +1349,7 @@ pub fn start_trial(soc: &SocProfile, via: Via, slot: &str, tries: u8, target: Op
     if info.firmware_name == crate::boards::firmware_name(crate::boards::NEBULAOS) {
         bail!(
             "slot {} holds NebulaOS, which does not report a successful start to nocryboot (nocry's report script \
-             lives in the settings overlay, which NebulaOS does not use). A trial would always end by going back to \
+             lives in the rootfs_data overlay, which NebulaOS does not use). A trial would always end by going back to \
              the other slot. Nothing was changed",
             slot.to_uppercase()
         );
@@ -1363,8 +1363,8 @@ pub fn start_trial(soc: &SocProfile, via: Via, slot: &str, tries: u8, target: Op
     }
     // 1. the success script, so a working system can say so. Without it the trial would always fail.
     t.put_file("rootfs_data", CONFIRM_SCRIPT_PATH, 0o755, CONFIRM_SCRIPT.as_bytes()).context(
-        "could not store the success script in the settings area (after a factory reset or clean install \
-         the firmware creates that area on its first start; start the printer once, then try again). Nothing was changed",
+        "could not store the success script in rootfs_data (after a factory reset or clean install \
+         the firmware creates that file system on its first boot; boot the printer once, then try again). Nothing was changed",
     )?;
     let ota = g.find("ota").context("no ota partition")?.offset();
     // 2. the count, 3. the slot choice (Creality's own record)
