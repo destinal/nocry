@@ -22,7 +22,8 @@ ap.add_argument('--block-read'); ap.add_argument('--cmd'); ap.add_argument('--in
 ap.add_argument('--delay', action='append', default=[], help='address of a delay routine to skip (repeatable)')
 ap.add_argument('--lcm', type=int, default=7, help='panel id the rtos image reports; -1: it reports none')
 ap.add_argument('--slot', choices=['a', 'b'], help='pretend the ota record selects this slot')
-ap.add_argument('--blank', default='', help='comma list of partitions to read as zeros: rtos,rtos2,kernel,kernel2')
+ap.add_argument('--blank', default='', help='comma list of partitions to read as zeros: rtos,rtos2,kernel,kernel2,rootfs,rootfs2')
+ap.add_argument('--family', choices=['nebula', 'k1'], default='nebula', help='where the root file systems sit')
 ap.add_argument('--copy-a-to-b', action='store_true', help='read slot B (rtos2, kernel2) from slot A')
 ap.add_argument('--console-input', default='', help='characters waiting at the serial console, e.g. "\\x1b\\x1b\\x1b"'); ap.add_argument('--ram-mb', type=int, default=256)
 ap.add_argument('--limit', type=int, default=400_000_000); ap.add_argument('-o', default='trace.txt')
@@ -100,6 +101,8 @@ lastreads = collections.deque(maxlen=8)
 core1 = {'started': False}
 RTOS = {}
 PARTS = {'rtos': (0x1800, 0x2000), 'rtos2': (0x3800, 0x2000), 'kernel': (0x5800, 0x4000), 'kernel2': (0x9800, 0x4000)}
+_rs = 0xfa000 if args.family == 'nebula' else 0x96000
+PARTS.update(rootfs=(0xd800, _rs), rootfs2=(0xd800 + _rs, _rs))
 conin = bytearray(args.console_input.encode().decode('unicode_escape').encode('latin1'))
 def rtos_header():
     # which slot the SPL will use, and where its image goes

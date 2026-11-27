@@ -48,15 +48,19 @@ Not compared in the emulator: the two eMMC routines "send a command" and "read b
 
 The factory loader hangs when the boot picture image of the chosen slot is missing or damaged, and has no way back to a PC except the BOOT button on the mainboard. nocryboot decides like this:
 
-1. The slot the `ota` record names is started if it holds a kernel. If its boot picture image is bad, it is started without one (the screen stays dark until Linux is up, and Linux gets `lcm_id=0`).
-2. Otherwise the other slot is started, if that one holds a kernel.
+A slot is only started if all three of its parts are there: kernel (uImage header, Linux type, plausible load address and size), boot picture image (valid header; it also switches the display on, and Linux relies on that), root file system (squashfs signature). Only the first sector of each is looked at; nothing is checksummed, which would cost boot time.
+
+1. The slot the `ota` record names, if complete.
+2. Otherwise the other slot, if complete.
 3. Otherwise the board restarts in **USB boot mode**, the mode the BOOT button selects, where nocry can repair it. The same happens when the eMMC does not answer, or when three ESC characters (and nothing else) are waiting at the serial console.
 
 USB boot mode is requested the way Ingenic's own tools do it: the value `0x42575302` in the CPM register `SLPC` (0xb00000cc), then a watchdog reset.
 
-"Holds a kernel" means a uImage header with the Linux type and a plausible load address and size; the data is not checksummed (that would cost boot time). When the SPL starts the other slot it does not change the `ota` record, so the system then runs from the slot it believes inactive; treat that as an emergency start and repair the board.
+When the SPL starts the other slot it does not change the `ota` record (it cannot write to the eMMC yet), so the system then runs from the slot it believes inactive; treat that as an emergency start and repair the board.
 
-State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. The loader with the door is installed on the K1 mainboard and cold-boots it normally; the Nebula Pad still carries the build without the door.
+Not covered: an image that looks valid but does not work (a kernel that panics, a boot picture image that hangs). That needs a count of failed starts, which needs the started system to report success; not built yet.
+
+State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. An earlier door build (which started a slot without its boot picture image; on a K1 that gave a running system with a dark screen) is installed on the K1 mainboard; the Nebula Pad still carries the build without the door. The whole-slot rule above has run in the emulator only.
 
 ### Build and try
 

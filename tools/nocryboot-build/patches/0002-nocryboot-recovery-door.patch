@@ -1,3 +1,57 @@
+diff --git a/board/ingenic/x2000_base/nocryboot/k1/partitions.tab b/board/ingenic/x2000_base/nocryboot/k1/partitions.tab
+new file mode 100644
+index 000000000..8a11e5c56
+--- /dev/null
++++ b/board/ingenic/x2000_base/nocryboot/k1/partitions.tab
+@@ -0,0 +1,21 @@
++# nocryboot: the start of the eMMC on Creality's K1 family.
++# Only the partitions the SPL looks at are listed (the SPL does not read the
++# table on the disk).  Sizes of the root file systems do not matter here.
++property:
++    disk_size = 627m
++    gpt_header_lba = 512
++    custom_signature = 0
++
++partition:
++	#name     =  start,   size, fstype
++	xboot     =     0m,     1m,
++	ota       =     1m,     1m, EMPTY
++	sn_mac    =     2m,     1m, EMPTY
++	rtos      =     3m,     4m, EMPTY
++	rtos2     =     7m,     4m, EMPTY
++	kernel    =    11m,     8m, EMPTY
++	kernel2   =    19m,     8m, EMPTY
++	rootfs    =    27m,   300m, LINUX_FS
++	rootfs2   =   327m,   300m, LINUX_FS
++
++#fstype could be: LINUX_FS, FAT_FS, EMPTY
+diff --git a/board/ingenic/x2000_base/nocryboot/nebula/partitions.tab b/board/ingenic/x2000_base/nocryboot/nebula/partitions.tab
+new file mode 100644
+index 000000000..856455482
+--- /dev/null
++++ b/board/ingenic/x2000_base/nocryboot/nebula/partitions.tab
+@@ -0,0 +1,21 @@
++# nocryboot: the start of the eMMC on Creality's Nebula Pad family.
++# Only the partitions the SPL looks at are listed (the SPL does not read the
++# table on the disk).  Sizes of the root file systems do not matter here.
++property:
++    disk_size = 1027m
++    gpt_header_lba = 512
++    custom_signature = 0
++
++partition:
++	#name     =  start,   size, fstype
++	xboot     =     0m,     1m,
++	ota       =     1m,     1m, EMPTY
++	sn_mac    =     2m,     1m, EMPTY
++	rtos      =     3m,     4m, EMPTY
++	rtos2     =     7m,     4m, EMPTY
++	kernel    =    11m,     8m, EMPTY
++	kernel2   =    19m,     8m, EMPTY
++	rootfs    =    27m,   500m, LINUX_FS
++	rootfs2   =   527m,   500m, LINUX_FS
++
++#fstype could be: LINUX_FS, FAT_FS, EMPTY
 diff --git a/boards.cfg b/boards.cfg
 index 05ec85c91..e72cd5eb9 100755
 --- a/boards.cfg
@@ -24,10 +78,10 @@ index 8aa28c4af..e9368fde2 100644
  COBJS-$(CONFIG_BOOTARGS_AUTO_MODIFY) += spl_auto_modify_mem.o
  endif
 diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
-index 4cc8e789a..2845d268b 100644
+index 4cc8e789a..04575576e 100644
 --- a/common/spl/spl_jzsdhci.c
 +++ b/common/spl/spl_jzsdhci.c
-@@ -2062,6 +2062,101 @@ void spl_mmc_mcu_rtos_boot(void)
+@@ -2062,6 +2062,109 @@ void spl_mmc_mcu_rtos_boot(void)
  }
  #endif
  
@@ -37,6 +91,8 @@ index 4cc8e789a..2845d268b 100644
 +
 +#define NB_KERNEL	1
 +#define NB_RTOS		2
++#define NB_ROOTFS	4
++#define NB_COMPLETE	(NB_KERNEL | NB_RTOS | NB_ROOTFS)
 +
 +/* Read the first sector of a partition; 0 if there is no such partition or the read fails. */
 +static int nocryboot_read_head(const char *name, u32 *buf)
@@ -51,7 +107,11 @@ index 4cc8e789a..2845d268b 100644
 +	return ret != 0 && ret != (u32)-1;
 +}
 +
-+/* What a slot holds: a kernel image that can be started, a boot picture image. */
++/*
++ * What a slot holds: a kernel image that can be started, a boot picture image
++ * (which also switches the display on; Linux relies on that), a root file
++ * system.  Only the first sector of each is looked at.
++ */
 +static int nocryboot_slot_state(int slot_b)
 +{
 +	u32 *buf = (u32 *)CONFIG_SYS_TEXT_BASE;
@@ -69,23 +129,32 @@ index 4cc8e789a..2845d268b 100644
 +	    rh->tag == 0x534f5452 && rh->img_start < rh->img_end)
 +		state |= NB_RTOS;
 +
++	if (nocryboot_read_head(slot_b ? "rootfs2" : "rootfs", buf) &&
++	    buf[0] == 0x73717368)			/* "hsqs": squashfs */
++		state |= NB_ROOTFS;
++
++	if (state != NB_COMPLETE)
++		printf("nocryboot: slot %s is incomplete:%s%s%s\n", slot_b ? "B" : "A",
++		       state & NB_KERNEL ? "" : " kernel",
++		       state & NB_RTOS ? "" : " boot-picture",
++		       state & NB_ROOTFS ? "" : " rootfs");
++
 +	return state;
 +}
 +
 +/*
 + * nocryboot's boot decision.  The factory loader takes the slot the "ota"
 + * record names and hangs if its boot picture image is missing or damaged.
-+ * Here:
-+ *   - the named slot is started if it has a kernel (without the boot picture
-+ *     if that image is bad: the screen then stays dark until Linux is up);
-+ *   - else the other slot, if that one has a kernel;
++ * Here a slot is only started if all three of its parts are there:
++ *   - the named slot, if complete;
++ *   - else the other slot, if complete;
 + *   - else, or when asked at the serial console, USB boot mode.
 + */
 +static char *nocryboot_load(void)
 +{
 +	u32 *buf = (u32 *)CONFIG_SYS_TEXT_BASE;
 +	unsigned int sector;
-+	int want_b = 0, slot, state;
++	int slot = 0;
 +
 +	if (nocryboot_console_asks())
 +		nocryboot_usb_boot_mode("asked at the console");
@@ -96,28 +165,21 @@ index 4cc8e789a..2845d268b 100644
 +
 +	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, buf) &&
 +	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, (char *)buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
-+		want_b = 1;
++		slot = 1;
 +
-+	slot = want_b;
-+	state = nocryboot_slot_state(slot);
-+	if (!(state & NB_KERNEL)) {
-+		printf("nocryboot: slot %s has no kernel\n", slot ? "B" : "A");
++	if (nocryboot_slot_state(slot) != NB_COMPLETE) {
 +		slot = !slot;
-+		state = nocryboot_slot_state(slot);
-+		if (!(state & NB_KERNEL))
-+			nocryboot_usb_boot_mode("no slot has a kernel");
++		if (nocryboot_slot_state(slot) != NB_COMPLETE)
++			nocryboot_usb_boot_mode("no slot can be started");
++		printf("nocryboot: starting slot %s instead\n", slot ? "B" : "A");
 +	}
 +
-+	if (state & NB_RTOS) {
-+		spl_get_built_in_gpt_partition(slot ? CONFIG_SPL_RTOS_NAME2 : CONFIG_SPL_RTOS_NAME, &sector, NULL);
-+		if (!mmc_rtos_load(&rtos_header, sector)) {
-+			flush_cache_all();
-+			mmc_rtos_load_rtosdata_partition(&rtos_header);
-+			start_second_cpu();
-+		}
-+	} else {
-+		printf("nocryboot: slot %s has no boot picture image\n", slot ? "B" : "A");
-+	}
++	spl_get_built_in_gpt_partition(slot ? CONFIG_SPL_RTOS_NAME2 : CONFIG_SPL_RTOS_NAME, &sector, NULL);
++	if (mmc_rtos_load(&rtos_header, sector))
++		nocryboot_usb_boot_mode("the boot picture image cannot be read");
++	flush_cache_all();
++	mmc_rtos_load_rtosdata_partition(&rtos_header);
++	start_second_cpu();
 +
 +	spl_get_built_in_gpt_partition(slot ? CONFIG_SPL_OS_NAME2 : CONFIG_SPL_OS_NAME, &sector, NULL);
 +	mmc_load_image_raw(sector, slot ? CONFIG_SPL_OS_NAME2 : CONFIG_SPL_OS_NAME);
@@ -129,7 +191,7 @@ index 4cc8e789a..2845d268b 100644
  char *spl_mmc_load_image(void)
  {
  #ifdef CONFIG_JZ_MMC_MSC0
-@@ -2074,6 +2169,11 @@ char *spl_mmc_load_image(void)
+@@ -2074,6 +2177,11 @@ char *spl_mmc_load_image(void)
  	io_base = MSC2_BASE;
  #endif
  
@@ -203,3 +265,22 @@ index 000000000..48ae715da
 +
 +	return esc >= 3 && !other;
 +}
+diff --git a/include/configs/nocryboot.h b/include/configs/nocryboot.h
+index 2a4c925ef..36da34d23 100644
+--- a/include/configs/nocryboot.h
++++ b/include/configs/nocryboot.h
+@@ -47,8 +47,12 @@
+ #define CONFIG_SPL_RTOS_LCM_ID
+ #define CONFIG_ARGS_EXTRA		"[lcm-start-----------------lcm-end]"
+ 
+-/* Partitions the SPL needs; identical on both board families. */
+-#define CONFIG_GPT_TABLE_PATH		"$(TOPDIR)/board/ingenic/x2000_base/nocryboot"
++/* Partitions the SPL needs (root file systems sit differently on the two families). */
++#if defined(CONFIG_NOCRYBOOT_NEBULA)
++#define CONFIG_GPT_TABLE_PATH		"$(TOPDIR)/board/ingenic/x2000_base/nocryboot/nebula"
++#else
++#define CONFIG_GPT_TABLE_PATH		"$(TOPDIR)/board/ingenic/x2000_base/nocryboot/k1"
++#endif
+ 
+ #include "x2000_base_common.h"
+ 
