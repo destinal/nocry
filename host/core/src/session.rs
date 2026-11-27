@@ -814,7 +814,7 @@ impl BootNote {
 
 /// The script nocry puts into the firmware's settings area so that a started system reports success.
 pub const CONFIRM_SCRIPT: &str = include_str!("../data/nocryboot-confirm.sh");
-pub const CONFIRM_SCRIPT_PATH: &str = "upper/etc/init.d/S99zz_nocryboot";
+pub const CONFIRM_SCRIPT_PATH: &str = "upper/etc/init.d/S98nocryboot";
 /// First-stage loader on the eMMC: 24 KiB at this byte offset.
 pub const SPL_OFFSET: u64 = 0x4400;
 pub const SPL_SIZE: usize = 24 * 1024;
@@ -1609,8 +1609,8 @@ mod boot_note_tests {
     #[test]
     fn the_script_matches_the_note_format() {
         // the script compares the first 14 bytes of the note with this text
-        assert!(super::CONFIRM_SCRIPT.contains("\"nocryboot:try=\""));
-        assert_eq!("nocryboot:try=".len(), 14);
-        assert!(super::CONFIRM_SCRIPT.contains("count=14"));
+        assert!(super::CONFIRM_SCRIPT.contains("nocryboot:try=*)"));
+        assert_eq!("nocryboot:try=B:left=3".len(), 22);
+        assert!(super::CONFIRM_SCRIPT.contains("skip=512 count=22"));
     }
 }
