@@ -27,6 +27,9 @@ p256 = { version = "0.13", default-features = false, features = ["arithmetic", "
 hmac = "0.12"
 hkdf = "0.12"
 chacha20poly1305 = "0.10"
+# finding the board on the network (mDNS question on every interface)
+if-addrs = "0.14"
+socket2 = "0.6"
 
 # no system libusb on Windows/macOS: build it in
 [target.'cfg(not(target_os = "linux"))'.dependencies]

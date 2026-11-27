@@ -430,6 +430,35 @@ pub fn network_board() -> Option<(String, String)> {
     NETWORK_BOARD.lock().unwrap().clone()
 }
 
+/// Pairs with the board at `addr` using `code` and, when that works, makes it the board
+/// every later command uses. Returns what the board says it is (model, service version).
+/// Nothing on the board is read or changed beyond those two answers.
+pub fn connect_network_board(addr: &str, code: &str) -> Result<(String, String)> {
+    let code: String = code.chars().filter(|c| !c.is_whitespace() && *c != '-').collect();
+    if addr.trim().is_empty() {
+        bail!("no address given");
+    }
+    if code.is_empty() {
+        bail!("no pairing code given (it is on the board's screen)");
+    }
+    let mut fb = crate::fastboot::Fastboot::open_net(addr.trim(), &code)?;
+    let product = fb.getvar("product")?;
+    let version = fb.getvar("version-bootloader")?;
+    set_network_board(Some((addr.trim().to_string(), code)));
+    Ok((product, version))
+}
+
+/// Whether the network board still accepts connections (no pairing: one TCP connect).
+pub fn network_board_reachable() -> bool {
+    use std::net::ToSocketAddrs;
+    let Some((addr, _)) = network_board() else { return false };
+    let target = if addr.contains(':') && !addr.starts_with('[') || addr.contains("]:") { addr } else { format!("{addr}:{}", crate::net::PORT) };
+    match target.to_socket_addrs().ok().and_then(|mut a| a.next()) {
+        Some(sa) => std::net::TcpStream::connect_timeout(&sa, Duration::from_secs(3)).is_ok(),
+        None => false,
+    }
+}
+
 /// Opens the eMMC for a command: an explicit --target; else the recovery's fastboot service
 /// (no disk device, on-board hashing); else a nocry USB disk (U-Boot fallback).
 #[allow(clippy::too_many_arguments)]
@@ -484,6 +513,8 @@ pub enum BoardKind {
     Recovery,
     /// nocry U-Boot USB-disk stage2
     UbootDisk,
+    /// a board running nocry-rescue, paired over the network (`port` holds its address)
+    Network,
     /// an Ingenic device in USB boot mode that nocry has no support for (other chip family)
     Unsupported,
 }
@@ -496,6 +527,9 @@ pub struct BoardState {
 }
 
 pub fn board_state() -> Result<BoardState> {
+    if let Some((addr, _)) = network_board() {
+        return Ok(BoardState { kind: BoardKind::Network, port: addr, count: 1 });
+    }
     let all = usb::scan(SOCS)?;
     let rank = |f: &usb::Found| {
         if f.vid == usb::NOCRY_UMS_VID && f.pid == usb::NOCRY_RECOVERY_PID {

@@ -44,6 +44,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Look for boards running nocry-rescue on the local network
+    Discover,
     /// List boards in USB boot mode and running nocry stage2s
     List,
     /// Ask the bootrom for its CPU info string
@@ -526,6 +528,18 @@ fn main() -> Result<()> {
             for s in &p.support {
                 println!("supports {:?} ({}){}", s.model, nocry_core::boards::product_name(&s.model),
                     if s.mainboards.is_empty() { String::new() } else { format!(" on {}", s.mainboards.join(", ")) });
+            }
+        }
+        Cmd::Discover => {
+            let found = nocry_core::discover::discover(Duration::from_secs(3));
+            if found.is_empty() {
+                println!("no board running nocry-rescue answered on this network");
+                println!("(on the board's own Wi-Fi \"nocry-rescue\" its address is {})", nocry_core::discover::AP_ADDRESS);
+            }
+            for b in found {
+                let how = if b.found_by == "mdns" { "announced itself" } else { "at the address of its own Wi-Fi" };
+                println!("{}  {}:{}  ({how})", b.name, b.address, b.port);
+                println!("    use it with:  nocry --net {} --code <code on its screen> <command>", b.address);
             }
         }
         Cmd::Slots { set, tries } => {

@@ -127,7 +127,10 @@ Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (ker
 
 - First run on a board (Nebula Pad, the TCP connection tunnelled over USB with `adb forward`): slots and loader read correctly, a 32 MiB read through the link is identical to the same read over USB (10.9 MB/s against 35 MB/s), a wrong code is refused.
 
-Missing: discovery in nocry (the board announces `_nocry._tcp`, nocry does not look yet), the network option in the window, and a run over the board's Wi-Fi instead of the tunnel.
+- **Discovery** (`host/core/src/discover.rs`, `nocry discover`): nocry asks for `_nocry._tcp` once on every network interface, from an ordinary port, and takes the address the answer came from. Asked from an ordinary port, the board answers the sender directly, so nocry needs no mDNS service on the computer. The question must not carry the "unicast answer" bit: mdnsd 0.12 on the board ignores questions that do. The board's access point address (192.168.77.1) is also tried directly when the computer is on that network, for networks that do not pass mDNS. Tested against the board's own mdnsd (question sent on the board, its answer is a unit test) and against Avahi on a PC.
+- **In the window:** "Connect over the network…" beside the state line (shown while no USB board is connected) lists the boards found, takes an address typed in, and asks for the pairing code. After pairing, every action in the window works on that board; the state line shows the address and a Disconnect button, and reports when the board stops answering. The last address is remembered, the code is not. Tested against a Nebula Pad through the USB tunnel: pairing, reading the board, a wrong code refused.
+
+Missing: a run over the board's Wi-Fi instead of the tunnel (the development PC has no Wi-Fi adapter), and the model and serial number tail in the announcement so two boards can be told apart in the list.
 
 ## Open points
 

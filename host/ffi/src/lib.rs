@@ -76,11 +76,66 @@ pub extern "C" fn nocry_board_state_json() -> *mut c_char {
                 BoardKind::Recovery => "recovery",
                 BoardKind::UbootDisk => "uboot-disk",
                 BoardKind::Unsupported => "unsupported",
+                BoardKind::Network => "network",
             };
+            if s.kind == BoardKind::Network {
+                return out(format!("{{\"state\":\"network\",\"address\":\"{}\",\"reachable\":{}}}", esc(&s.port), network_alive()));
+            }
             format!("{{\"state\":\"{k}\",\"port\":\"{}\"}}", esc(&s.port))
         }
         Ok(Err(e)) => format!("{{\"state\":\"error\",\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
         Err(_) => "{\"state\":\"error\",\"error\":\"internal error\"}".into(),
+    })
+}
+
+/// The network board is asked whether it is still there at most every few seconds: the
+/// front end polls the state every second.
+fn network_alive() -> bool {
+    static LAST: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    if let Some((when, alive)) = *last {
+        if when.elapsed() < std::time::Duration::from_secs(if alive { 5 } else { 2 }) {
+            return alive;
+        }
+    }
+    let alive = session::network_board_reachable();
+    *last = Some((std::time::Instant::now(), alive));
+    alive
+}
+
+#[no_mangle]
+pub extern "C" fn nocry_net_discover_json(wait_ms: c_int) -> *mut c_char {
+    let r = std::panic::catch_unwind(|| nocry_core::discover::discover(std::time::Duration::from_millis(wait_ms.clamp(200, 10000) as u64)));
+    out(match r {
+        Ok(found) => {
+            let boards: Vec<String> = found
+                .iter()
+                .map(|b| format!("{{\"name\":\"{}\",\"address\":\"{}\",\"port\":{},\"found_by\":\"{}\"}}", esc(&b.name), esc(&b.address), b.port, b.found_by))
+                .collect();
+            format!("{{\"ok\":true,\"boards\":[{}]}}", boards.join(","))
+        }
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
+/// # Safety
+/// Pointers must be NULL or valid NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_net_connect_json(address: *const c_char, code: *const c_char) -> *mut c_char {
+    if address.is_null() {
+        session::set_network_board(None);
+        return out("{\"ok\":true,\"connected\":false}".into());
+    }
+    let address = CStr::from_ptr(address).to_string_lossy().into_owned();
+    let code = if code.is_null() { String::new() } else { CStr::from_ptr(code).to_string_lossy().into_owned() };
+    let r = std::panic::catch_unwind(|| session::connect_network_board(&address, &code));
+    out(match r {
+        Ok(Ok((product, version))) => format!(
+            "{{\"ok\":true,\"connected\":true,\"address\":\"{}\",\"product\":\"{}\",\"service\":\"{}\"}}",
+            esc(address.trim()), esc(&product), esc(&version)
+        ),
+        Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
     })
 }
 

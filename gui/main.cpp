@@ -24,6 +24,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -136,6 +137,15 @@ public:
         hintRow->addWidget(stateHint, 1);
         bootHelpButton = new QPushButton(tr("How to enter USB boot mode…"));
         hintRow->addWidget(bootHelpButton, 0, Qt::AlignTop);
+        netButton = new QPushButton(tr("Connect over the network…"));
+        netButton->setToolTip(tr("For a board that shows the nocry rescue screen: work on it over Wi-Fi, without a USB cable."));
+        hintRow->addWidget(netButton, 0, Qt::AlignTop);
+        connect(netButton, &QPushButton::clicked, this, [this] {
+            if (networkAddress.isEmpty())
+                chooseNetwork();
+            else
+                disconnectNetwork();
+        });
         v->addLayout(hintRow);
         connect(bootHelpButton, &QPushButton::clicked, this, [this] { showBootHelp(); });
         // shell access to the running recovery: what works right now, and how to use it
@@ -938,6 +948,16 @@ public:
     void setPictureChoice(int p) { pendingPicture = p; }   // self-tests: what the install dialog's tick box would set
     QString autoModel, autoBoard;   // self-tests: answers for the printer type / mainboard questions
     void openShellHelp() { showShellHelp(); }
+    void openNetworkDialog() { chooseNetwork(); }
+    // self-tests: pair without the dialog; true when the board accepted the code
+    bool testConnect(const QString &address, const QString &code)
+    {
+        const QJsonObject o = takeJson(nocry_net_connect_json(address.toUtf8().constData(), code.toUtf8().constData()));
+        log->appendPlainText(o.value("ok").toBool() ? tr("Connected to %1 over the network.").arg(address) : o.value("error").toString());
+        if (o.value("ok").toBool())
+            networkConnected(address);
+        return o.value("ok").toBool();
+    }
     void openBootHelp() { showBootHelp(); }
     void fetchBoardLog() { showBoardLog(); }
     void testSecureWipe() { startSecureWipe(); }
@@ -1130,6 +1150,149 @@ private:
     {
         const int r = parts->currentRow();
         return r >= 0 && parts->item(r, 0) ? parts->item(r, 0)->text() : QString();
+    }
+
+    void networkConnected(const QString &address)
+    {
+        networkAddress = address;
+        infoStale = true;      // whatever is shown belongs to another board
+        autoBlocked = false;
+        pollState();
+    }
+
+    void disconnectNetwork()
+    {
+        if (busy)
+            return;
+        nocry_string_free(nocry_net_connect_json(nullptr, nullptr));
+        log->appendPlainText(tr("Disconnected from %1. The board keeps running its rescue system.").arg(networkAddress));
+        networkAddress.clear();
+        pollState();
+    }
+
+    // Find a board running nocry-rescue on the network and pair with the code on its screen.
+    void chooseNetwork()
+    {
+        struct NetDialog : QDialog {
+            using QDialog::QDialog;
+            bool working = false;      // a pairing attempt is under way: stay open until it ends
+            void reject() override
+            {
+                if (!working)
+                    QDialog::reject();
+            }
+        };
+        NetDialog d(this);
+        d.setWindowTitle(tr("Connect over the network"));
+        auto *v = new QVBoxLayout(&d);
+        auto *intro = new QLabel(tr("A board that shows the nocry rescue screen can be worked on over Wi-Fi, without a USB cable.\n\n"
+                                    "This computer has to be on the same network as the board. If the board is not on your network, "
+                                    "join the Wi-Fi network shown on its screen first."));
+        intro->setWordWrap(true);
+        intro->setMinimumWidth(500);
+        v->addWidget(intro);
+        v->setSizeConstraint(QLayout::SetFixedSize);   // follows the wrapped text as the status line changes
+        auto *form = new QFormLayout;
+        auto *addr = new QComboBox;
+        addr->setEditable(true);
+        addr->setMinimumWidth(320);
+        QSettings settings(QStringLiteral("nocry"), QStringLiteral("nocry"));
+        const QString last = settings.value("network/address").toString();
+        if (!last.isEmpty())
+            addr->addItem(last, last);
+        auto *again = new QPushButton(tr("Search again"));
+        auto *addrRow = new QHBoxLayout;
+        addrRow->addWidget(addr, 1);
+        addrRow->addWidget(again);
+        form->addRow(tr("Board:"), addrRow);
+        auto *code = new QLineEdit;
+        code->setPlaceholderText(tr("the 6 digits on the board's screen"));
+        code->setMaxLength(12);
+        form->addRow(tr("Pairing code:"), code);
+        v->addLayout(form);
+        auto *status = new QLabel;
+        status->setWordWrap(true);
+        status->setMinimumWidth(500);
+        v->addWidget(status);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        QPushButton *go = bb->button(QDialogButtonBox::Ok);
+        go->setText(tr("Connect"));
+        v->addWidget(bb);
+
+        // what the user typed, or the address behind the entry they picked
+        auto address = [addr] {
+            const int i = addr->findText(addr->currentText());
+            return (i >= 0 && addr->itemData(i).isValid() ? addr->itemData(i).toString() : addr->currentText()).trimmed();
+        };
+        auto valid = [&d, go, code, address] {
+            go->setEnabled(!d.working && !address().isEmpty() && code->text().remove(' ').size() >= 4);
+        };
+        connect(code, &QLineEdit::textChanged, &d, valid);
+        connect(addr, &QComboBox::currentTextChanged, &d, valid);
+
+        auto search = [&d, addr, again, status, valid] {
+            again->setEnabled(false);
+            status->setText(tr("Looking for boards on the network…"));
+            auto *w = new QFutureWatcher<QJsonObject>(&d);
+            connect(w, &QFutureWatcher<QJsonObject>::finished, &d, [w, addr, again, status, valid] {
+                const QJsonArray boards = w->result().value("boards").toArray();
+                w->deleteLater();
+                again->setEnabled(true);
+                const QString typed = addr->currentText();
+                for (const auto &b : boards) {
+                    const QJsonObject o = b.toObject();
+                    QString a = o.value("address").toString();
+                    if (o.value("port").toInt() != 5560)
+                        a += QStringLiteral(":%1").arg(o.value("port").toInt());
+                    if (addr->findData(a) < 0)
+                        addr->insertItem(0, tr("%1 at %2").arg(o.value("name").toString(), a), a);
+                }
+                if (!boards.isEmpty() && (typed.isEmpty() || addr->findText(typed) >= 0))
+                    addr->setCurrentIndex(0);
+                else
+                    addr->setEditText(typed);
+                status->setText(boards.isEmpty()
+                    ? tr("No board answered. Check that this computer is on the same network as the board, or type the address shown on the board's screen.")
+                    : tr("Type the pairing code shown on the board's screen."));
+                valid();
+            });
+            w->setFuture(QtConcurrent::run([] { return takeJson(nocry_net_discover_json(2500)); }));
+        };
+        connect(again, &QPushButton::clicked, &d, search);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        connect(bb, &QDialogButtonBox::accepted, &d, [&d, this, addr, again, code, status, bb, address, valid] {
+            const QString a = address();
+            d.working = true;
+            for (QWidget *x : {static_cast<QWidget *>(addr), static_cast<QWidget *>(again), static_cast<QWidget *>(code), static_cast<QWidget *>(bb)})
+                x->setEnabled(false);
+            status->setText(tr("Pairing with %1…").arg(a));
+            auto *w = new QFutureWatcher<QJsonObject>(&d);
+            connect(w, &QFutureWatcher<QJsonObject>::finished, &d, [&d, this, w, a, addr, again, code, status, bb, valid] {
+                const QJsonObject o = w->result();
+                w->deleteLater();
+                d.working = false;
+                for (QWidget *x : {static_cast<QWidget *>(addr), static_cast<QWidget *>(again), static_cast<QWidget *>(code), static_cast<QWidget *>(bb)})
+                    x->setEnabled(true);
+                if (o.value("ok").toBool()) {
+                    QSettings(QStringLiteral("nocry"), QStringLiteral("nocry")).setValue("network/address", a);
+                    log->appendPlainText(tr("Connected to %1 over the network (encrypted, paired with the code on its screen).").arg(a));
+                    networkAddress = a;
+                    d.accept();
+                    return;
+                }
+                status->setText(tr("<b>Could not connect.</b> %1").arg(o.value("error").toString().toHtmlEscaped()));
+                code->selectAll();
+                code->setFocus();
+                valid();
+            });
+            const QByteArray ab = a.toUtf8(), cb = code->text().toUtf8();
+            w->setFuture(QtConcurrent::run([ab, cb] { return takeJson(nocry_net_connect_json(ab.constData(), cb.constData())); }));
+        });
+        valid();
+        search();
+        code->setFocus();
+        if (d.exec() == QDialog::Accepted)
+            networkConnected(networkAddress);
     }
 
     void updateButtons()
@@ -1671,7 +1834,12 @@ private:
     void showState(const QJsonObject &o)
     {
         const QString s = o.value("state").toString();
-        canRead = s != "none" && s != "error" && s != "uboot-disk";
+        const bool net = s == "network", netUp = net && o.value("reachable").toBool();
+        canRead = s != "none" && s != "error" && s != "uboot-disk" && (!net || netUp);
+        if (net)
+            networkAddress = o.value("address").toString();
+        netButton->setVisible(s == "none" || net);
+        netButton->setText(net ? tr("Disconnect") : tr("Connect over the network…"));
         if (s == "none" && infoLoaded) {
             for (auto *l : {model, serial, mac, board, slot, otherSlot, storage})
                 l->setText(QStringLiteral("—"));
@@ -1695,6 +1863,13 @@ private:
         if (s == "none") {
             stateTitle->setText(tr("No board connected"));
             stateHint->setText(tr("Connect the board by USB, then hold BOOT, tap RESET and release BOOT."));
+        } else if (net && netUp) {
+            stateTitle->setText(tr("Board connected over the network"));
+            stateHint->setText(tr("Rescue system at %1. Nothing on the board is changed until you choose an action.").arg(networkAddress));
+        } else if (net) {
+            stateTitle->setText(tr("The board is not answering"));
+            stateHint->setText(tr("Nothing at %1 answers. Check that the board still shows its rescue screen and that this computer is on the same network; nocry keeps trying. "
+                                  "A board that was restarted shows a new pairing code: disconnect and connect again.").arg(networkAddress));
         } else if (s == "usb-boot") {
             stateTitle->setText(tr("Board in USB boot mode"));
             stateHint->setText(tr("Ready. Nothing on the board is changed until you choose an action."));
@@ -2097,7 +2272,8 @@ private:
     bool infoLoaded = false, infoStale = false, autoBlocked = false, recoveryRunning = false;
     QLabel *shellLine;
     QPushButton *shellButton;
-    QPushButton *boardLogButton, *bootHelpButton;
+    QPushButton *boardLogButton, *bootHelpButton, *netButton;
+    QString networkAddress;     // the board paired over the network ("" = USB)
     // printer type / mainboard the user chose for the install in progress ("" = let nocry decide)
     QString pendingModel, pendingBoard;
     int pendingPicture = 2;     // boot picture choice for the install under way (see nocry_install3_json)
@@ -2268,6 +2444,34 @@ int main(int argc, char **argv)
     }
     if (qEnvironmentVariableIsSet("NOCRY_TEST_PICTURE"))
         w.setPictureChoice(qEnvironmentVariableIntValue("NOCRY_TEST_PICTURE"));
+    // --selftest-net-dialog shot.png: open the network dialog, save a picture of it after the search
+    const int snd = args.indexOf("--selftest-net-dialog");
+    if (snd >= 0 && snd + 1 < args.size()) {
+        const QString shot = args[snd + 1];
+        QTimer::singleShot(800, [&w] { w.openNetworkDialog(); });
+        QTimer::singleShot(4500, [shot] {
+            if (QWidget *d = QApplication::activeModalWidget()) {
+                d->grab().save(shot);
+                d->close();
+            }
+            QTimer::singleShot(200, [] { QApplication::quit(); });
+        });
+    }
+    // --selftest-net ADDRESS CODE shot.png: pair, read the board over the network, save the window
+    const int sn = args.indexOf("--selftest-net");
+    if (sn >= 0 && sn + 3 < args.size()) {
+        const QString a = args[sn + 1], c = args[sn + 2], shot = args[sn + 3];
+        w.onIdle = [&w, shot] {
+            QTimer::singleShot(1500, [&w, shot] { w.grab().save(shot); QApplication::quit(); });
+        };
+        QTimer::singleShot(500, [&w, a, c, shot] {
+            if (!w.testConnect(a, c)) {
+                w.grab().save(shot);
+                QApplication::exit(3);
+            }
+        });
+        QTimer::singleShot(90000, [] { QApplication::exit(2); });
+    }
     // --selftest-picture shot.png: open the Boot Picture dialog (needs NOCRY_TEST_TARGET, an image file)
     const int spi = args.indexOf("--selftest-picture");
     if (spi > 0 && spi + 1 < args.size() && qEnvironmentVariableIsSet("NOCRY_TEST_TARGET")) {

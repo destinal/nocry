@@ -127,6 +127,16 @@ char *nocry_loader_json(int action, const char *file, int execute, const char *s
 /* The board's log of its current (recovery) or previous start: {"ok":true,"kind":"recovery|previous","text":"..."} */
 char *nocry_boot_log_json(void);
 
+/* Boards running nocry-rescue on the local network (docs/nocry-rescue.md). Waits wait_ms for answers.
+ * {"ok":true,"boards":[{"name":"nocry-rescue","address":"192.168.77.1","port":5560,"found_by":"mdns|access-point"}]} */
+char *nocry_net_discover_json(int wait_ms);
+
+/* Pair with the board at address ("host" or "host:port") using the code on its screen. On success every
+ * later call works on that board over the network and nocry_board_state_json reports
+ * {"state":"network","address":"...","reachable":bool}. address NULL: back to USB.
+ * {"ok":true,"connected":bool,"address","product","service"} or {"ok":false,"error":"..."} */
+char *nocry_net_connect_json(const char *address, const char *code);
+
 /* Ask the running operation to stop at its next safe point (callable from any thread). */
 void nocry_cancel(void);
 

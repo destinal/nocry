@@ -10,6 +10,7 @@
 pub mod boards;
 pub mod bootrom;
 pub mod catalog;
+pub mod discover;
 pub mod diskimage;
 pub mod events;
 pub mod fastboot;

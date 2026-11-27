@@ -65,3 +65,7 @@ While the recovery runs, a line under the status shows "ADB: ready / not install
 Every write first saves the first 3 MiB to `<data>/safety`.
 
 Tested on a copy of the backup image with `--selftest-adv` (2026-11-26): partition backup equals the image and its checksum verifies; restore into `kernel2`; an oversized file refused; erase to zeros, image identical to the original afterwards; invalid MAC refused, valid identity written; full erase leaves every byte zero; the blank image rebuilt from the downloaded Nebula 1.1.0.30 update with 10 partitions, Creality's bootloader, a generated identity and nothing left to repair; original identity restored byte-identical. None of this has been run on a real board yet.
+
+## Over the network
+
+A board that runs nocry-rescue (see `docs/nocry-rescue.md`) can be used without a USB cable: **Connect over the network…** finds it, asks for the pairing code on its screen, and from then on every action works on that board. Self-tests: `--selftest-net-dialog shot.png`, `--selftest-net ADDRESS CODE shot.png`.
