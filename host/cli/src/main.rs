@@ -215,6 +215,35 @@ enum Cmd {
     Catalog {
         #[arg(long)]
         refresh: bool,
+        /// one line per firmware, tab-separated: key, name, version, released, bytes, file
+        #[arg(long)]
+        tsv: bool,
+    },
+    /// Install firmware the way the window does, with the same checks: FIRMWARE is a .ingenic
+    /// package, an update .img, or an unpacked folder. Keeps settings and files unless --clean;
+    /// --other-slot puts it into the slot that is not in use and changes nothing else.
+    /// Shows what would be done; writes only with --yes
+    Install {
+        firmware: PathBuf,
+        #[arg(long, conflicts_with = "other_slot")]
+        clean: bool,
+        #[arg(long)]
+        other_slot: bool,
+        /// printer type / mainboard for the identity record, when nocry asks for one
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        board: Option<String>,
+        /// keep the firmware's own boot logo instead of nocry's
+        #[arg(long)]
+        firmware_logo: bool,
+        /// print the outcome as key=value lines (for other programs)
+        #[arg(long)]
+        report: bool,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        target: Option<PathBuf>,
     },
     /// Download a firmware from the list (verified, cached). MODEL: NEBULA, F005, F003, F004;
     /// VERSION: e.g. 1.1.0.30 or "latest". Prints the local path for --os
@@ -492,7 +521,22 @@ fn cmd_recovery(
 }
 
 
+/// Ctrl-C or a polite kill: finish the write under way, then stop (as Cancel does in the window).
+/// A second one ends the program at once: not everything it waits for can be stopped politely.
+extern "C" fn on_stop_signal(_: libc::c_int) {
+    static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if ASKED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        unsafe { libc::_exit(130) }
+    }
+    nocry_core::events::cancel();
+}
+
 fn main() -> Result<()> {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGINT, on_stop_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_stop_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+    }
     let cli = Cli::parse();
     let soc = soc_by_name(&cli.soc)?;
     let images = cli.images.clone();
@@ -669,9 +713,61 @@ fn main() -> Result<()> {
             cmd_recovery(soc, images.as_ref(), device.as_deref(), image, ums, cmdline, wait)?
         }
         Cmd::Fb(c) => cmd_fb(c)?,
-        Cmd::Catalog { refresh } => {
+        Cmd::Install { firmware, clean, other_slot, model, board, firmware_logo, report, yes, target } => {
+            let logo = if firmware_logo { nocry_core::session::PictureChoice::Firmware } else { nocry_core::session::PictureChoice::Default };
+            let r = if other_slot {
+                nocry_core::session::install_other_slot(soc, via, &firmware, yes, None, target.as_ref(), logo)?
+            } else {
+                nocry_core::session::install(soc, via, &firmware, !clean, yes, None, target.as_ref(), model.as_deref(), board.as_deref(), logo)?
+            };
+            if report {
+                println!("firmware={} {}", if r.firmware_name.is_empty() { &r.firmware_board } else { &r.firmware_name }, r.firmware_version);
+                println!("on_board={}", if r.device_firmware_name.is_empty() { r.device_firmware.clone() } else { format!("{} {}", r.device_firmware_name, r.device_firmware.split(' ').nth(1).unwrap_or("")) });
+                println!("slot={}", r.target_slot);
+                println!("to_write={}", r.bytes_to_write);
+                println!("executed={}", if r.executed { "yes" } else { "no" });
+                println!("blank_board={}", if r.blank_board { "yes" } else { "no" });
+                if !r.model_before.is_empty() && r.model_before != r.model_after {
+                    println!("converting={} -> {}", r.model_before_name, r.model_after_name);
+                }
+                if !r.need_choice.is_empty() {
+                    println!("need_choice={}", r.need_choice);
+                    for (v, n) in &r.choices {
+                        println!("choice={v}\t{n}");
+                    }
+                }
+                for n in &r.notes {
+                    println!("note={}", n.replace('\n', " "));
+                }
+            } else {
+                for n in &r.notes {
+                    println!("note: {n}");
+                }
+                print!("{}", r.details);
+                if !r.need_choice.is_empty() {
+                    let list: Vec<String> = r.choices.iter().map(|(v, n)| format!("{v} ({n})")).collect();
+                    bail!("say which {} this board is with --{}: {}", r.need_choice, if r.need_choice == "model" { "model" } else { "board" }, list.join(", "));
+                }
+                if r.bytes_to_write == 0 {
+                    println!("nothing to do: the board already holds this firmware, intact");
+                } else if r.executed {
+                    println!("installed and verified ({} MiB written)", r.bytes_to_write >> 20);
+                } else {
+                    println!("{} MiB to write; run again with --yes to install", r.bytes_to_write >> 20);
+                }
+            }
+        }
+        Cmd::Catalog { refresh, tsv } => {
             let dir = catalog::default_data_dir();
             let c = if refresh { catalog::refresh(&dir)? } else { catalog::load(Some(&dir)) };
+            if tsv {
+                for m in &c.models {
+                    for f in &m.firmwares {
+                        println!("{}\t{}\t{}\t{}\t{}\t{}", m.key, m.name, f.version, f.released, f.size, f.file);
+                    }
+                }
+                return Ok(());
+            }
             println!("firmware list of {} ({})", c.built, if c.updated { "updated from Creality" } else { "built in" });
             for m in &c.models {
                 println!("{} ({})", m.name, m.key);

@@ -44,6 +44,10 @@ jobs:
           tools/rtos-build/build.sh "$PWD/out-rtos"
           VARIANT=k1 tools/rtos-build/build.sh "$PWD/out-rtos"
       - name: Build recovery Linux and nocry-rescue
+        env:    # the rescue system carries the loader and boot logo images it can install
+          BURNER_OUT: ${{ github.workspace }}/out-burner
+          NOCRYBOOT_OUT: ${{ github.workspace }}/out-nocryboot
+          RTOS_OUT: ${{ github.workspace }}/out-rtos
         run: RESCUE=1 tools/recovery-build/build.sh "$RUNNER_TEMP/recovery-work" "$PWD/out-recovery" || { tail -60 "$RUNNER_TEMP"/recovery-work/*.log; exit 1; }
       - name: Collect
         run: |

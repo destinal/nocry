@@ -10,3 +10,4 @@ publish = false
 nocry-core = { path = "../core" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"

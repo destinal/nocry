@@ -38,7 +38,22 @@ EOT
 fi
 rm -f "$WORK/.case-test"
 docker build -q -t nocry-recovery-build "$HERE" >/dev/null
-run() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/w" -v "$WORK/buildroot:/br" -v "$HERE:/nocry:ro" -w /w nocry-recovery-build bash -c "$1"; }
+# /repo/host: nocry's own source, built for the board into the rescue system (post-build.sh);
+# /images: the loader and boot logo images it installs from there, when they have been built
+REPO=$(cd "$HERE/../.." && pwd)
+IMAGES=$WORK/board-images
+rm -rf "$IMAGES"; mkdir -p "$IMAGES"
+BURNER_OUT=${BURNER_OUT:-$HERE/../burner-build/out}; NOCRYBOOT_OUT=${NOCRYBOOT_OUT:-$HERE/../nocryboot-build/out}; RTOS_OUT=${RTOS_OUT:-$HERE/../rtos-build/out}
+if [ -f "$BURNER_OUT/spl-x2000e/spl-x2000e.bin" ] && [ -f "$NOCRYBOOT_OUT/nocryboot-nebula.bin" ] && [ -f "$RTOS_OUT/nocry-rtos.bin" ]; then
+  mkdir -p "$IMAGES/spl-x2000e" "$IMAGES/nocryboot" "$IMAGES/nocry-rtos"
+  cp "$BURNER_OUT/spl-x2000e/spl-x2000e.bin" "$IMAGES/spl-x2000e/"
+  cp "$NOCRYBOOT_OUT/nocryboot-nebula.bin" "$NOCRYBOOT_OUT/nocryboot-k1.bin" "$IMAGES/nocryboot/"
+  cp "$RTOS_OUT/nocry-rtos.bin" "$IMAGES/nocry-rtos/nocry-rtos-nebula.bin"
+  [ -f "$RTOS_OUT/nocry-rtos-k1.bin" ] && cp "$RTOS_OUT/nocry-rtos-k1.bin" "$IMAGES/nocry-rtos/"
+else
+  echo "note: loader and boot logo images are not built yet; the rescue system will not be able to install them (tools/build-images.sh builds everything in order)"
+fi
+run() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/w" -v "$WORK/buildroot:/br" -v "$HERE:/nocry:ro" -v "$REPO/host:/repo/host:ro" -v "$IMAGES:/images:ro" -w /w nocry-recovery-build bash -c "$1"; }
 
 # --- sources
 if [ ! -d "$WORK/linux" ]; then

@@ -295,6 +295,11 @@ fn check_blockdev(_path: &Path, allow_any: bool) -> Result<()> {
     Ok(())
 }
 
+/// The board's own storage when nocry runs on the board (the rescue system sets this).
+pub fn board_disk() -> Option<PathBuf> {
+    std::env::var_os("NOCRY_BOARD_DISK").map(PathBuf::from).filter(|p| p.exists())
+}
+
 const HCHUNK: u64 = MIB;
 const FB_STEP: u64 = 256 * MIB;
 
@@ -302,7 +307,9 @@ impl Target {
     pub fn open(path: &Path, write: bool, allow_any: bool) -> Result<Target> {
         let md = std::fs::metadata(path).with_context(|| format!("{}", path.display()))?;
         let is_dev = is_block_device(&md);
-        if is_dev && write {
+        // nocry running on the board itself (NOCRY_BOARD_DISK) works on the board's own storage:
+        // there is no other disk to mistake it for, and the rescue system knows what it mounted
+        if is_dev && write && board_disk().as_deref() != Some(path) {
             check_blockdev(path, allow_any)?;
         }
         let mut f = OpenOptions::new().read(true).write(write).open(path).with_context(|| {

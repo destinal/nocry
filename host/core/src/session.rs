@@ -623,6 +623,10 @@ pub fn open_target(
     if let Some(p) = explicit {
         return restore::Target::open(p, write, allow_any);
     }
+    // on the board itself: its own storage, directly
+    if let Some(p) = restore::board_disk() {
+        return restore::Target::open(&p, write, true);
+    }
     if let Some((addr, code)) = network_board() {
         say!("using the board at {addr} over the network");
         return restore::Target::open_net(&addr, &code, write);

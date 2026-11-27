@@ -399,13 +399,13 @@ static void page_home(struct buf *b, const char *flash, int flash_ok)
 	slot_row(b, bs, 'a', active[0] == 'a', running);
 	puts_(b, "<hr style=\"border:0;border-top:1px solid #8884\">");
 	slot_row(b, bs, 'b', active[0] == 'b', running);
-	puts_(b, "<p class=t>The board holds two firmware slots and starts one of them. Settings and files are shared by both.</p></div>");
+	puts_(b, "<p class=t>The board holds two firmware slots and starts one of them. Settings and files are shared by both.</p>"
+		 "<a class=\"b w\" href=/install>Install firmware</a></div>");
 	puts_(b, "<div class=c><h2>More</h2>"
 		 "<a class=\"b q w\" href=/repair>Repair: undo modifications, check the file system, factory reset</a>"
 		 "<a class=\"b q w\" href=/files>Files: browse, download, delete, replace</a>"
-		 "<a class=\"b q w\" href=/board>Board: storage health, logs, identity, restart</a></div>"
-		 "<p class=t>Installing firmware, full backups and the boot loader need nocry on a computer for now "
-		 "(github.com/destinal/nocry): it finds this board on the network by itself.</p>");
+		 "<a class=\"b q w\" href=/board>Board: storage health, backup, logs, identity, restart</a>"
+		 "<a class=\"b q w\" href=/boot>Boot loader and boot logo</a></div>");
 	free(st); free(job); free(bs);
 }
 
@@ -461,7 +461,10 @@ static void page_board(struct buf *b, const char *flash, int flash_ok)
 	puts_(b, "</div><div class=c><h2>Save from the board</h2>"
 		 "<p><a class=\"b q\" href=/dl/logs>Logs</a> What the printer and this rescue system recorded, in one file: attach it when you ask for help.</p>"
 		 "<p><a class=\"b q\" href=/dl/config>Printer configuration</a> The printer's configuration files, to keep before a reset.</p>"
-		 "<p><a class=\"b q\" href=/dl/identity>Identity record</a> The board's serial number and network address as stored on it. Keep it private.</p></div>");
+		 "<p><a class=\"b q\" href=/dl/identity>Identity record</a> The board's serial number and network address as stored on it. Keep it private.</p>"
+		 "<p><a class=\"b q\" href=/dl/backup>Full backup</a> Everything on the board in one compressed file (it holds the identity too). "
+		 "Several gigabytes of storage are read and sent: over Wi-Fi this takes an hour or more, so start it and leave the page open. "
+		 "To put it back: unpack it and use Restore backup in nocry on a computer.</p></div>");
 	field(bs, "model", v, sizeof v); field(bs, "mainboard", w, sizeof w);
 	puts_(b, "<div class=c><h2>Board</h2><p>Set up as: "); esc(b, v[0] ? v : "unknown"); puts_(b, ", mainboard "); esc(b, w[0] ? w : "unknown"); puts_(b, ".</p></div>");
 	field(st, "mode", mode, sizeof mode);
@@ -513,6 +516,97 @@ static void page_files(struct buf *b, const char *dir, const char *flash, int fl
 	}
 	puts_(b, "</div>"); back(b);
 	free(ls);
+}
+
+static void mb(struct buf *b, const char *bytes)
+{
+	char t[32]; snprintf(t, sizeof t, "%llu MB", strtoull(bytes, NULL, 10) >> 20); puts_(b, t);
+}
+
+/* Install firmware: choose (the list for this board, or a file), check, then install. */
+static void page_install(struct buf *b, const char *flash, int flash_ok)
+{
+	char *job = run(doer, "job", NULL, NULL, 2048, NULL), *rep = run(doer, "fw-report", NULL, NULL, 8192, NULL), state[16], what[96];
+	char *st = slurp(statefile, 1024), mode[24]; int running;
+	field(job, "state", state, sizeof state); field(job, "what", what, sizeof what); running = !strcmp(state, "running");
+	field(st, "mode", mode, sizeof mode);
+	head(b, running ? "<meta http-equiv=refresh content=3>" : NULL);
+	note(b, flash_ok ? "ok" : "e", flash);
+	if (running || strstr(what, "firmware")) job_card(b, job);
+	if (running) { back(b); free(job); free(rep); free(st); return; }
+	if (rep && strstr(rep, "firmware=")) {
+		char fw[128], on[128], slot[8], tw[32], conv[160], need[32], m[16], *line, *save, *copy = strdup(rep);
+		field(rep, "firmware", fw, sizeof fw); field(rep, "on_board", on, sizeof on); field(rep, "slot", slot, sizeof slot);
+		field(rep, "to_write", tw, sizeof tw); field(rep, "converting", conv, sizeof conv); field(rep, "need_choice", need, sizeof need);
+		field(rep, "mode", m, sizeof m);
+		puts_(b, "<div class=\"c hi\"><h2>Ready to install</h2><p><b>"); esc(b, fw); puts_(b, "</b>");
+		if (!strcmp(m, "slot")) { puts_(b, " into slot <b>"); esc(b, slot[0] == 'b' ? "B" : "A"); puts_(b, "</b>, the one that is not in use. The firmware that starts now stays as it is."); }
+		else puts_(b, ", replacing the firmware that starts now. Your settings and files are kept.");
+		puts_(b, "</p><p>On the board now: "); esc(b, on[0] > ' ' ? on : "no readable firmware"); puts_(b, ". To be written: "); mb(b, tw); puts_(b, ".</p>");
+		if (conv[0]) { puts_(b, "<p class=e>This changes the printer type the board is set up for: "); esc(b, conv); puts_(b, ".</p>"); }
+		puts_(b, "<p class=t>");
+		for (line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save))
+			if (!strncmp(line, "note=", 5)) { esc(b, line + 5); puts_(b, "<br>"); }
+		puts_(b, "</p>");
+		if (need[0]) puts_(b, "<p class=e>This firmware serves several printer types and the board does not say which one it is. Use nocry on a computer for this installation.</p>");
+		else if (!strtoull(tw, NULL, 10)) puts_(b, "<p class=ok>The board already holds exactly this firmware. Nothing needs to be written.</p>");
+		else puts_(b, "<form method=post action=/install/go><button>Install now</button></form>");
+		puts_(b, "<form method=post action=/install/discard><button class=q>Discard</button></form></div>");
+		free(copy);
+	} else {
+		int stl; char *ls = run(doer, "fw-list", NULL, NULL, 32768, &stl), *line, *save; int any = 0;
+		puts_(b, "<div class=c><h2>Install firmware</h2>");
+		if (!strcmp(mode, "ap"))
+			puts_(b, "<p class=e>The board is on its own network, which has no internet. To download firmware, <a href=/wifi>put it on your Wi-Fi</a> first. "
+				 "Uploading a file from this device works either way.</p>");
+		puts_(b, "<form method=post action=/install/fetch><label>From the internet</label>");
+		for (line = ls ? strtok_r(ls, "\n", &save) : NULL; line; line = strtok_r(NULL, "\n", &save)) {
+			char *f[6]; int i;
+			for (i = 0, f[0] = line; i < 5 && f[i]; i++) { f[i + 1] = strchr(f[i], '\t'); if (f[i + 1]) *f[i + 1]++ = 0; }
+			if (i < 5 || !f[5]) continue;
+			puts_(b, "<label class=n><input type=radio name=fw value=\""); esc(b, f[0]); puts_(b, "|"); esc(b, f[2]); puts_(b, "\"");
+			if (!any) puts_(b, " checked");
+			puts_(b, "> "); esc(b, f[1]); puts_(b, " "); esc(b, f[2]); puts_(b, "<small>"); esc(b, f[3]); puts_(b, ", "); mb(b, f[4]); puts_(b, "</small></label>");
+			any = 1;
+		}
+		if (!any) puts_(b, "<p>No firmware list for this board (its printer type is not set, or this rescue system has no installer).</p>");
+		puts_(b, "<label>How</label>"
+			 "<label class=n><input type=radio name=mode value=keep checked> Replace the firmware that starts; keep my settings and files</label>"
+			 "<label class=n><input type=radio name=mode value=slot> Put it in the other slot; the firmware that starts now stays</label>");
+		if (any) puts_(b, "<button class=w>Download and check</button>");
+		puts_(b, "</form><form method=post action=/install/refresh><button class=q>Look for newer versions</button></form>"
+			 "<p class=t>Nothing is written to the board yet: the firmware is downloaded, verified and checked against this board first, and you are shown what would be done. "
+			 "For a clean start, install first and then use Factory reset under Repair.</p></div>"
+			 "<div class=c><h2>From this device</h2><p class=t>A firmware file you have: a Creality update (.img), a .ingenic package, or a NebulaOS .img. Up to 700 MB.</p>");
+		puts_(b, "<form method=post action=\"/install/upload?mode=keep\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload and check</button></form>"
+			 "<form method=post action=\"/install/upload?mode=slot\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload and check, for the other slot</button></form></div>");
+		free(ls);
+	}
+	back(b);
+	free(job); free(rep); free(st);
+}
+
+static void pre(struct buf *b, const char *text)
+{
+	puts_(b, "<pre style=\"white-space:pre-wrap;font:inherit;margin:.4em 0\">"); esc(b, text ? text : ""); puts_(b, "</pre>");
+}
+
+static void page_boot(struct buf *b, const char *flash, int flash_ok)
+{
+	int s1, s2; char *lo = run(doer, "loader", NULL, NULL, 4096, &s1), *lg = run(doer, "logo", NULL, NULL, 4096, &s2);
+	head(b, NULL);
+	if (flash) { puts_(b, flash_ok ? "<div class=ok>" : "<div class=e>"); pre(b, flash); puts_(b, "</div><p></p>"); }
+	puts_(b, "<div class=c><h2>Boot loader</h2><p class=t>The first program the board runs from its storage. nocryboot is an open one that goes to the other "
+		 "firmware slot when one cannot be started, and into USB boot mode by itself when nothing can. The factory loader is kept on the board when it is replaced.</p>");
+	pre(b, lo);
+	if (s1 == 0) puts_(b, "<form method=post action=/boot/loader><input type=hidden name=what value=install><button class=q>Install nocryboot</button></form>"
+			      "<form method=post action=/boot/loader><input type=hidden name=what value=factory><button class=q>Put the factory loader back</button></form>");
+	puts_(b, "</div><div class=c><h2>Boot logo</h2><p class=t>What the screen shows for the first seconds after power-on.</p>");
+	pre(b, lg);
+	if (s2 == 0) puts_(b, "<form method=post action=/boot/logo><input type=hidden name=what value=nocry><button class=q>Use the nocry logo</button></form>"
+			      "<form method=post action=/boot/logo><input type=hidden name=what value=firmware><button class=q>Use the firmware's logo</button></form>");
+	puts_(b, "</div>"); back(b);
+	free(lo); free(lg);
 }
 
 static void page_wifi(struct buf *b, const char *error, const char *keep_ssid)
@@ -619,6 +713,46 @@ static int upload(char *headers, char *body, size_t blen, char **data, size_t *l
 		}
 		p = end + dl;
 	}
+	return 0;
+}
+
+#define FW_MAX (700ull << 20)
+
+/* A firmware file from the browser, straight into the file `path` (it is far too large for
+ * memory). `have` bytes of the body are already in `body`; the rest comes from the socket.
+ * The form has one field, the file, so everything after its headers up to the closing line is
+ * the file. Returns 0 and the file's name on success. */
+static int upload_to_file(int s, char *headers, char *body, size_t have, size_t clen, const char *path, char *name, size_t namemax)
+{
+	char *ct = strcasestr(headers, "\nContent-Type: multipart/form-data"), *bd, tail[160], *hend, *fn, *e, buf[65536];
+	size_t tl, left; int fd; ssize_t k; off_t size; struct timeval tv = { 60, 0 };
+	if (!ct || !(bd = strstr(ct, "boundary="))) return -1;
+	bd += 9; if (*bd == '"') bd++;
+	tl = snprintf(tail, sizeof tail, "\r\n--%.*s--\r\n", (int)strcspn(bd, "\"\r\n;"), bd);
+	body[have] = 0;
+	hend = strstr(body, "\r\n\r\n");		/* the part's own headers fit in what was read with the request */
+	if (!hend || !(fn = strstr(body, "filename=\"")) || fn > hend) return -1;
+	fn += 10; e = strchr(fn, '"'); if (!e || e > hend) return -1;
+	*e = 0;
+	if (strrchr(fn, '/')) fn = strrchr(fn, '/') + 1;
+	if (strrchr(fn, '\\')) fn = strrchr(fn, '\\') + 1;
+	if (!fn[0]) return -1;
+	snprintf(name, namemax, "%s", fn);
+	hend += 4;
+	fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);	/* read back at the end to check the closing line */
+	if (fd < 0) return -1;
+	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+	left = clen - have;
+	if (write(fd, hend, have - (hend - body)) < 0) { close(fd); return -1; }
+	while (left) {
+		k = read(s, buf, left < sizeof buf ? left : sizeof buf);
+		if (k <= 0 || write(fd, buf, k) != k) { close(fd); unlink(path); return -1; }
+		left -= k;
+	}
+	/* cut the closing line off the end, after checking that it is there */
+	size = lseek(fd, 0, SEEK_END);
+	if (size < (off_t)tl || pread(fd, buf, tl, size - tl) != (ssize_t)tl || memcmp(buf, tail, tl) || ftruncate(fd, size - tl)) { close(fd); unlink(path); return -1; }
+	fsync(fd); close(fd);
 	return 0;
 }
 
@@ -756,6 +890,84 @@ static void serve(int s)
 			else { page_home(&b, out && *out ? out : "The reset could not be started.", 0); reply(s, "200 OK", NULL, &b); }
 			free(out);
 		}
+	} else if (is(req, "GET /install")) {
+		page_install(&b, NULL, 0);
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /install/fetch")) {
+		char *bar, *out;
+		form(body, "fw", v1, sizeof v1); form(body, "mode", v2, sizeof v2);
+		bar = strchr(v1, '|');
+		if (!bar || (strcmp(v2, "keep") && strcmp(v2, "slot"))) { redirect(s, "/install"); free(b.p); return; }
+		*bar++ = 0;
+		{ /* doer takes at most three arguments through run(): key, version and mode travel as "fw-fetch" KEY VERSION, mode by a fourth */
+		  int fd[2], stt = -1; pid_t pid; char *o = calloc(1, 513); size_t n = 0; ssize_t k2;
+		  if (o && !pipe(fd)) {
+			pid = fork();
+			if (pid == 0) { dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]); execl(doer, doer, "fw-fetch", v1, bar, v2, (char *)NULL); _exit(127); }
+			close(fd[1]);
+			while (pid > 0 && n < 512 && (k2 = read(fd[0], o + n, 512 - n)) > 0) n += k2;
+			close(fd[0]);
+			if (pid > 0) { waitpid(pid, &stt, 0); stt = WIFEXITED(stt) ? WEXITSTATUS(stt) : -1; }
+		  }
+		  out = o; st = stt; }
+		if (st == 0) redirect(s, "/install");
+		else { page_install(&b, out && *out ? out : "The download could not be started.", 0); reply(s, "200 OK", NULL, &b); }
+		free(out);
+	} else if (is(req, "POST /install/refresh")) {
+		char *out = run(doer, "fw-list", "refresh", NULL, 512, &st);
+		page_install(&b, st == 0 ? "The list is up to date." : "The list could not be updated (is the board on a network with internet?). The list it came with is still shown.", st == 0);
+		free(out);
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /install/upload")) {
+		char name[160], *out, *pth;
+		form(query, "mode", v2, sizeof v2);
+		if (strcmp(v2, "keep") && strcmp(v2, "slot")) snprintf(v2, sizeof v2, "keep");
+		if (clen > FW_MAX) page_install(&b, "That file is larger than 700 MB.", 0);
+		else {
+			pth = run(doer, "fw-upload-path", NULL, NULL, 512, &st);
+			if (st != 0) page_install(&b, pth && *pth ? pth : "There is nowhere to put the file.", 0);
+			else if (upload_to_file(s, req, body, n - (body - req), clen, pth, name, sizeof name)) {
+				free(run(doer, "fw-discard", NULL, NULL, 64, NULL));
+				page_install(&b, "The upload did not arrive completely. Choose the file and try again.", 0);
+			} else {
+				out = run(doer, "fw-check", name, v2, 512, &st);
+				if (st == 0) { free(out); free(pth); redirect(s, "/install"); free(b.p); return; }
+				page_install(&b, out && *out ? out : "The file could not be checked.", 0);
+				free(out);
+			}
+			free(pth);
+		}
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /install/go")) {
+		char *job = run(doer, "fw-install", NULL, NULL, 512, &st);
+		if (st == 0) redirect(s, "/install");
+		else { page_install(&b, job && *job ? job : "The installation could not be started.", 0); reply(s, "200 OK", NULL, &b); }
+		free(job);
+	} else if (is(req, "POST /install/discard")) {
+		free(run(doer, "fw-discard", NULL, NULL, 64, NULL));
+		redirect(s, "/install");
+	} else if (is(req, "GET /boot")) {
+		page_boot(&b, NULL, 0);
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /boot/loader") || is(req, "POST /boot/logo")) {
+		int loader = is(req, "POST /boot/loader"); const char *verb = loader ? "loader" : "logo";
+		form(body, "what", v1, sizeof v1); form(body, "yes", yes, sizeof yes);
+		if (loader ? (strcmp(v1, "install") && strcmp(v1, "factory")) : (strcmp(v1, "nocry") && strcmp(v1, "firmware"))) { redirect(s, "/boot"); free(b.p); return; }
+		if (!yes[0]) {
+			page_confirm(&b, loader ? (v1[0] == 'i' ? "Install the nocryboot boot loader?" : "Put the factory boot loader back?")
+						: (v1[0] == 'n' ? "Use the nocry boot logo?" : "Use the firmware's boot logo?"),
+				     loader ? "The boot loader is the first program the board runs. If this goes wrong the board does not start by itself, and the way back is USB boot mode: "
+					      "hold BOOT, tap RESET, and use nocry on a computer. The loader that is replaced is kept on the board. It takes a few seconds; do not switch the board off."
+					    : "The few seconds of screen after power-on change; nothing else does. The logo that is replaced is kept on the board.",
+				     loader ? "/boot/loader" : "/boot/logo", "what", v1, loader ? "Change the boot loader" : "Change the boot logo", loader);
+		} else {
+			char *out = run(doer, verb, v1, NULL, 4096, &st);
+			page_boot(&b, out && *out ? out : (st == 0 ? "Done." : "It could not be done."), st == 0);
+			free(out);
+		}
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "GET /dl/backup")) {
+		stream(s, "nocry-backup.img.gz", "application/gzip", doer, "bundle", "backup");
 	} else if (is(req, "GET /repair")) {
 		page_repair(&b);
 		reply(s, "200 OK", NULL, &b);

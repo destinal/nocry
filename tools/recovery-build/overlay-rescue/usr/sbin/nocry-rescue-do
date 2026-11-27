@@ -16,6 +16,15 @@
 #   nocry-rescue-do bundle logs|config|identity   a download, to standard output (tar.gz; identity: the raw record)
 #   nocry-rescue-do wifi-save       write the Wi-Fi network the board is on into the installed firmware's settings
 #   nocry-rescue-do restart         leave the rescue system: restart the board normally
+#   nocry-rescue-do fw-list [refresh]   firmware that can be installed here: key, name, version, date, bytes, file (tabs)
+#   nocry-rescue-do fw-fetch KEY VERSION SLOT|KEEP   download it and work out what installing would do   (a job)
+#   nocry-rescue-do fw-upload-path  where the page stores an uploaded firmware file (starts an install session)
+#   nocry-rescue-do fw-check NAME SLOT|KEEP        the same for an uploaded file                         (a job)
+#   nocry-rescue-do fw-report       what the check found (key=value lines), or nothing
+#   nocry-rescue-do fw-install      install what was checked                                              (a job)
+#   nocry-rescue-do fw-discard      forget it and remove the downloaded file
+#   nocry-rescue-do loader [install|factory]   the boot loader: say what is there, or change it
+#   nocry-rescue-do logo [nocry|firmware]      the boot logo: say what is there, or change it
 #   nocry-rescue-do job             the running or last job: state=, what=, done=, total=, message=
 #   nocry-rescue-do cancel          ask the running job to stop at its next safe point
 #
@@ -141,7 +150,9 @@ do_reset() {    # do_reset mods|all
 
 # --- the data partition (userdata, "/usr/data" in the firmware), mounted only while it is used
 DATA=$RUN/nocry-files
+SESSION=$RUN/nocry-install        # exists while a firmware file is held for installing: data stays mounted
 data_on() {     # data_on ro|rw
+    if [ -d $SESSION ]; then grep -q " $DATA " /proc/mounts && return 0; fi
     [ -d $LOCK ] && { echo "another operation is still running" >&2; return 1; }
     p=$(part userdata) || { echo "this board has no data partition" >&2; return 1; }
     mkdir -p $DATA
@@ -150,7 +161,7 @@ data_on() {     # data_on ro|rw
     else mount -t ext4 -o ro,noload "$p" $DATA 2>/dev/null; fi || {
         echo "the data partition has no readable file system (blank after a reset, or damaged: try the file system check)" >&2; return 1; }
 }
-data_off() { sync; umount $DATA 2>/dev/null; }
+data_off() { sync; [ -d $SESSION ] && return 0; umount $DATA 2>/dev/null; }
 # a path inside the data partition; nothing that climbs out of it
 inside() {
     case "/$1/" in */../*|*/./*) echo "bad path" >&2; return 1 ;; esac
@@ -190,6 +201,7 @@ health() {
 bundle() {
     case "$1" in
       identity) p=$(part sn_mac) || exit 1; dd if="$p" bs=512 count=1 2>/dev/null; return ;;
+      backup) gzip -1 -c "$DISK"; return ;;       # the whole storage; unpack it and restore it with nocry on a computer
       logs)   want="printer_data/logs nebulaos/printer_data/logs nebulaos/system creality/userdata/log" ;;
       config) want="printer_data/config nebulaos/printer_data/config nebulaos/nebulascreen nebulascreen creality/userdata/config" ;;
       *) echo "usage: nocry-rescue-do bundle logs|config|identity" >&2; exit 2 ;;
@@ -226,11 +238,164 @@ wifi_save() {
     exit $rc
 }
 
+# The board has no clock that keeps time, and a download over https checks the server's
+# certificate against the date. Set it once from the network (it is only ever used for that).
+clock() {
+    [ "$(date +%Y)" -ge 2025 ] && return 0
+    # the Date line of any web server's answer is close enough (plain http: no certificate needed yet)
+    d=$(wget -q -S -T 8 -O /dev/null http://github.com/ 2>&1 | sed -n 's/^ *[Dd]ate: *[A-Za-z]*, *//p' | head -1 | tr -d '\r')
+    set -- $d       # 27 Nov 2026 10:11:12 GMT
+    case "$2" in Jan) m=01 ;; Feb) m=02 ;; Mar) m=03 ;; Apr) m=04 ;; May) m=05 ;; Jun) m=06 ;; Jul) m=07 ;; Aug) m=08 ;; Sep) m=09 ;; Oct) m=10 ;; Nov) m=11 ;; Dec) m=12 ;; *) return 1 ;; esac
+    date -u -s "$3-$m-$1 $4" >/dev/null 2>&1
+    [ "$(date +%Y)" -ge 2025 ]
+}
+
+# --- nocry itself on the board: the same program and checks as on a computer --------------
+# It works on the board's own storage, unpacks into files instead of memory (the staging
+# folder) and keeps its downloads on the data partition, which has the room.
+WORKDIR=$DATA/.nocry-rescue
+nocry_env() {
+    export NOCRY_BOARD_DISK=$DISK NOCRY_IMAGES=/usr/share/nocry/images
+    export XDG_DATA_HOME=$WORKDIR/data NOCRY_STAGE_DIR=$WORKDIR/stage HOME=$WORKDIR
+}
+# start an install session: the data partition mounted read-write with room to work in
+session_on() {
+    [ -x /usr/sbin/nocry ] || { echo "this rescue system has no installer (nocry is missing from it)" >&2; return 1; }
+    if [ ! -d $SESSION ]; then
+        p=$(part userdata) || { echo "this board has no data partition" >&2; return 1; }
+        mkdir -p $DATA; grep -q " $DATA " /proc/mounts && umount $DATA 2>/dev/null
+        made=
+        if [ "$(dd if="$p" bs=1 skip=1080 count=2 2>/dev/null | hexdump -v -e '/1 "%02x"')" != 53ef ]; then
+            # blank (after a reset): a file system of our own to work in, removed again afterwards
+            # so the firmware finds the partition blank and makes its own
+            mke2fs -F -q -t ext4 "$p" >/dev/null 2>&1 || { echo "the data partition is blank and no file system could be made on it" >&2; return 1; }
+            made=1
+        fi
+        mount -t ext4 -o rw "$p" $DATA 2>/dev/null || { echo "the data partition cannot be mounted (damaged? try the file system check)" >&2; return 1; }
+        mkdir -p $SESSION; [ -n "$made" ] && : > $SESSION/made-fs
+    fi
+    rm -rf $WORKDIR/stage; mkdir -p $WORKDIR/stage $WORKDIR/data
+    nocry_env
+}
+session_off() {
+    rm -rf $WORKDIR
+    sync; grep -q " $DATA " /proc/mounts && umount $DATA 2>/dev/null
+    if [ -e $SESSION/made-fs ]; then ok "nocry-zero:userdata:0:100000" >/dev/null; fi      # back to blank
+    rm -rf $SESSION
+}
+
+# Runs nocry with the job's progress taken from what it prints; stops it politely on Cancel.
+# nocry_job LOGFILE ARGS...
+nocry_job() {
+    log=$1; shift
+    /usr/sbin/nocry "$@" > "$log" 2>&1 &
+    np=$!
+    while kill -0 $np 2>/dev/null; do
+        [ -e $STOP ] && kill -TERM $np 2>/dev/null
+        last=$(tr '\r' '\n' < "$log" | tail -1 | sed 's/^ *//; s/ *$//')
+        # "<what>:  12/110 MiB ..." or "... 12.0 MB of 110.0 MB"
+        set -- $(echo "$last" | sed -n 's/.* \([0-9][0-9]*\)\/\([0-9][0-9]*\) MiB.*/\1 \2/p')
+        if [ -n "$2" ]; then DONE=$(( $1 << 20 )); TOTAL=$(( $2 << 20 )); fi
+        job_state running "$what" "$DONE" "$TOTAL" "$(echo "$last" | cut -c1-90)"
+        sleep 1
+    done
+    wait $np
+}
+last_line() { tr '\r' '\n' < "$1" | grep -v '^ *$' | tail -1 | sed 's/^ *//; s/^Error: //' | cut -c1-300; }
+
+# download (or take the uploaded file), then work out what installing it would do
+do_fw_fetch() {     # do_fw_fetch list KEY VERSION MODE | do_fw_fetch file NAME MODE
+    TOTAL=1; DONE=0
+    if [ "$1" = list ]; then
+        mode=$4
+        nocry_job $RUN/nocry-fetch.log fetch "$2" "$3" || { MSG=$(last_line $RUN/nocry-fetch.log); return 1; }
+        file=$(tail -1 $RUN/nocry-fetch.log)
+    else
+        mode=$3; file=$WORKDIR/$2
+    fi
+    [ -f "$file" ] || { MSG="the firmware file is not there"; return 1; }
+    echo "$file" > $SESSION/file; echo "$mode" > $SESSION/mode; rm -f $SESSION/report
+    if [ "$mode" = slot ]; then set -- --other-slot; else set --; fi
+    what="Checking the firmware"
+    nocry_job $RUN/nocry-plan.log install "$file" --report "$@" || { MSG=$(last_line $RUN/nocry-plan.log); rm -f "$file"; return 1; }
+    # the serial number and network address stay off the pages
+    grep '^[a-z_]*=' $RUN/nocry-plan.log | grep -v '^note=sn_mac' > $SESSION/report
+    MSG="checked; nothing was written yet"
+}
+
+do_fw_install() {
+    file=$(cat $SESSION/file 2>/dev/null); mode=$(cat $SESSION/mode 2>/dev/null)
+    [ -f "$file" ] || { MSG="there is no checked firmware to install"; return 1; }
+    if [ "$mode" = slot ]; then set -- --other-slot; else set --; fi
+    TOTAL=$(sed -n 's/^to_write=//p' $SESSION/report); TOTAL=${TOTAL:-1}; DONE=0
+    nocry_job $RUN/nocry-install.log install "$file" --yes "$@" || { MSG=$(last_line $RUN/nocry-install.log); return 1; }
+    MSG=$(last_line $RUN/nocry-install.log)
+    session_off
+}
+
 case "$1" in
   status) status ;;
   health) health ;;
+  fw-list)
+    # the list lives in memory between requests; "refresh" asks the internet for the current one
+    export XDG_DATA_HOME=$RUN/nocry-list HOME=$RUN/nocry-list; mkdir -p $XDG_DATA_HOME
+    [ -x /usr/sbin/nocry ] || exit 1
+    if [ "$2" = refresh ]; then clock; /usr/sbin/nocry catalog --refresh >/dev/null 2>$RUN/nocry-list.err || { tail -1 $RUN/nocry-list.err | sed 's/^Error: //' >&2; exit 1; }; fi
+    # for this board: its own printer type, and NebulaOS where that is made for it
+    model=$(status | sed -n 's/^model=//p')
+    case "$model" in "Nebula Pad") key=NEBULA ;; *) key=$model ;; esac
+    /usr/sbin/nocry catalog --tsv 2>/dev/null | awk -F '\t' -v k="$key" '$1 == k || ($1 == "NEBULAOS" && (k == "F005" || k == "NEBULA"))' ;;
+  fw-fetch)
+    case "$4" in keep|slot) ;; *) echo "usage: nocry-rescue-do fw-fetch KEY VERSION keep|slot" >&2; exit 2 ;; esac
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; exit 1; }
+    session_on || exit 1
+    mkdir -p $WORKDIR/data/nocry; cp $RUN/nocry-list/nocry/catalog.json $WORKDIR/data/nocry/ 2>/dev/null   # the list the page showed
+    clock
+    RISK="Only a download and a check so far: nothing on the board has been changed."
+    run_job "Downloading the firmware" do_fw_fetch list "$2" "$3" "$4" ;;
+  fw-upload-path)
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; exit 1; }
+    session_on || exit 1
+    echo "$WORKDIR/upload.bin" ;;
+  fw-check)
+    case "$3" in keep|slot) ;; *) echo "usage: nocry-rescue-do fw-check NAME keep|slot" >&2; exit 2 ;; esac
+    [ -d $SESSION ] || { echo "no upload is waiting" >&2; exit 1; }
+    nocry_env
+    # nocry tells the kinds of firmware file apart by their contents, and one kind by its name
+    n=$(echo "$2" | tr -cd 'A-Za-z0-9._-'); [ -n "$n" ] || n=firmware.img
+    mv $WORKDIR/upload.bin "$WORKDIR/$n" 2>/dev/null || { echo "the upload is not there" >&2; exit 1; }
+    RISK="Only a check so far: nothing on the board has been changed."
+    run_job "Checking the firmware" do_fw_fetch file "$n" "$3" ;;
+  fw-report) cat $SESSION/report 2>/dev/null; [ -f $SESSION/mode ] && echo "mode=$(cat $SESSION/mode)" ;;
+  fw-install)
+    [ -s $SESSION/report ] || { echo "there is no checked firmware to install" >&2; exit 1; }
+    nocry_env
+    if [ "$(cat $SESSION/mode)" = slot ]; then
+        RISK="The slot being installed is left incomplete and cannot be started until the installation is run again. The board keeps starting the firmware it starts now."
+    else
+        RISK="The firmware on the board is being replaced and is incomplete right now. If you stop, the board will not start until the installation is run again to the end. The rescue system can always do that."
+    fi
+    run_job "Installing the firmware" do_fw_install ;;
+  fw-discard)
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; exit 1; }
+    [ -d $SESSION ] && session_off ;;
+  loader|logo)
+    [ -x /usr/sbin/nocry ] || { echo "this rescue system has no installer (nocry is missing from it)" >&2; exit 1; }
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; exit 1; }
+    export NOCRY_BOARD_DISK=$DISK NOCRY_IMAGES=/usr/share/nocry/images HOME=$RUN/nocry-list XDG_DATA_HOME=$RUN/nocry-list
+    mkdir -p $HOME
+    case "$1 $2" in
+      "loader ") /usr/sbin/nocry loader 2>&1 ;;
+      "loader install") /usr/sbin/nocry loader --install --yes 2>&1 ;;
+      "loader factory") /usr/sbin/nocry loader --factory --yes 2>&1 ;;
+      "logo ") /usr/sbin/nocry logo 2>&1 ;;
+      "logo nocry") /usr/sbin/nocry logo --nocry --yes 2>&1 ;;
+      "logo firmware") /usr/sbin/nocry logo --firmware --yes 2>&1 ;;
+      *) echo "usage: nocry-rescue-do loader [install|factory] | logo [nocry|firmware]" >&2; exit 2 ;;
+    esac ;;
   check)
     case "$2" in data) n=userdata; t="the data file system" ;; settings) n=rootfs_data; t="the settings file system" ;; *) echo "usage: nocry-rescue-do check data|settings" >&2; exit 2 ;; esac
+    [ -d $SESSION ] && session_off      # a firmware file held for installing: let it go, the partition must be free
     grep -q " $DATA " /proc/mounts && umount $DATA 2>/dev/null
     RISK="A repair that is cut short can leave the file system worse than before. Let it finish."
     run_job "Checking $t" do_check $n ;;
@@ -266,6 +431,8 @@ case "$1" in
     RISK="Slot $o is left with an incomplete copy and cannot be started until the copy is run again."
     run_job "Copying slot $(echo "$2" | tr ab AB) to slot $o" do_copy "$2" ;;
   reset)
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; exit 1; }
+    [ -d $SESSION ] && session_off      # the data partition must not be mounted while it is erased
     case "$2" in
       mods) RISK="The settings overlay is left partly erased. The printer may not start properly until this is run to the end."
             run_job "Removing system modifications" do_reset mods ;;
