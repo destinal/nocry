@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+<!--
+  nocry rescue: the web application (docs/nocry-rescue.md). SPDX-License-Identifier: GPL-2.0-or-later
+  One file, nothing fetched from elsewhere: the board may be the only thing on the network.
+  It does no work itself. /api/state says what is going on (asked about once a second),
+  /api/get reads lists, /api/do starts the same commands the touch screen starts.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>nocry rescue</title>
+<style>
+:root{
+  --bg:#f3f4f7;--panel:#fff;--panel2:#f7f8fa;--line:#dfe2e8;--text:#14171c;--dim:#5d6572;
+  --accent:#1667d9;--accent-t:#fff;--danger:#c0312b;--ok:#1f8a4c;--warn:#b26a00;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 4px 14px rgba(16,24,40,.06);--r:12px;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0e1116;--panel:#171b22;--panel2:#1d222b;--line:#2a313c;--text:#e8ebf0;--dim:#98a2b1;
+  --accent:#4c93ff;--accent-t:#06101f;--danger:#ef5b52;--ok:#3fbf75;--warn:#e5a23c;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.25);
+}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);-webkit-text-size-adjust:100%}
+h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em}
+h2{font-size:1.05rem}h3{font-size:.95rem}
+p{margin:.4em 0}
+a{color:var(--accent)}
+.app{display:grid;grid-template-columns:232px 1fr;min-height:100%}
+nav{background:var(--panel);border-right:1px solid var(--line);padding:14px 10px;position:sticky;top:0;height:100vh;overflow:auto}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 16px;font-weight:700;font-size:1.05rem}
+.brand i{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#7a5cff);display:grid;place-items:center;color:#fff;font-style:normal;font-size:.8rem}
+nav a{display:flex;align-items:center;gap:11px;padding:9px 11px;margin:2px 0;border-radius:9px;color:var(--text);text-decoration:none;font-weight:520}
+nav a svg{width:19px;height:19px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;opacity:.8}
+nav a:hover{background:var(--panel2)}
+nav a.on{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+nav .sep{height:1px;background:var(--line);margin:10px 8px}
+main{padding:22px clamp(14px,3vw,34px) 60px;max-width:1040px;width:100%}
+.top,.shade{display:none}
+.head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:2px 0 16px}
+.head h1{font-size:1.45rem}.head span{color:var(--dim)}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--shadow);min-width:0}
+.card.wide{grid-column:1/-1}
+.card>h2{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.dim{color:var(--dim)}.small{font-size:.86rem}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:.3em 0}
+.kv dt{color:var(--dim)}.kv dd{margin:0;overflow-wrap:anywhere}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+button,.btn{font:inherit;font-weight:600;border:1px solid transparent;border-radius:9px;padding:8px 14px;background:var(--accent);color:var(--accent-t);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:7px;min-height:38px}
+button:hover,.btn:hover{filter:brightness(1.07)}
+button:disabled{opacity:.45;cursor:not-allowed;filter:none}
+button.sec,.btn.sec{background:var(--panel2);color:var(--text);border-color:var(--line)}
+button.danger{background:var(--danger);color:#fff}
+button.ghost{background:transparent;color:var(--accent);padding:6px 8px;min-height:0}
+.badge{display:inline-block;font-size:.74rem;font-weight:650;padding:2px 8px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--dim);vertical-align:middle}
+.badge.ok{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok);border-color:transparent}
+.badge.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn);border-color:transparent}
+.badge.on{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-color:transparent}
+.list{margin:6px -8px 0;padding:0;list-style:none}
+.list li{display:flex;align-items:center;gap:12px;padding:10px 8px;border-radius:9px;border-top:1px solid var(--line)}
+.list li:first-child{border-top:0}
+.list li.tap{cursor:pointer}.list li.tap:hover{background:var(--panel2)}
+.list .t{flex:1;min-width:0}.list .t b{display:block;font-weight:600;overflow-wrap:anywhere}.list .t span{color:var(--dim);font-size:.86rem}
+input[type=text],input[type=password],select{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}
+input:focus,select:focus{outline:2px solid color-mix(in srgb,var(--accent) 50%,transparent);outline-offset:1px}
+label{display:block;font-weight:600;font-size:.88rem;margin:10px 0 4px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.seg{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px;flex-wrap:wrap}
+.seg button{background:transparent;color:var(--text);min-height:32px;padding:5px 12px;border-radius:7px}
+.seg button.on{background:var(--panel);box-shadow:var(--shadow);color:var(--accent)}
+.note{padding:10px 12px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);margin:10px 0}
+.note.err{border-color:color-mix(in srgb,var(--danger) 50%,transparent);background:color-mix(in srgb,var(--danger) 10%,transparent)}
+.note.good{border-color:color-mix(in srgb,var(--ok) 45%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.bar{height:10px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;margin:8px 0}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#7a5cff);border-radius:99px;transition:width .6s}
+#job{position:sticky;top:10px;z-index:5;margin-bottom:14px;display:none}
+#job.show{display:block}
+.sw{position:relative;width:46px;height:27px;flex:none;border-radius:99px;background:var(--line);border:0;padding:0;min-height:0;transition:background .15s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s}
+.sw.on{background:var(--ok)}.sw.on::after{left:22px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin:8px 0}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);padding:1px 5px;border-radius:5px}
+.back{position:fixed;inset:0;background:rgba(8,12,20,.55);display:grid;place-items:center;padding:16px;z-index:20}
+.dlg{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.35);padding:20px 22px;max-width:480px;width:100%;max-height:92vh;overflow:auto}
+.dlg h2{margin-bottom:6px}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:9px 16px;border-radius:99px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30;max-width:90vw}
+#toast.show{opacity:1}
+.spin{width:18px;height:18px;border:2.5px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;display:inline-block;vertical-align:-4px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:860px){
+  .app{grid-template-columns:1fr}
+  .top{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;background:var(--panel);border-bottom:1px solid var(--line);padding:10px 14px}
+  .top b{flex:1;font-size:1.05rem}
+  .top button{background:var(--panel2);color:var(--text);border-color:var(--line);padding:6px 10px}
+  nav{position:fixed;inset:0 auto 0 0;width:264px;z-index:15;transform:translateX(-105%);transition:transform .2s;height:auto;box-shadow:0 0 40px rgba(0,0,0,.3)}
+  nav.open{transform:none}
+  .shade{position:fixed;inset:0;background:rgba(8,12,20,.45);z-index:14;display:none}.shade.open{display:block}
+  main{padding:16px 14px 70px}
+  .head h1{font-size:1.25rem}
+  .two{grid-template-columns:1fr}
+  #job{top:58px}
+}
+</style>
+<div class="app">
+  <nav id="nav"></nav><div class="shade" id="shade"></div>
+  <div>
+    <div class="top"><button id="menu" aria-label="Menu">&#9776;</button><b>nocry rescue</b><span class="badge" id="topnet"></span></div>
+    <main><div id="job" class="card"></div><div id="view"></div></main>
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+"use strict";
+/* ---- small helpers ------------------------------------------------------------------------ */
+const $ = (s, e) => (e || document).querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const kv = t => { const o = {}; (t || "").split("\n").forEach(l => { const i = l.indexOf("="); if (i > 0) o[l.slice(0, i)] = l.slice(i + 1); }); return o; };
+const rows = t => (t || "").split("\n").filter(l => l.length).map(l => l.split("\t"));
+const size = b => { b = Number(b) || 0; return b >= 2**30 ? (b / 2**30).toFixed(1) + " GiB" : b >= 10 * 2**20 ? Math.round(b / 2**20) + " MiB" : b >= 2**20 ? (b / 2**20).toFixed(1) + " MiB" : Math.round(b / 1024) + " KiB"; };
+const base = p => p.split("/").pop();
+let toastT;
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3200); }
+async function reply(r) { const t = await r.text(); const m = /^rc=(-?\d+)\n?/.exec(t); return { rc: m ? Number(m[1]) : (r.ok ? 0 : 1), text: m ? t.slice(m[0].length) : t }; }
+const get = (what, p) => fetch("/api/get?what=" + encodeURIComponent(what) + (p != null ? "&p=" + encodeURIComponent(p) : ""), { cache: "no-store" }).then(reply);
+function act(verb, ...a) {
+  const f = new URLSearchParams({ verb }); a.forEach((v, i) => f.set("a" + (i + 1), v == null ? "" : v));
+  return fetch("/api/do", { method: "POST", body: f }).then(reply);
+}
+/* a question, a form or a message over everything; resolves with the pressed button's value */
+function dialog(html, wire) {
+  return new Promise(done => {
+    const b = document.createElement("div"); b.className = "back";
+    b.innerHTML = '<div class="dlg">' + html + "</div>";
+    const close = v => { b.remove(); done(v); };
+    b.addEventListener("click", e => { if (e.target === b) close(null); const v = e.target.closest("[data-v]"); if (v) close(v.dataset.v === "" ? null : v.dataset.v); });
+    document.body.append(b);
+    if (wire) wire(b, close);
+    const f = $("input,select", b); if (f) f.focus();
+  });
+}
+const confirmBox = (title, text, go, danger) => dialog(`<h2>${esc(title)}</h2><p>${text}</p><div class="row" style="justify-content:flex-end"><button class="sec" data-v="">Cancel</button><button class="${danger ? "danger" : ""}" data-v="y">${esc(go)}</button></div>`);
+const info = (title, text) => dialog(`<h2>${esc(title)}</h2><p>${text}</p><div class="row" style="justify-content:flex-end"><button data-v="">OK</button></div>`);
+/* an action that answers at once: say what went wrong, or what was done */
+async function run(verb, args, okMsg) {
+  const r = await act(verb, ...(args || []));
+  if (r.rc) { await info("That did not work", esc(r.text || "The board did not say why.")); return false; }
+  if (okMsg) toast(okMsg);
+  poll();
+  return true;
+}
+
+/* ---- what is going on, asked about once a second ------------------------------------------ */
+const S = { wifi: {}, job: {}, usb: {}, remote: {}, set: {} };
+let alive = true, current = null, jobSeen = sessionStorage.jobSeen || "";
+const eta = { n: [], total: -1 };
+async function poll() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    if (r.redirected || !(r.headers.get("content-type") || "").startsWith("text/plain")) { location.reload(); return; }   /* the session ended */
+    const t = await r.text(), n = { wifi: {}, job: {}, usb: {}, remote: {}, set: {} };
+    t.split("\n").forEach(l => { const d = l.indexOf("."), e = l.indexOf("="); if (d > 0 && e > d && n[l.slice(0, d)]) n[l.slice(0, d)][l.slice(d + 1, e)] = l.slice(e + 1); });
+    Object.assign(S, n); alive = true;
+  } catch (e) { alive = false; }
+  drawJob(); drawTop();
+  if (current && views[current].live) views[current].live();
+}
+function drawTop() {
+  const w = S.wifi, el = $("#topnet");
+  el.className = "badge " + (alive ? (w.mode === "client" ? "ok" : w.mode === "ap" ? "on" : "") : "warn");
+  el.textContent = !alive ? "no answer" : w.mode === "client" ? w.ssid : w.mode === "ap" ? "access point" : w.mode === "joining" ? "joining…" : w.mode || "";
+}
+function drawJob() {
+  const j = S.job, el = $("#job");
+  const sig = [j.state, j.what, j.message].join("|");
+  if (!j.state || j.state === "none" || (j.state !== "running" && sig === jobSeen)) { el.classList.remove("show"); return; }
+  const done = Number(j.done) || 0, total = Number(j.total) || 0, running = j.state === "running";
+  let speed = "";
+  if (running && total > 1) {
+    if (total !== eta.total || (eta.n.length && done < eta.n[eta.n.length - 1][1])) { eta.n = []; eta.total = total; }
+    eta.n.push([Date.now(), done]); if (eta.n.length > 20) eta.n.shift();
+    const a = eta.n[0], dt = (Date.now() - a[0]) / 1000;
+    if (eta.n.length > 3 && dt > 3 && done > a[1]) {
+      const rate = (done - a[1]) / dt, left = (total - done) / rate;
+      speed = (rate / 2**20).toFixed(1) + " MiB/s, " + (left < 50 ? "under a minute left" : left < 5400 ? "about " + Math.round(left / 60) + " min left" : "about " + Math.floor(left / 3600) + " h " + Math.floor(left / 60) % 60 + " min left");
+    }
+  }
+  const head = running ? `<span class="spin"></span> ${esc(j.what)}` : `${esc(j.what)} <span class="badge ${j.state === "done" ? "ok" : "warn"}">${j.state === "done" ? "completed" : esc(j.state)}</span>`;
+  el.innerHTML = `<h2>${head}</h2>` +
+    (total > 1 ? `<div class="bar"><i style="width:${running ? Math.min(100, done * 100 / total) : j.state === "done" ? 100 : done * 100 / total}%"></i></div>` : "") +
+    `<div class="dim small">${total > 1 && running ? size(done) + " of " + size(total) + " · " : ""}${esc(j.message || "")}${speed ? " · " + speed : ""}</div>` +
+    (!running && j.state !== "done" && j.risk ? `<div class="note err small">${esc(j.risk)}</div>` : "") +
+    `<div class="row">${running ? (j.stoppable === "no" ? '<span class="dim small">This step cannot be interrupted.</span>' : '<button class="sec" id="jcancel">Cancel job</button>') : '<button class="sec" id="jok">OK</button>'}</div>`;
+  el.classList.add("show");
+  const c = $("#jcancel"), o = $("#jok");
+  if (c) c.onclick = async () => { if (await confirmBox("Cancel this job?", esc(j.risk || "It stops at the next safe point."), "Cancel job", true)) run("cancel", [], "Cancelling at the next safe point"); };
+  if (o) o.onclick = () => { jobSeen = sessionStorage.jobSeen = sig; drawJob(); show(current); };
+}
+const busyJob = () => S.job.state === "running";
+
+/* ---- the views ----------------------------------------------------------------------------- */
+const ICON = {
+  home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>', wifi: '<path d="M2 9a15 15 0 0120 0"/><path d="M5.5 12.5a10 10 0 0113 0"/><path d="M9 16a5 5 0 016 0"/><circle cx="12" cy="19" r="1"/>',
+  slots: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/>', install: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/>',
+  usb: '<path d="M12 21V6"/><path d="M9 6l3-3 3 3"/><path d="M12 14l-4-2V9"/><path d="M12 17l4-2v-3"/>', files: '<path d="M3 6h7l2 2h9v11H3z"/>',
+  repair: '<path d="M14 6a4 4 0 00-5 5l-6 6 3 3 6-6a4 4 0 005-5l-3 3-2-2z"/>', boot: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  remote: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 010 18"/><path d="M12 3a14 14 0 000 18"/>', system: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r=".6"/>',
+};
+const NAV = [["home", "Overview"], ["wifi", "Wi-Fi"], ["slots", "Slots"], ["install", "Install firmware"], ["usb", "USB drive"], ["files", "Files"], null, ["repair", "Repair"], ["boot", "Boot loader & logo"], ["remote", "Remote access"], ["system", "System"]];
+const views = {};
+const view = () => $("#view");
+const head = (t, s) => `<div class="head"><h1>${esc(t)}</h1>${s ? `<span>${esc(s)}</span>` : ""}</div>`;
+const loading = '<p class="dim"><span class="spin"></span> Reading the board…</p>';
+let board = null;                                   /* nocry-rescue-do status, read when needed */
+async function loadBoard(force) { if (!board || force) { const r = await get("status"); board = r.rc ? { error: r.text } : kv(r.text); } return board; }
+const slotName = (b, s) => b[s + "_firmware"] || "unknown";
+
+views.home = {
+  async show() {
+    view().innerHTML = head("Overview") + '<div class="grid" id="g">' + loading + "</div>";
+    const b = await loadBoard(true), act_ = (b.active || "")[0];
+    if (current !== "home") return;
+    $("#g").innerHTML = `
+      <div class="card"><h2>Board</h2><dl class="kv"><dt>Model</dt><dd>${esc(b.model || "unknown")}</dd><dt>Mainboard</dt><dd>${esc(b.mainboard || "unknown")}</dd>${b.note ? `<dt>Boot record</dt><dd>${esc(b.note)}</dd>` : ""}</dl>
+        <div class="row"><a class="btn sec" href="#system">Details</a><button class="sec" id="reboot">Reboot</button></div></div>
+      <div class="card"><h2>Firmware slots</h2><ul class="list">
+        ${["a", "b"].map(s => `<li><div class="t"><b>Slot ${s.toUpperCase()} ${act_ === s ? '<span class="badge ok">active</span>' : ""}</b><span>${esc(slotName(b, s))}</span></div></li>`).join("")}</ul>
+        <div class="row"><a class="btn sec" href="#slots">Manage slots</a><a class="btn" href="#install">Install firmware</a></div></div>
+      <div class="card"><h2>Network</h2><div id="hnet"></div><div class="row"><a class="btn sec" href="#wifi">Wi-Fi</a><a class="btn sec" href="#remote">Remote access</a></div></div>
+      <div class="card"><h2>USB flash drive</h2><div id="husb"></div><div class="row"><a class="btn sec" href="#usb">Open</a></div></div>`;
+    $("#reboot").onclick = reboot;
+    this.live();
+  },
+  live() {
+    const n = $("#hnet"), u = $("#husb"), w = S.wifi, d = S.usb;
+    if (n) n.innerHTML = w.mode === "client" ? `<p>Connected to <b>${esc(w.ssid)}</b>${w.addressing === "static" ? " (static IP)" : ""}<br><span class="dim">${esc(w.address)}</span></p>` : w.mode === "ap" ? `<p>Access point <b>${esc(w.ssid)}</b><br><span class="dim">${w.password ? "password " + esc(w.password) : "open network"} · ${esc(w.address)}</span></p>` : `<p class="dim">${w.mode === "joining" ? "Joining " + esc(w.ssid) + "…" : "Not connected"}</p>`;
+    if (u) u.innerHTML = d.mounted === "yes" ? `<p><b>${esc(d.label || d.disk_model || "Drive")}</b> <span class="badge">${esc(d.fs)}</span><br><span class="dim">${size(d.size)}, ${size(d.free)} free</span></p>` : d.disk ? `<p>${esc(d.disk_model || "Drive")}, ${size(d.disk_bytes)}<br><span class="dim">${d.ejected === "yes" ? "ejected" : "not mounted"}</span></p>` : '<p class="dim">No flash drive.</p>';
+  },
+};
+async function reboot() {
+  if (busyJob()) return info("A job is running", "Cancel it or let it finish first.");
+  if (await confirmBox("Reboot?", "Leaves rescue and boots the active slot. This page stops responding; the rescue system must be started again to come back.", "Reboot")) { await act("restart"); view().innerHTML = head("Rebooting") + '<div class="card"><p>The board is booting the active slot. This page will stop responding.</p></div>'; }
+}
+
+/* a Wi-Fi change takes the network this page came through away: say where to go next */
+function moving(what) {
+  view().innerHTML = head("Wi-Fi is changing") + `<div class="card"><p>${what}</p><p class="dim">This page loses its connection now. If the change fails the board returns to access point mode within a minute; the touch screen shows where it is.</p></div>`;
+  current = null;
+}
+views.wifi = {
+  async show() {
+    view().innerHTML = head("Wi-Fi") + '<div class="grid"><div class="card" id="wst"></div><div class="card" id="wap"></div><div class="card wide" id="wnets"><h2>Networks</h2>' + loading + "</div></div>";
+    this.shown = ""; this.live(); this.ap(); this.scan();
+  },
+  live() {
+    const w = S.wifi, el = $("#wst"); if (!el) return;
+    const sig = [w.mode, w.ssid, w.address].join("|"); if (sig === this.shown) return; this.shown = sig;
+    el.innerHTML = "<h2>Status</h2>" + (w.mode === "client" ? `<p>Connected to <b>${esc(w.ssid)}</b>${w.addressing === "static" ? " with a static IP" : ""}</p><p class="dim">http://${esc(w.address)}</p><div class="row"><button class="sec" id="wsave">Save credentials to firmware</button><button class="sec" id="woff">Disconnect</button></div>`
+      : w.mode === "ap" ? `<p>Access point <b>${esc(w.ssid)}</b></p><p class="dim">${w.password ? "Password " + esc(w.password) : "Open network"} · http://${esc(w.address)}</p><div class="row"><button class="sec" id="woff">Turn access point off</button></div>`
+      : `<p class="dim">${w.mode === "joining" ? "Joining " + esc(w.ssid) + "…" : w.mode === "off" ? "Wi-Fi is off." : "Not connected."}</p>`);
+    const sv = $("#wsave"), off = $("#woff");
+    if (sv) sv.onclick = async () => { if (await confirmBox("Save credentials to firmware?", "Writes this network to the installed firmware's wpa_supplicant.conf on userdata, replacing the networks saved there.", "Save")) run("wifi-save", [], "Saved"); };
+    if (off) off.onclick = async () => { if (await confirmBox(w.mode === "ap" ? "Turn the access point off?" : `Disconnect from ${esc(w.ssid)}?`, "Wi-Fi stays off until a network is chosen at the touch screen, the access point is started there, or the board restarts. <b>This page will stop working</b>, and so will nocry over the network.", "Turn Wi-Fi off", true)) { await act("wifi-off"); moving("Wi-Fi is being turned off."); } };
+  },
+  ap() {
+    const s = S.set, el = $("#wap");
+    el.innerHTML = `<h2>Access point</h2><p class="dim small">The board's own network, for when there is no other. Its name and password are kept.</p>
+      <div class="two"><div><label>Name (SSID)</label><input type="text" id="apn" maxlength="32" value="${esc(s.ap_ssid || "nocry")}"></div>
+      <div><label>Password</label><input type="text" id="app" maxlength="63" value="${esc(s.ap_ssid ? s.ap_pass || "" : "nocry111")}" placeholder="empty: open network"></div></div>
+      <div class="row"><button id="apgo">${S.wifi.mode === "ap" ? "Apply and restart it" : "Start access point"}</button></div>`;
+    $("#apgo").onclick = async () => {
+      const n = $("#apn").value.trim(), p = $("#app").value;
+      const r = await act("remote-set", "ap", n, p);
+      if (r.rc) return info("Not accepted", esc(r.text));
+      if (await confirmBox("Start the access point?", `The board leaves its current network and opens <b>${esc(n)}</b>${p ? " with the password " + esc(p) : " without a password"}. Join it with this device and open http://192.168.77.1.`, "Start")) { await act("wifi-ap"); moving(`Join the network <b>${esc(n)}</b> and open <a href="http://192.168.77.1">http://192.168.77.1</a>.`); }
+    };
+  },
+  async scan() {
+    const el = $("#wnets"); el.innerHTML = '<h2>Networks</h2>' + loading;
+    const r = await get("scan"); if (current !== "wifi") return;
+    const nets = rows(r.text).filter(n => n[2]);
+    el.innerHTML = `<h2>Networks <button class="ghost" id="rescan">Scan again</button></h2><ul class="list">
+      <li class="tap" data-wps="1"><div class="t"><b>WPS (router button)</b><span>no password to type: press WPS on the router first</span></div></li>
+      ${nets.map((n, i) => `<li class="tap" data-i="${i}"><div class="t"><b>${esc(n[2])}</b><span>${esc(n[0])} dBm · ${n[1] === "open" ? "open" : "secured"}</span></div></li>`).join("")}
+      <li class="tap" data-i="-1"><div class="t"><b>Other network…</b><span>enter the SSID manually</span></div></li></ul>`;
+    $("#rescan").onclick = () => this.scan();
+    el.onclick = e => { const li = e.target.closest("li"); if (!li) return; if (li.dataset.wps) return this.wps(); const i = Number(li.dataset.i); this.join(i < 0 ? null : nets[i]); };
+  },
+  async wps() {
+    if (await confirmBox("Connect with WPS?", "Press the WPS button on the router first. The board joins the router that offers WPS within two minutes (2.4 GHz, WPA2). If none does, it returns to access point mode.", "Start")) { await act("wifi-wps"); moving("The board is waiting for the router's WPS button. Look for it on the router's network afterwards."); }
+  },
+  async join(net) {
+    const open = net && net[1] === "open";
+    const v = await dialog(`<h2>${net ? "Join " + esc(net[2]) : "Join another network"}</h2>
+      ${net ? "" : '<label>SSID</label><input type="text" id="jn" maxlength="32" placeholder="case-sensitive">'}
+      ${open ? '<p class="dim">Open network: no password.</p>' : `<label>Password</label><input type="password" id="jp" maxlength="63" placeholder="${net ? "" : "empty: open network"}"><label style="font-weight:400"><input type="checkbox" id="jshow"> Show password</label>`}
+      <label style="font-weight:400;margin-top:14px"><input type="checkbox" id="jst"> Static IP (no DHCP server on this network)</label>
+      <div id="jip" style="display:none"><div class="two"><div><label>IP address</label><input type="text" id="ja" placeholder="192.168.1.50"></div><div><label>Subnet mask</label><input type="text" id="jm" value="255.255.255.0"></div>
+        <div><label>Gateway</label><input type="text" id="jg" placeholder="optional"></div><div><label>DNS</label><input type="text" id="jd" value="8.8.8.8"></div></div></div>
+      <div class="row" style="justify-content:flex-end"><button class="sec" data-v="">Cancel</button><button id="jgo">Connect</button></div>`, (b, close) => {
+        $("#jst", b).onchange = e => $("#jip", b).style.display = e.target.checked ? "" : "none";
+        const sh = $("#jshow", b); if (sh) sh.onchange = e => $("#jp", b).type = e.target.checked ? "text" : "password";
+        $("#jgo", b).onclick = () => close({ ssid: net ? net[2] : $("#jn", b).value, pass: $("#jp", b) ? $("#jp", b).value : "", st: $("#jst", b).checked, a: $("#ja", b).value.trim(), m: $("#jm", b).value.trim(), g: $("#jg", b).value.trim(), d: $("#jd", b).value.trim() });
+      });
+    if (!v) return;
+    const quad = s => /^(\d{1,3})(\.\d{1,3}){3}$/.test(s) && s.split(".").every(x => x < 256);
+    if (!v.ssid) return info("SSID missing", "Enter the network's SSID.");
+    if (v.pass && (v.pass.length < 8 || v.pass.length > 63)) return info("Password not usable", "WPA passwords are 8 to 63 characters.");
+    if (net && !open && !v.pass) return info("Password missing", "This network is secured.");
+    if (v.st && (!quad(v.a) || !quad(v.m) || (v.g && !quad(v.g)) || (v.d && !quad(v.d)))) return info("Address not valid", "The IP address and subnet mask are needed, as four numbers from 0 to 255. Gateway and DNS may stay empty.");
+    await (v.st ? act("wifi-join", v.ssid, v.pass, "static", v.a, v.m, v.g, v.d) : act("wifi-join", v.ssid, v.pass));
+    moving(`The board is joining <b>${esc(v.ssid)}</b>. Put this device on the same network and open ${v.st ? `<a href="http://${esc(v.a)}">http://${esc(v.a)}</a>` : "the address shown on the board's screen, or http://nocry-rescue.local"}.`);
+  },
+};
+
+views.slots = {
+  async show() {
+    view().innerHTML = head("Firmware slots", "two firmware installations; one is active") + '<div class="grid" id="g">' + loading + "</div>";
+    const b = await loadBoard(true), a = (b.active || "")[0]; if (current !== "slots") return;
+    $("#g").innerHTML = ["a", "b"].map(s => { const o = s === "a" ? "b" : "a", ok = b[s + "_complete"] === "yes";
+      return `<div class="card"><h2>Slot ${s.toUpperCase()} ${a === s ? '<span class="badge ok">active</span>' : ""} ${ok ? "" : '<span class="badge warn">incomplete</span>'}</h2><p>${esc(slotName(b, s))}</p>
+        <div class="row">${a !== s ? `<button data-sw="${s}" ${ok ? "" : "disabled"}>Set active</button>` : ""}<button class="sec" data-cp="${s}" ${ok ? "" : "disabled"}>Copy to slot ${o.toUpperCase()}</button></div></div>`; }).join("") +
+      '<div class="card wide"><p class="dim small">Settings and files (userdata) are shared by both slots. Setting a slot active changes nothing but which one boots.</p></div>';
+    $("#g").onclick = async e => {
+      const sw = e.target.dataset.sw, cp = e.target.dataset.cp;
+      if (sw && await confirmBox(`Set slot ${sw.toUpperCase()} active?`, "This slot boots from the next power-on. No data is changed. If the two slots hold different kinds of firmware, the active one may change the printer's mainboard firmware.", "Set active") && await run("switch", [sw], "Active slot changed")) this.show();
+      if (cp && await confirmBox(`Copy slot ${cp.toUpperCase()} to slot ${cp === "a" ? "B" : "A"}?`, "The other slot is overwritten with an exact, verified copy of this slot's firmware. The active slot, settings and files are not changed.", "Overwrite", true)) run("copy", [cp]);
+    };
+  },
+};
+
+views.install = {
+  tab: "net", mode: "keep",
+  async show() {
+    view().innerHTML = head("Install firmware") + '<div id="pend"></div><div class="card"><div class="row" style="margin-top:0;justify-content:space-between"><div class="seg" id="tabs"><button data-t="net">Internet</button><button data-t="up">Upload a file</button><button data-t="usb">Flash drive</button></div>' +
+      '<div class="seg" id="mode"><button data-m="keep">Slot A, set active</button><button data-m="slot">Inactive slot</button></div></div><p class="dim small" id="mtext"></p><div id="src"></div></div>';
+    $("#tabs").onclick = e => { if (e.target.dataset.t) { this.tab = e.target.dataset.t; this.draw(); } };
+    $("#mode").onclick = e => { if (e.target.dataset.m) { this.mode = e.target.dataset.m; this.draw(); } };
+    this.pending(); this.draw();
+  },
+  live() { if (S.job.state !== this.lastJob) { this.lastJob = S.job.state; this.pending(); } },
+  async pending() {
+    const r = await get("fw-report"), p = kv(r.text), el = $("#pend"); if (!el) return;
+    if (!p.firmware) { el.innerHTML = ""; return; }
+    const notes = (r.text.match(/^note=.*$/gm) || []).map(n => n.slice(5).replace(/ \(--[^)]*\)/, ""));
+    const none = !Number(p.to_write);
+    el.innerHTML = `<div class="card" style="margin-bottom:14px;border-color:var(--accent)"><h2>Ready to install</h2><p><b>${esc(p.firmware)}</b></p>
+      <dl class="kv"><dt>Installed now</dt><dd>${esc(p.on_board || "unknown")}</dd><dt>Target</dt><dd>${p.slot ? "slot " + esc(p.slot.toUpperCase()) : "slot A (set active)"}</dd><dt>To write</dt><dd>${size(p.to_write)}</dd>${p.converting ? `<dt>Printer model</dt><dd>changes: ${esc(p.converting)}</dd>` : ""}</dl>
+      ${notes.map(n => `<p class="dim small">${esc(n)}</p>`).join("")}
+      ${p.need_choice ? '<div class="note err">The printer model must be selected first. Use nocry on a computer.</div>' : none ? '<div class="note">Nothing to write: this firmware is already installed there.</div>' : ""}
+      <div class="row"><button class="sec" id="fdis">Discard</button>${p.need_choice || none ? "" : '<button id="fgo">Install</button>'}</div></div>`;
+    $("#fdis").onclick = async () => { await run("fw-discard"); this.pending(); };
+    const go = $("#fgo"); if (go) go.onclick = async () => { if (await confirmBox("Install this firmware?", p.slot ? "The inactive slot is overwritten. The active slot is not changed." : "Slot A is overwritten and becomes the active slot. userdata is preserved.", "Install", true)) { await run("fw-install"); this.pending(); } };
+  },
+  async draw() {
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === this.tab));
+    document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.m === this.mode));
+    $("#mtext").textContent = this.mode === "keep" ? "Slot A is overwritten and becomes the active slot. userdata is preserved. Nothing is written until you confirm." : "The active slot is not changed; set the new slot active afterwards. Nothing is written until you confirm.";
+    const el = $("#src"), tab = this.tab; el.innerHTML = loading;
+    if (tab === "up") {
+      el.innerHTML = '<p>A Creality update file (<code>.img</code>) or factory package (<code>.ingenic</code>), up to 700 MB. It is checked before anything is written.</p><input type="file" id="fwf"><div class="row"><button id="fwup">Upload and check</button></div><div id="upst"></div>';
+      $("#fwup").onclick = () => this.upload(); return;
+    }
+    const r = await get(tab === "net" ? "fw-list" : "usb-fw"); if (current !== "install" || this.tab !== tab) return;
+    if (tab === "usb" && r.rc) { el.innerHTML = `<div class="note">${esc(r.text || "No flash drive is mounted.")}</div><p class="dim small">Insert a flash drive (FAT32, exFAT or NTFS) with the firmware file on it. The USB-A sockets are off while a computer is connected to the Micro-USB socket.</p>`; return; }
+    const list = rows(r.text);
+    if (tab === "net") {
+      el.innerHTML = `<ul class="list">${list.map((f, i) => `<li class="tap" data-i="${i}"><div class="t"><b>${esc(f[1])} ${esc(f[2])}</b><span>${esc(f[3])} · ${size(f[4])}</span></div><button class="sec">Download</button></li>`).join("") || '<li><div class="t dim">No firmware is listed for this board\'s model.</div></li>'}</ul><div class="row"><button class="sec" id="fref">Refresh catalog</button></div>`;
+      $("#fref").onclick = async () => { el.innerHTML = loading; const x = await act("fw-refresh"); if (x.rc) toast("The catalog could not be refreshed (no internet access?)"); this.draw(); };
+      el.onclick = async e => { const li = e.target.closest("li[data-i]"); if (!li) return; const f = list[li.dataset.i]; if (await run("fw-fetch", [f[0], f[2], this.mode])) toast("Downloading; it is checked before anything is written"); };
+    } else {
+      el.innerHTML = `<ul class="list">${list.map((f, i) => `<li class="tap" data-i="${i}"><div class="t"><b>${esc(base(f[1]))}</b><span>${size(f[0])}${f[1].includes("/") ? " · in " + esc(f[1].slice(0, f[1].lastIndexOf("/"))) : ""}</span></div><button class="sec">Check</button></li>`).join("") || '<li><div class="t dim">No firmware file on the drive (.img or .ingenic, up to three folders deep).</div></li>'}</ul>`;
+      el.onclick = async e => { const li = e.target.closest("li[data-i]"); if (!li) return; await run("fw-check-usb", [list[li.dataset.i][1], this.mode]); };
+    }
+  },
+  upload() {
+    const f = $("#fwf").files[0], st = $("#upst"); if (!f) return toast("Choose a file first");
+    const x = new XMLHttpRequest(), d = new FormData(); d.append("file", f, f.name);
+    x.open("POST", "/api/upload-fw?mode=" + this.mode);
+    x.upload.onprogress = e => { st.innerHTML = `<div class="bar"><i style="width:${e.loaded * 100 / e.total}%"></i></div><p class="dim small">${size(e.loaded)} of ${size(e.total)}</p>`; };
+    x.onload = () => { const m = /^rc=(-?\d+)\n?([^]*)/.exec(x.responseText) || [0, "1", "The board gave no answer."]; st.innerHTML = m[1] !== "0" ? `<div class="note err">${esc(m[2])}</div>` : '<div class="note good">Uploaded. The check is running.</div>'; poll(); this.pending(); };
+    x.onerror = () => { st.innerHTML = '<div class="note err">The upload was interrupted.</div>'; };
+    x.send(d);
+  },
+};
+
+views.usb = {
+  async show() { view().innerHTML = head("USB flash drive") + '<div class="grid"><div class="card" id="ust"></div><div class="card wide" id="ubk" style="display:none"></div><div class="card wide" id="urs" style="display:none"></div></div>'; this.shown = ""; this.live(); },
+  live() {
+    const d = S.usb, el = $("#ust"); if (!el) return;
+    const sig = [d.mounted, d.disk, d.ejected, d.device].join("|");
+    if (sig === this.shown) { const f = $("#ufree"); if (f) f.textContent = size(d.free) + " free"; return; }
+    this.shown = sig;
+    const m = d.mounted === "yes";
+    el.innerHTML = "<h2>Drive</h2>" + (m ? `<p><b>${esc(d.label || d.disk_model || "Drive")}</b> <span class="badge">${esc(d.fs)}</span>${d.readonly === "yes" ? ' <span class="badge warn">read-only</span>' : ""}</p><p class="dim">${size(d.size)}, <span id="ufree">${size(d.free)} free</span></p>`
+      : d.disk ? `<p><b>${esc(d.disk_model || "Drive")}</b>, ${size(d.disk_bytes)}</p><p class="dim">${d.ejected === "yes" ? "Ejected. It can be removed." : "No file system on it that can be mounted (FAT32, exFAT, NTFS)."}</p>`
+      : '<p class="dim">No flash drive. Supported: FAT32, exFAT, NTFS. The USB-A sockets are off while a computer is connected to the Micro-USB socket.</p>') +
+      `<div class="row">${m ? '<button class="sec" id="uej">Eject</button>' : ""}${d.disk ? '<button class="sec" id="ufm">Format…</button>' : ""}</div>`;
+    const ej = $("#uej"), fm = $("#ufm");
+    if (ej) ej.onclick = () => run("usb-eject", [], "Ejected: the drive can be removed");
+    if (fm) fm.onclick = () => this.format();
+    $("#ubk").style.display = $("#urs").style.display = m ? "" : "none";
+    if (m) { this.backups(); this.targets(); }
+  },
+  async format() {
+    const d = S.usb, name = `${esc(d.disk_model || "the drive")}, ${size(d.disk_bytes)}`;
+    const fs = await dialog(`<h2>Format drive</h2><p><b>${name}</b></p><div class="note err">Formatting erases everything on the drive.</div>
+      <ul class="list"><li class="tap" data-v="exfat"><div class="t"><b>exFAT</b><span>files of any size; Windows, macOS, Linux</span></div></li><li class="tap" data-v="fat32"><div class="t"><b>FAT32</b><span>read by everything, printers included; no file over 4 GiB (backups are split)</span></div></li></ul>
+      <div class="row" style="justify-content:flex-end"><button class="sec" data-v="">Cancel</button></div>`);
+    if (!fs) return;
+    if (!await confirmBox("Erase the flash drive?", `<b>ALL DATA on this drive is destroyed</b>: every partition and every file on ${name}. This cannot be undone. It gets one ${fs === "exfat" ? "exFAT" : "FAT32"} partition.`, "Erase and format", true)) return;
+    toast("Formatting…"); if (await run("usb-format", [fs], "Formatted; it is mounted in a moment")) this.shown = "";
+  },
+  async targets() {
+    const el = $("#ubk"); el.innerHTML = "<h2>Back up to the drive</h2>" + loading;
+    const r = await get("usb-targets"), t = rows(r.text); if (current !== "usb") return;
+    el.innerHTML = `<h2>Back up to the drive</h2><p class="dim small">A raw image with its SHA-256 in the folder nocry-backups, read back and verified. Nothing on the board is changed.</p>
+      <div class="row"><select id="utg" style="max-width:340px">${t.map(x => `<option value="${esc(x[0])}">${x[0] === "full" ? "Entire eMMC" : esc(x[0])} · ${size(x[1])}</option>`).join("")}</select><button id="ubgo" ${S.usb.readonly === "yes" ? "disabled" : ""}>Back up</button></div>`;
+    $("#ubgo").onclick = () => run("usb-backup", [$("#utg").value]);
+  },
+  async backups() {
+    const el = $("#urs"); el.innerHTML = "<h2>Restore from the drive</h2>" + loading;
+    const r = await get("usb-backups"), list = rows(r.text); if (current !== "usb") return;
+    el.innerHTML = `<h2>Restore from the drive <button class="ghost" id="ursr">Search again</button></h2><ul class="list">${list.map((b, i) => `<li><div class="t"><b>${esc(base(b[4]))}</b><span>${b[0] === "full" ? "Entire eMMC" : "Partition " + esc(b[1])} · ${size(b[2])}${b[3] === "yes" ? "" : " · no checksum"}</span></div><button class="sec" data-i="${i}">Restore…</button></li>`).join("") || '<li><div class="t dim">No backup of this board on the drive.</div></li>'}</ul>`;
+    $("#ursr").onclick = () => this.backups();
+    el.onclick = async e => {
+      const i = e.target.dataset.i; if (i == null) return; const b = list[i], r2 = await get("usb-info", b[4]), p = kv(r2.text);
+      if (r2.rc) return info("Cannot restore this file", esc(r2.text));
+      if (p.kind === "full" && p.identity !== "same") return info("Backup of another board", "The identity record in this image differs from this board's. Restoring it would replace the serial number. Use nocry on a computer for that.");
+      const nosum = p.checksum === "yes" ? "" : " There is no checksum file beside it: the image cannot be verified before it is written.";
+      if (await confirmBox(p.kind === "full" ? "Restore the entire eMMC?" : `Restore ${esc(p.part)}?`, (p.kind === "full" ? `Overwrites the whole storage with <b>${esc(base(b[4]))}</b>: boot loader, both slots, settings and files. Intact copies of the rescue image are kept.` : `Overwrites the partition ${esc(p.part)} with <b>${esc(base(b[4]))}</b>.`) + " Only what differs is written; all of it is verified." + nosum, "Restore", true)) run("usb-restore", [b[4]]);
+    };
+  },
+};
+
+views.files = {
+  dir: "",
+  async show() {
+    view().innerHTML = head("Files", "the printer's data partition (userdata)") + '<div class="grid"><div class="card wide" id="fl"></div><div class="card" id="fdl"><h2>Downloads</h2><p class="dim small">Collected by the board, as one file each.</p><div class="row"><a class="btn sec" href="/dl/logs">Logs</a><a class="btn sec" href="/dl/config">Printer configuration</a><a class="btn sec" href="/dl/identity">Identity record</a></div><p class="dim small">The identity record holds the serial number and MAC address: keep it private.</p></div></div>';
+    this.list();
+  },
+  async list() {
+    const el = $("#fl"); el.innerHTML = loading;
+    const r = await get("ls", this.dir || "/"); if (current !== "files") return;
+    const parts = this.dir.split("/").filter(Boolean), crumbs = ['<a href="#" data-d="">userdata</a>'].concat(parts.map((p, i) => `<a href="#" data-d="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</a>`)).join(" / ");
+    if (r.rc) { el.innerHTML = `<h2>${crumbs}</h2><div class="note err">${esc(r.text)}</div>`; }
+    else {
+      const items = rows(r.text).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[2].localeCompare(b[2])));
+      el.innerHTML = `<h2 style="flex-wrap:wrap">${crumbs}</h2><ul class="list">${items.map(f => { const p = (this.dir ? this.dir + "/" : "") + f[2];
+        return f[0] === "d" ? `<li class="tap" data-d="${esc(p)}"><div class="t"><b>📁 ${esc(f[2])}</b></div></li>` : `<li><div class="t"><b>${esc(f[2])}</b><span>${size(f[1])}</span></div><a class="btn sec" href="/files/get?p=${encodeURIComponent(p)}">Download</a><button class="sec" data-rm="${esc(p)}">Delete</button></li>`; }).join("") || '<li><div class="t dim">Empty folder.</div></li>'}</ul>
+        <div class="row"><input type="file" id="fup" style="max-width:320px"><button class="sec" id="fupgo">Upload here (8 MB at most)</button></div>`;
+      $("#fupgo").onclick = async () => { const f = $("#fup").files[0]; if (!f) return toast("Choose a file first"); const d = new FormData(); d.append("file", f, f.name);
+        const x = await fetch("/api/upload-file?p=" + encodeURIComponent(this.dir), { method: "POST", body: d }).then(reply); if (x.rc) info("Not uploaded", esc(x.text)); else toast("Uploaded"); this.list(); };
+    }
+    el.onclick = async e => {
+      const d = e.target.closest("[data-d]"), rm = e.target.dataset.rm;
+      if (d) { e.preventDefault(); this.dir = d.dataset.d; this.list(); }
+      if (rm && await confirmBox("Delete?", `<b>${esc(rm)}</b> is deleted permanently.`, "Delete", true)) { await run("rm", [rm], "Deleted"); this.list(); }
+    };
+  },
+};
+
+views.repair = {
+  show() {
+    view().innerHTML = head("Repair") + `<div class="grid">
+      <div class="card"><h2>File systems</h2><p class="dim small">Runs e2fsck and repairs errors. Do not interrupt it once started.</p><div class="row"><button class="sec" data-ck="data">Check userdata</button><button class="sec" data-ck="settings">Check rootfs_data</button></div></div>
+      <div class="card"><h2>Storage health</h2><div id="hl"><button class="sec" id="hgo">Read eMMC health</button></div></div>
+      <div class="card"><h2>Wipe system overlay</h2><p class="dim small">Erases rootfs_data: installed packages, root access tools, changed system files. Print files and printer configuration are preserved.</p><div class="row"><button class="danger" data-rs="mods">Wipe overlay</button></div></div>
+      <div class="card"><h2>Factory reset</h2><p class="dim small">Erases rootfs_data and userdata: all settings and files. The firmware in both slots and the serial number are preserved.</p><div class="row"><button class="danger" data-rs="all">Factory reset</button></div></div></div>`;
+    $("#hgo").onclick = async () => { const r = await get("health"), h = kv(r.text); $("#hl").innerHTML = r.rc ? `<div class="note err">${esc(r.text)}</div>` : `<dl class="kv"><dt>Device</dt><dd>${esc(h.chip)}</dd><dt>Wear (type A / B)</dt><dd>${esc(h.wear_a)} % / ${esc(h.wear_b)} %</dd><dt>Spare blocks</dt><dd>${esc(h.spare)}</dd><dt>userdata</dt><dd>${esc(h.data_state)}</dd></dl>`; };
+    view().onclick = async e => {
+      const ck = e.target.dataset.ck, rs = e.target.dataset.rs;
+      if (ck && await confirmBox("Run fsck?", "Runs e2fsck and repairs errors. Files damaged beyond repair may be lost or moved to lost+found.", "Run fsck")) run("check", [ck]);
+      if (rs && await confirmBox(rs === "all" ? "Factory reset?" : "Wipe system overlay?", rs === "all" ? "<b>Erases rootfs_data and userdata</b>: all settings and files (Wi-Fi settings, print history, uploaded files, calibration, the printer configuration). This cannot be undone." : "<b>Erases rootfs_data</b>: all changes to the root file system. This cannot be undone. userdata is preserved.", rs === "all" ? "Erase all" : "Wipe overlay", true)) run("reset", [rs]);
+    };
+  },
+};
+
+views.boot = {
+  async show() {
+    view().innerHTML = head("Boot loader & logo") + '<div class="grid" id="g">' + loading + "</div>";
+    const [l, g, r] = await Promise.all([get("loader"), get("logo"), get("rescue")]); if (current !== "boot") return;
+    const rs = kv(r.text), nb = /nocryboot/.test(l.text.split("\n")[0] || "");
+    $("#g").innerHTML = `<div class="card"><h2>Boot loader</h2><pre>${esc(l.text)}</pre><p class="dim small">The first code the board runs. If a write fails the board does not boot by itself; recovery is then through USB boot mode with nocry on a computer. The replaced loader is kept on the board.</p>
+        <div class="row">${nb ? '<button class="sec" data-ld="factory">Restore factory loader</button>' : '<button data-ld="install">Install nocryboot</button>'}</div></div>
+      <div class="card"><h2>Boot logo</h2><pre>${esc(g.text)}</pre><div class="row"><button class="sec" data-lg="nocry">Use the nocry logo</button><button class="sec" data-lg="firmware">Use the firmware's logo</button></div></div>
+      <div class="card"><h2>Rescue image</h2><p>${rs.stored === "yes" ? '<span class="badge ok">installed, verified</span>' : rs.stored === "damaged" ? '<span class="badge warn">checksum mismatch</span>' : '<span class="badge">not installed</span>'}</p>
+        <dl class="kv"><dt>Copy behind slot A</dt><dd>${esc(rs.copy_a || "no")}</dd><dt>Copy behind slot B</dt><dd>${esc(rs.copy_b || "no")}</dd></dl><p class="dim small">Started by holding a finger on the screen at power-on (nocryboot 0.3 or later). Stored with <code>nocry rescue --install</code> from a computer.</p></div>`;
+    $("#g").onclick = async e => {
+      const ld = e.target.dataset.ld, lg = e.target.dataset.lg;
+      if (ld && await confirmBox(ld === "install" ? "Install the nocryboot boot loader?" : "Restore the factory boot loader?", "Takes a few seconds; <b>do not power off</b>. If the write fails the board does not boot by itself; recovery is through USB boot mode: hold BOOT, tap RESET, and use nocry on a computer.", "Change boot loader", true)) { const x = await act("loader", ld); await info(x.rc ? "Failed" : "Done", `<pre>${esc(x.text)}</pre>`); this.show(); }
+      if (lg && await confirmBox(lg === "nocry" ? "Use the nocry boot logo?" : "Use the firmware's boot logo?", lg === "nocry" ? "Changes only what the screen shows during the first seconds after power-on. The replaced logo is kept on the board. If the screen stays dark after power-on, come back and select the firmware's logo." : "Restores each slot's original boot logo from the copy kept on the board.", "Change boot logo")) { const x = await act("logo", lg); await info(x.rc ? "Failed" : "Done", `<pre>${esc(x.text)}</pre>`); this.show(); }
+    };
+  },
+};
+
+views.remote = {
+  show() { view().innerHTML = head("Remote access", "all off unless turned on; what is on stays on after a restart") + '<div class="grid"><div class="card wide" id="rm"></div></div>'; this.shown = ""; this.live(); },
+  live() {
+    const el = $("#rm"), r = S.remote, s = S.set, a = S.wifi.address || "<address>"; if (!el) return;
+    const sig = JSON.stringify([r, s.ssh_pass, a]); if (sig === this.shown) return; this.shown = sig;
+    const pw = s.ssh_pass || "Creality2023";
+    const item = (k, name, text) => `<li><div class="t"><b>${name}</b><span>${text}</span></div><button class="sw ${r[k] === "on" ? "on" : ""}" data-k="${k}" aria-label="${name}"></button></li>`;
+    el.innerHTML = `<ul class="list">
+      ${item("lan", "nocry over the network", "the nocry program on a computer; port 5560, pairing code")}
+      ${item("adb", "ADB over the network", `<code>adb connect ${esc(a)}</code> · port 5555, no password`)}
+      ${item("ssh", "SSH", `<code>ssh root@${esc(a)}</code> · password <code>${esc(pw)}</code>`)}</ul>
+      <div class="row"><button class="sec" id="rpw">SSH password…</button></div><p class="dim small">This web interface is always available with the pairing code.</p>`;
+    $("#rpw").onclick = async () => {
+      const v = await dialog(`<h2>SSH password</h2><label>Password for root</label><input type="text" id="np" maxlength="63" value="${esc(pw)}"><div class="row" style="justify-content:flex-end"><button class="sec" data-v="">Cancel</button><button id="npgo">Save</button></div>`, (b, close) => { $("#npgo", b).onclick = () => close($("#np", b).value); });
+      if (v != null) run("remote-set", ["ssh_pass", v], "Saved");
+    };
+    el.onclick = async e => {
+      const k = e.target.dataset.k; if (!k) return; const on = r[k] !== "on";
+      const why = { lan: "nocry on a computer can then work on this board over the network: back up, restore, install. It needs the pairing code shown on the board's screen.", adb: "<b>ADB here has no password and no pairing</b>: anyone who can reach this board on the network gets a root shell. Only on a network you trust.", ssh: `SSH on port 22, user root, password <code>${esc(pw)}</code>. Anyone on the network who knows the password gets a root shell.` }[k];
+      if (on && !await confirmBox("Turn this on?", why, "Turn on", k === "adb")) return;
+      run("remote-set", [k, on ? "on" : "off"], on ? "Turned on" : "Turned off");
+    };
+  },
+};
+
+views.system = {
+  async show() {
+    view().innerHTML = head("System") + '<div class="grid" id="g">' + loading + "</div>";
+    const [b, l, r] = await Promise.all([loadBoard(true), get("loader"), get("rescue")]); if (current !== "system") return;
+    const rs = kv(r.text);
+    $("#g").innerHTML = `<div class="card"><h2>Board</h2><dl class="kv"><dt>Model</dt><dd>${esc(b.model || "unknown")}</dd><dt>Mainboard</dt><dd>${esc(b.mainboard || "unknown")}</dd><dt>Slot A</dt><dd>${esc(slotName(b, "a"))}</dd><dt>Slot B</dt><dd>${esc(slotName(b, "b"))}</dd><dt>Active slot</dt><dd>${esc((b.active || "?")[0].toUpperCase())}</dd>
+        <dt>Boot loader</dt><dd>${esc((l.text.match(/loader: (.*)/) || [])[1] || "unknown")}</dd><dt>Rescue image</dt><dd>${rs.stored === "yes" ? "installed, verified" : rs.stored === "damaged" ? "checksum mismatch" : "not installed"}</dd>${b.note ? `<dt>Boot record</dt><dd>${esc(b.note)}</dd>` : ""}</dl></div>
+      <div class="card"><h2>Rescue system</h2><p class="dim small">Runs from memory. Rebooting leaves it and starts the active slot.</p><div class="row"><button id="rb">Reboot</button><a class="btn sec" href="/dl/logs">Download logs</a></div>
+        <p class="dim small" style="margin-top:14px">The touch calibration and which way up the screen is are set on the touch screen itself.</p></div>`;
+    $("#rb").onclick = reboot;
+  },
+};
+
+/* ---- the frame ----------------------------------------------------------------------------- */
+function show(name) {
+  if (!views[name]) name = "home";
+  current = name;
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.v === name));
+  $("#nav").classList.remove("open"); $("#shade").classList.remove("open");
+  view().onclick = null;
+  views[name].show();
+  window.scrollTo(0, 0);
+}
+$("#nav").innerHTML = '<div class="brand"><i>nc</i>nocry rescue</div>' + NAV.map(n => n ? `<a href="#${n[0]}" data-v="${n[0]}"><svg viewBox="0 0 24 24">${ICON[n[0]]}</svg>${n[1]}</a>` : '<div class="sep"></div>').join("");
+$("#menu").onclick = () => { $("#nav").classList.toggle("open"); $("#shade").classList.toggle("open"); };
+$("#shade").onclick = () => { $("#nav").classList.remove("open"); $("#shade").classList.remove("open"); };
+window.addEventListener("hashchange", () => show(location.hash.slice(1)));
+poll().then(() => show(location.hash.slice(1) || "home"));
+setInterval(poll, 1500);
+</script>
+</html>

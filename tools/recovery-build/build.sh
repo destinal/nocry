@@ -80,7 +80,7 @@ fi
 # a changed defconfig (e.g. arch/ABI) needs a clean Buildroot build; packages are not rebuilt otherwise
 if ! cmp -s "$HERE/buildroot.defconfig" "$WORK/buildroot/.nocry-defconfig-built" 2>/dev/null && [ -d "$WORK/buildroot/output" ]; then
   echo "buildroot.defconfig changed: clean Buildroot build (~15 min)"
-  run "cd /br && make clean >/dev/null"
+  run "cd /br && make NOCRY_RECOVERY=/nocry clean >/dev/null"
 fi
 cp "$HERE/buildroot.defconfig" "$WORK/buildroot/configs/nocry_recovery_defconfig"
 # Buildroot's host tools embed absolute paths: always build it at /br
@@ -108,7 +108,7 @@ if [ "${RESCUE:-0}" = 1 ]; then
   cat "$HERE/buildroot.defconfig" "$HERE/buildroot-rescue.fragment" > "$WORK/buildroot/configs/nocry_rescue_defconfig"
   if ! cmp -s "$WORK/buildroot/configs/nocry_rescue_defconfig" "$WORK/buildroot/.nocry-rescue-defconfig-built" 2>/dev/null && [ -d "$WORK/buildroot/output-rescue" ]; then
     echo "rescue defconfig changed: clean Buildroot build (~15 min)"
-    run "cd /br && make O=/br/output-rescue clean >/dev/null"
+    run "cd /br && make O=/br/output-rescue NOCRY_RECOVERY=/nocry clean >/dev/null"
   fi
   run "cd /br && make -s O=/br/output-rescue NOCRY_RECOVERY=/nocry nocry_rescue_defconfig && make O=/br/output-rescue NOCRY_RECOVERY=/nocry -j\$(nproc) > /w/buildroot-rescue-build.log 2>&1" \
     || { tail -30 "$WORK/buildroot-rescue-build.log"; exit 1; }

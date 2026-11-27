@@ -5,6 +5,12 @@
 #
 #   nocry-remote apply     make what runs match the settings
 #   nocry-remote status    lan=on|off, adb=on|off, ssh=on|off (what is running now)
+#   nocry-remote set lan|adb|ssh on|off       change one of them, keep it, apply it
+#   nocry-remote set ssh_pass PASSWORD        root's password for SSH (6 characters or more)
+#   nocry-remote set ap NAME [PASSWORD]       the board's own network: name, and password
+#                                             (8 to 63 characters; none = open). Kept; used
+#                                             the next time that network is opened.
+# "set" is for the web pages; the touch screen writes the same lines itself.
 #
 # The settings (lines in /run/nocry-touch.cal, written by nocry-ui):
 #   remote_lan on      nocry on a computer over the network (nocry-netd, port 5560; needs
@@ -52,12 +58,35 @@ apply() {
     return 0
 }
 
+# one setting: its old lines out, the new ones in, and the whole file kept on the board
+keep() {    # keep PATTERN LINE...
+    pat=$1; shift
+    { grep -v "$pat" $SET 2>/dev/null; printf '%s\n' "$@"; } > $SET.new && mv $SET.new $SET
+    nocry-rescue-do cal-put < $SET >/dev/null 2>&1 || echo "kept until the board restarts only (could not be written to the board)" >&2
+}
+
 case "$1" in
   apply) apply ;;
+  set)
+    case "$2" in
+      lan|adb|ssh)
+        case "$3" in on|off) ;; *) echo "usage: nocry-remote set $2 on|off" >&2; exit 2 ;; esac
+        keep "^remote_$2 " "remote_$2 $3"; apply ;;
+      ssh_pass)
+        case "$3" in *" "*|"") echo "the password must not be empty or contain spaces" >&2; exit 2 ;; esac
+        [ ${#3} -ge 6 ] && [ ${#3} -le 63 ] || { echo "the password needs 6 to 63 characters" >&2; exit 2; }
+        keep "^ssh_pass " "ssh_pass $3"; apply ;;
+      ap)
+        [ -n "$3" ] && [ ${#3} -le 32 ] || { echo "the access point needs a name of 1 to 32 characters" >&2; exit 2; }
+        case "$4" in *'"'*) echo "a password with a double quote is not supported" >&2; exit 2 ;; esac
+        if [ -n "$4" ] && { [ ${#4} -lt 8 ] || [ ${#4} -gt 63 ]; }; then echo "a WPA2 password has 8 to 63 characters (leave it empty for an open network)" >&2; exit 2; fi
+        keep "^ap_ssid \|^ap_pass " "ap_ssid $3" "ap_pass $4" ;;
+      *) echo "usage: nocry-remote set lan|adb|ssh on|off | set ssh_pass PASSWORD | set ap NAME [PASSWORD]" >&2; exit 2 ;;
+    esac ;;
   status)
     for s in "lan nocry-netd" "adb nocry-relay" "ssh dropbear"; do
         set -- $s
         if running "$2"; then echo "$1=on"; else echo "$1=off"; fi
     done ;;
-  *) echo "usage: nocry-remote apply|status" >&2; exit 2 ;;
+  *) echo "usage: nocry-remote apply|status|set" >&2; exit 2 ;;
 esac

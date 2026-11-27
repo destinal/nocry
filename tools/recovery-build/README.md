@@ -20,7 +20,7 @@ On the touch screen (480x272, wide by default; a button turns it a quarter turn 
 - **Advanced**: repair (file system checks, storage health, wipe the settings overlay, factory reset) and remote access (nocry over the network, adb over the network, SSH: all off unless turned on).
 - **System info**: model, slots, loader, rescue copies; touch calibration.
 
-From a phone or computer on the same network: web pages with most of the same actions, behind a six-digit pairing code shown on the screen.
+From a phone or computer on the same network: a web application with nearly everything the touch screen has (and file access and firmware upload on top), behind a six-digit pairing code shown on the screen. It is one self-contained page, laid out for phones and for desktop browsers.
 
 ## How it is put together
 
@@ -45,7 +45,7 @@ The rule that keeps it small: **the interfaces do no work themselves.** The touc
 | `nocry-fbd` | `fbd/` | the storage service: fastboot commands plus streaming read, write, hash, copy and zero with read-back. Everything that writes the eMMC goes through it or through `nocry-image`. |
 | `nocry` | `host/` (the desktop tool, built for the board) | the same install engine and checks as on a computer |
 | `nocry-ui` | `ui/` | one C file on LVGL 8.3 (MIT). `nocry-ui --sim SCRIPT` runs it on a PC without screen or touch chip: taps from a script, pictures to files. |
-| `nocry-webd`, `nocry-netd` | `webd/`, `netd/` | web pages; the network service nocry on a computer pairs with |
+| `nocry-webd`, `nocry-netd` | `webd/`, `netd/`, `overlay-rescue/usr/share/nocry/web/` | the web server (a small API over the same commands) and the one-file web application it serves; the network service nocry on a computer pairs with |
 | `nocry-image` | `tools/` | a range of the storage to an image file and back, with SHA-256, split files for FAT32, write-only-what-differs and read-back |
 | `nocry-rescue-copy` | `tools/` | stores and checks the copies of the rescue image the loader starts, and the kept settings beside them |
 | `nocry-usb`, `nocry-wifi`, `nocry-remote` | `overlay-rescue/usr/sbin/` | shell |

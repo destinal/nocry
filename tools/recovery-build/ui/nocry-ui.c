@@ -259,6 +259,22 @@ static void reap(lv_timer_t *t)
 	}
 }
 
+/* The settings another program may have changed since they were read (the web pages change
+   remote access, the SSH password and the access point's name): read again before this
+   program shows or changes any setting, so that writing the file does not undo theirs. */
+static void settings_refresh(void)
+{
+	char *s = run_file("nocry-touch.cal"), *p;
+	if (!*s) { free(s); return; }
+	remote_lan = strstr(s, "\nremote_lan on") != NULL; remote_adb = strstr(s, "\nremote_adb on") != NULL; remote_ssh = strstr(s, "\nremote_ssh on") != NULL;
+	if ((p = strstr(s, "\nssh_pass "))) snprintf(ssh_pass, sizeof ssh_pass, "%.*s", (int)strcspn(p + 10, "\n"), p + 10);
+	if ((p = strstr(s, "\nap_ssid ")) && p[9] != '\n' && p[9]) {
+		snprintf(ap_ssid, sizeof ap_ssid, "%.*s", (int)strcspn(p + 9, "\n"), p + 9); ap_own = 1;
+		ap_pass[0] = 0;
+		if ((p = strstr(s, "\nap_pass "))) snprintf(ap_pass, sizeof ap_pass, "%.*s", (int)strcspn(p + 9, "\n"), p + 9);
+	}
+	free(s);
+}
 /* the settings, into the file the start-up script read them from and onto the board */
 static void settings_store(done_fn fn)
 {
@@ -832,6 +848,18 @@ static void net_cb(lv_event_t *e)
 		wide(grey(button(box, "Cancel", modal_close_cb, NULL)));
 	}
 }
+/* push-button WPS: the router gives the board its name and password after its button was pressed */
+static void wps_yes(void)
+{
+	snprintf(chosen, sizeof chosen, "WPS");
+	busy("Waiting for the router...\nUp to two minutes.");
+	start(wifi_done, NULL, "nocry-wifi", "wps", NULL);
+}
+static void wps_cb(lv_event_t *e)
+{
+	(void)e;
+	ask("Connect with WPS?", "Press the WPS button on the router first, then tap Start. The board joins the router that offers WPS within two minutes (2.4 GHz, WPA2). If none does, it returns to access point mode.", "Start", 0, wps_yes);
+}
 static void scan_done(int rc, char *out)
 {
 	char *line, *save = NULL; lv_obj_t *list;
@@ -840,9 +868,11 @@ static void scan_done(int rc, char *out)
 	if (rc || !*out) {
 		text(content, "No networks found. Go back and scan again, or enter the SSID.");
 		wide(button(content, "Other network...", ssid_cb, NULL));
+		wide(grey(button(content, "WPS (router button)", wps_cb, NULL)));
 		return;
 	}
 	list = scroll_list();
+	entry(list, "WPS (router button)", "no password to type: press WPS on the router", wps_cb, NULL);
 	for (line = strtok_r(out, "\n", &save); line && net_count < 24; line = strtok_r(NULL, "\n", &save)) {
 		char *lock = strchr(line, '\t'), *name = lock ? strchr(lock + 1, '\t') : NULL, label[60];
 		if (!name || !name[1]) continue;
@@ -876,6 +906,7 @@ static void ap_key(lv_event_t *e)
 }
 static void ap_screen(void)
 {
+	settings_refresh();
 	set_title(W < 400 ? "Access point" : "Access point settings");
 	form_begin();
 	form_field("SSID", ap_own ? ap_ssid : "nocry", NULL, 32, 2);
@@ -1210,7 +1241,7 @@ static void eject_done(int rc, char *out)
 static void eject_now(void) { busy("Ejecting..."); start(eject_done, NULL, "nocry-rescue-do", "usb-eject", NULL); }
 static void eject_cb(lv_event_t *e) { (void)e; eject_now(); }
 static void eject_yes_cb(lv_event_t *e) { (void)e; modal_close(); eject_now(); }
-static void eject_never_cb(lv_event_t *e) { (void)e; modal_close(); eject_ask = 0; settings_store(NULL); }
+static void eject_never_cb(lv_event_t *e) { (void)e; modal_close(); settings_refresh(); eject_ask = 0; settings_store(NULL); }
 /* after the drive was used: eject it?  "Don't ask again" is kept with the other settings. */
 static void eject_prompt(void)
 {
@@ -1505,6 +1536,7 @@ static void sshpw_key(lv_event_t *e)
 }
 static void sshpw_screen(void)
 {
+	settings_refresh();
 	set_title("SSH password");
 	form_begin();
 	form_field("Password", ssh_pass[0] ? ssh_pass : "Creality2023", NULL, 63, 1);
@@ -1539,7 +1571,15 @@ static void remote_draw(void)
 	dim(text(content, "All off unless turned on here; what is on stays on after a restart. The web interface is always available with the pairing code."));
 	free(st);
 }
-static void remote_screen(void) { set_title("Remote access"); remote_draw(); }
+static void remote_tick(lv_timer_t *t)	/* the web pages may switch these too */
+{
+	int l = remote_lan, a = remote_adb, h = remote_ssh;
+	(void)t;
+	if (modal) return;
+	settings_refresh();
+	if (l != remote_lan || a != remote_adb || h != remote_ssh) remote_draw();
+}
+static void remote_screen(void) { set_title("Remote access"); settings_refresh(); remote_draw(); screen_timer = lv_timer_create(remote_tick, 2000, NULL); }
 static void repair_screen(void);
 static void advanced_screen(void)
 {
@@ -1598,7 +1638,7 @@ static lv_point_t cal_at[3];
 static int cal_step, cal_wait_up; static long cal_sx, cal_sy, cal_n; static int cal_rx[3], cal_ry[3];
 static lv_obj_t *cal_cross, *cal_text;
 
-static void cal_store(void) { settings_store(NULL); }
+static void cal_store(void) { settings_refresh(); settings_store(NULL); }
 static int cal_solve(void)
 {
 	double x0 = cal_rx[0], y0 = cal_ry[0], x1 = cal_rx[1], y1 = cal_ry[1], x2 = cal_rx[2], y2 = cal_ry[2];
@@ -1771,6 +1811,7 @@ static void turn_icon(lv_obj_t *parent)
 static void rot_cb(lv_event_t *e)
 {
 	(void)e;
+	settings_refresh();
 	turn = (turn + 270) % 360;		/* a quarter turn clockwise */
 	busy("Rotating...");
 	settings_store(rot_done);

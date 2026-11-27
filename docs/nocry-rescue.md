@@ -87,7 +87,7 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 ### As built (`tools/recovery-build/ui/nocry-ui.c`)
 
 - Home: eight tiles (Wi-Fi, Slots, Install firmware, USB drive, Advanced, System info, Eject drive, Reboot; Advanced holds Repair and Remote access), the network and address underneath, the pairing code top right on every screen. Eject drive is greyed out while no flash drive is mounted.
-- Wi-Fi: scan, choose, type the password on an on-screen keyboard, join; a fixed address instead of DHCP ("Static IP": address, subnet mask 255.255.255.0 and DNS 8.8.8.8 filled in, gateway and DNS optional); disconnect from the network and stay off it; the board's own access point with a name and password of the owner's choosing (kept; an empty password makes it open; "nocry" / "nocry111" otherwise), a QR code a phone joins it from, and a way to turn it off; save the network for the installed firmware. Wi-Fi turned off lasts until a network is chosen, the access point is started, or the board restarts.
+- Wi-Fi: scan, choose, type the password on an on-screen keyboard, join; push-button WPS (first entry of the network list: press the router's button, the board takes the name and password from it); a fixed address instead of DHCP ("Static IP": address, subnet mask 255.255.255.0 and DNS 8.8.8.8 filled in, gateway and DNS optional); disconnect from the network and stay off it; the board's own access point with a name and password of the owner's choosing (kept; an empty password makes it open; "nocry" / "nocry111" otherwise), a QR code a phone joins it from, and a way to turn it off; save the network for the installed firmware. Wi-Fi turned off lasts until a network is chosen, the access point is started, or the board restarts.
 - Slots: what is in A and B, which one starts, switch, copy one over the other.
 - Long work with a measurable size shows the speed and the time left for the step that is running, from the last twenty seconds.
 - Install firmware: the list for this board (refreshed from the internet on request), into the starting slot or the other one; downloaded and checked first, then a summary to confirm.
@@ -182,7 +182,15 @@ A join answers at once and happens two seconds later, because over Wi-Fi it cuts
 
 Limits: 2.4 GHz only; WPA2 passphrases (8 to 63 characters, no double quote) or open networks; the list of networks is the one taken at start, because this chip does not scan while it is an access point (a name can be typed). A chosen network is not remembered across a restart: rescue runs from memory and writes nothing.
 
-### The web pages
+### The web application (2026-11-27; checked in a browser against mock commands, not yet on a board)
+
+A signed-in browser gets one page, `web/index.html` (HTML, CSS and JavaScript in one file, nothing fetched from elsewhere), with a sidebar on a wide screen and a menu on a phone, light or dark after the device's setting. It has what the touch screen has, where that makes sense from a browser: overview, Wi-Fi (scan, join with password or fixed address, WPS, the access point's name and password, turning Wi-Fi off), slots, install (from the internet, by uploading a file, or from a flash drive), the flash drive (backup, restore, format, eject), files of the data partition and the log, configuration and identity downloads, repair, boot loader and boot logo, remote access, system and reboot. Not there: the touch calibration and which way up the screen is.
+
+It does no work itself. `/api/state` gives the Wi-Fi state, the running job, the flash drive, remote access and the kept settings in one answer (asked about every 1.5 seconds); `/api/get?what=` reads lists; `/api/do` (POST) runs one of a fixed list of actions, each a `nocry-rescue-do`, `nocry-wifi` or `nocry-remote` command with the arguments as they are. Actions that take the network away (joining, access point, off, WPS, reboot) answer first and start two seconds later. The settings the touch screen keeps (remote access, SSH password, access point name) are changed through `nocry-remote set`, and the touch interface reads them again before it shows or changes any.
+
+The pages without JavaScript that came before it are gone (2026-11-27); the section below describes them as they were.
+
+### The earlier plain web pages (removed)
 
 `webd/nocry-webd.c` serves pages at the board's address on whatever network it is on, for someone with a phone or laptop and no nocry on it. On the board's own network every name resolves to the board, so most devices show them by themselves.
 

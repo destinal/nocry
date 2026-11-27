@@ -10,6 +10,8 @@
 #   nocry-wifi join SSID PASSWORD static ADDRESS MASK [GATEWAY [DNS]]
 #                                   the same with a fixed address instead of asking the network
 #                                   for one (PASSWORD "" for an open network; "" skips a field)
+#   nocry-wifi wps                  join the router whose WPS button was just pressed (push-button
+#                                   WPS, two minutes); back to the own network if that fails
 #   nocry-wifi off                  leave the network and keep the radio off (until a network is
 #                                   chosen, the own network is opened, or the board restarts)
 #   nocry-wifi rejoin               join the last network again
@@ -168,6 +170,11 @@ join_conf() {
         log "could not join $2: $why; states:$seen; $(grep -c CTRL-EVENT-ASSOC-REJECT $RUN/nocry-wpa.log 2>/dev/null) rejections"
         return 1
     fi
+    got_network "$2" "$3"
+}
+
+# joined: now an address (the network's, or the fixed one), and say so. got_network NAME SOURCE
+got_network() {
     ssid=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^ssid=//p')
     if [ -s $STATIC ]; then
         { read -r s_addr; read -r s_mask; read -r s_gw; read -r s_dns; } < $STATIC
@@ -183,9 +190,44 @@ join_conf() {
     fi
     addr=$(ip -4 addr show dev $IF | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
     [ -n "$addr" ] || return 1
-    state client "${ssid:-$2}" "$addr" "$3"
+    state client "${ssid:-$1}" "$addr" "$2"
     announce
-    log "joined ${ssid:-$2}, address $addr"
+    log "joined ${ssid:-$1}, address $addr"
+}
+
+# Push-button WPS: the router hands over its name and password after its WPS button was
+# pressed. wpa_supplicant writes what it got into the configuration it was started with
+# (update_config), which is the one "rejoin" uses; it is in memory only, like every password here.
+join_wps() {
+    radio_down
+    set_mac
+    rm -f $STATIC
+    state joining "WPS" "" chosen
+    printf 'ctrl_interface=%s\nupdate_config=1\n' "$CTRL" > $RUN/nocry-sta.conf; chmod 600 $RUN/nocry-sta.conf
+    rm -f $RUN/nocry-wpa.log
+    wpa_supplicant -B -i $IF -D nl80211 -c $RUN/nocry-sta.conf -d -f $RUN/nocry-wpa.log >/dev/null 2>&1 || { log "wpa_supplicant did not start"; return 1; }
+    sleep 1
+    case "$(wpa_cli -p $CTRL -i $IF wps_pbc 2>&1)" in
+      OK*) ;;
+      *) WHY="this rescue image has no WPS support"; log "WPS: wps_pbc refused"; return 1 ;;
+    esac
+    log "WPS: waiting for a router with its button pressed"
+    i=0; s=
+    while [ $i -lt 120 ]; do
+        s=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^wpa_state=//p')
+        [ "$s" = COMPLETED ] && break
+        grep -q "WPS-OVERLAP-DETECTED" $RUN/nocry-wpa.log 2>/dev/null && { WHY="more than one router is offering WPS right now; wait two minutes and try again"; log "WPS: overlap"; return 1; }
+        grep -q "WPS-TIMEOUT" $RUN/nocry-wpa.log 2>/dev/null && break
+        sleep 1; i=$((i+1))
+    done
+    if [ "$s" != COMPLETED ]; then
+        if grep -q "WPS-FAIL" $RUN/nocry-wpa.log 2>/dev/null; then WHY="the router refused WPS (it may be turned off there, or the network is WPA3 only)"
+        else WHY="no router offered WPS within two minutes (press the router's WPS button first; 2.4 GHz only)"; fi
+        log "WPS failed: $WHY"
+        return 1
+    fi
+    wpa_cli -p $CTRL -i $IF save_config >/dev/null 2>&1
+    got_network "WPS" chosen
 }
 
 hex() { printf '%s' "$1" | hexdump -v -e '/1 "%02x"'; }
@@ -235,6 +277,13 @@ case "$1" in
     start_ap fallback ;;
   ap)
     locked; rm -f $RUN/nocry-sta.conf $STATIC; start_ap chosen ;;
+  wps)
+    locked
+    if join_wps; then exit 0; fi
+    rm -f $RUN/nocry-sta.conf
+    start_ap "failed:WPS"
+    echo "${WHY:-WPS did not complete}" >&2       # last: it is the line the screen shows
+    exit 1 ;;
   off)
     locked; rm -f $RUN/nocry-sta.conf $STATIC
     was=$(sed -n 's/^ssid=//p' $STATE 2>/dev/null)
