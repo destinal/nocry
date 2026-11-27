@@ -4,7 +4,7 @@ nocryboot is the open boot loader for Creality's Ingenic X2000E boards (Nebula P
 
 | Part | Factory | nocryboot | State |
 |---|---|---|---|
-| First stage (SPL), eMMC byte 0x4400 | Creality build of Ingenic's U-Boot SPL, no source published | built from public source, `tools/nocryboot-build` | builds; matches the factory SPL in the emulator; **not yet run on a board** |
+| First stage (SPL), eMMC byte 0x4400 | Creality build of Ingenic's U-Boot SPL, no source published | built from public source, `tools/nocryboot-build` | builds; matches the factory SPL in the emulator; boots a Nebula Pad when started from RAM (`nocry run-spl`, 2026-11-26, with the factory loader run the same way as control); not yet installed, K1 not yet tried |
 | Boot picture image (`rtos`, `rtos2`) | Ingenic FreeRTOS image, closed | `rtos/` (nocry-rtos) | runs on the Nebula Pad and a K1 mainboard |
 | Full U-Boot in the boot area | present, never started | not needed | – |
 
@@ -58,6 +58,6 @@ Installing it means writing the 24 KiB file at byte 0x4400 of the eMMC (inside t
 
 ### Next
 
-- Run it on both boards over USB, then installed.
+- Run it on a K1 board over USB; install it on both.
 - A recovery door: a way to reach a loader without the BOOT button (the factory SPL has none).
 - Read the partition table from the disk instead of the built-in one.
