@@ -110,7 +110,7 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 Same day, with the system image that carries the firmware and tools:
 
 - **Wi-Fi firmware loads** (`brcmfmac43430-sdio.bin`, version 7.45.98.118; it uses the `AP6212` board file), `wlan0` appears, and a scan lists the networks in range.
-- **Access-point mode is supported and starts:** `wpa_supplicant` with `mode=2` brings up a WPA2 network on channel 6, `dnsmasq` hands out addresses. Whether a client can join and reach the board is the next check.
+- **Access-point mode is supported and starts:** `wpa_supplicant` with `mode=2` brings up a WPA2 network on channel 6, `dnsmasq` hands out addresses. A phone joined it, got an address, and answered pings from the board.
 - The interface comes up with the chip's own MAC address; rescue should set the one from `sn_mac`, as the firmware does.
 - A press on the screen reads as pressure 1400 to 1750 with a stable position; no touch reads as pressure 0.
 
@@ -118,7 +118,6 @@ Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (ker
 
 ## Open points
 
-- Access-point mode: a client joining and reaching the board is still to be seen.
 - NS2009: kernel driver or user-space reader; calibration.
 - Size: measure after step 1; the 20 to 40 MiB estimate decides how long the loader's checksum takes.
 - Bluetooth is not used.

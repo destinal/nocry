@@ -29,7 +29,7 @@ Last updated: 2026-11-27.
 
 ## nocry-rescue (touchscreen recovery on the printer; design in `docs/nocry-rescue.md`)
 
-- [ ] **Step 1: hardware bring-up from RAM on the Nebula Pad.** Done: screen, backlight, touch chip answers, Wi-Fi chip detected. Wi-Fi firmware loads, scan works, access point starts. Left: a client joining the access point; joining an existing network; touch calibration.
+- [ ] **Step 1: hardware bring-up from RAM on the Nebula Pad.** Done: screen, backlight, touch chip answers, Wi-Fi chip detected. Wi-Fi firmware loads, scan works, access point works (a phone joined and was reachable). Left: joining an existing network; touch calibration.
 - [ ] Step 2: interface skeleton, `nocry-fbd` over TCP with pairing, mDNS, nocry over the LAN.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
