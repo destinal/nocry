@@ -376,6 +376,32 @@ impl Target {
         }
     }
 
+    /// Copies `len` bytes from `src` to `dst` on the board itself when its service can do that
+    /// (nocry-fbd 0.4+): the data does not pass through this computer. Returns the bytes
+    /// written (identical parts are skipped), or None when the caller has to copy by reading
+    /// and writing. The board reads back what it wrote; the caller checks again with hashes.
+    pub fn copy_on_board(&self, src: u64, dst: u64, len: u64) -> Result<Option<u64>> {
+        let Backend::Fb(fb) = &self.b else { return Ok(None) };
+        if (src | dst | len) % 512 != 0 {
+            return Ok(None);
+        }
+        if !self.writable {
+            bail!("{} was opened read-only", self.path.display());
+        }
+        if !self.can_copy_on_board() {
+            return Ok(None);
+        }
+        Ok(Some(fb.borrow_mut().copy("mmc0", src, dst, len)?))
+    }
+
+    /// Whether the board's service has the copy command.
+    pub fn can_copy_on_board(&self) -> bool {
+        match &self.b {
+            Backend::Fb(fb) => fb.borrow_mut().getvar("nocry-ext").unwrap_or_default().split(',').any(|e| e == "copy"),
+            _ => false,
+        }
+    }
+
     /// Hash of `data` as chunk_hashes would report it.
     pub fn local_hash(data: &[u8]) -> Vec<u8> {
         crate::fastboot::Hash::Xxh64.of(data)

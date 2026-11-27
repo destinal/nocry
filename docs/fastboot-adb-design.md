@@ -42,7 +42,7 @@ Verified on hardware (2026-11-25):
 
 ### Fastboot service in the recovery (`nocry-fbd`, 2026-11-25)
 
-`tools/recovery-build/fbd/nocry-fbd.c` runs over FunctionFS next to adb and the console (same gadget, `1209:0003`). It speaks standard fastboot plus two streaming extensions: `nocry-write:<name>:<off>:<size>` and `nocry-hash:<sha256|xxh64>:<name>:<off>:<size>:<chunk>`. No disk device is opened on the PC. Host test: `tests/fbd_stdio_test.py` (29 checks against a backup copy).
+`tools/recovery-build/fbd/nocry-fbd.c` runs over FunctionFS next to adb and the console (same gadget, `1209:0003`). It speaks standard fastboot plus two streaming extensions: `nocry-write:<name>:<off>:<size>` and `nocry-hash:<sha256|xxh64>:<name>:<off>:<size>:<chunk>`. From 0.4 also `nocry-copy:<name>:<src off>:<dst off>:<size>`: a copy inside the eMMC done by the board (identical megabytes skipped, written ones read back), answered with the bytes written; nocry uses it to copy a slot, so the firmware does not travel to the computer and back. No disk device is opened on the PC. Host test: `tests/fbd_stdio_test.py` (29 checks against a backup copy).
 
 Measured on hardware with `nocry fb …` (nocry's own client):
 

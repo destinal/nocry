@@ -2086,8 +2086,31 @@ pub fn copy_slot(soc: &SocProfile, via: Via, from: &str, safety_dir: Option<&std
     safety_copy(&t, safety_dir, "slot-copy")?;
     let mut written = 0;
     let mut m = crate::events::Meter::new(format!("Copying slot {} to slot {}", from.to_uppercase(), to.to_uppercase()), jobs.iter().map(|j| j.2).sum());
+    // On the board itself when its service can: the firmware then never travels to this
+    // computer and back, which matters most over the network. The board reads back what it
+    // writes; its hashes of both sides are compared here as a second check.
+    let on_board = t.can_copy_on_board();
+    if on_board {
+        say!("copying on the board itself; only progress and checksums travel");
+    }
     for (src, dst, size, name) in &jobs {
-        written += write_range_m(&t, *dst, *size, name, |o, n| t.read(src + o, n), &mut m)?;
+        if !on_board {
+            written += write_range_m(&t, *dst, *size, name, |o, n| t.read(src + o, n), &mut m)?;
+            continue;
+        }
+        const STEP: u64 = 16 << 20;
+        let mut done = 0;
+        while done < *size {
+            crate::events::check_cancelled()?;
+            let n = STEP.min(size - done);
+            written += t.copy_on_board(src + done, dst + done, n)?.context("the board stopped offering its copy command")?;
+            let (a, b) = (t.chunk_hashes(src + done, n, 1 << 20)?, t.chunk_hashes(dst + done, n, 1 << 20)?);
+            if a.is_none() || a != b {
+                bail!("verify FAILED for {name} at {:#x}: the copy does not match its source", dst + done);
+            }
+            done += n;
+            m.add(n);
+        }
     }
     m.end();
     say!("slot {} copied to slot {} and verified ({} bytes written); the active slot was not changed", from.to_uppercase(), to.to_uppercase(), written);

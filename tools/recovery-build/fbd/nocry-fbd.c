@@ -45,7 +45,7 @@
 _Static_assert(sizeof(off_t) == 8, "64-bit file offsets required");
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
 
-#define FBD_VERSION	"nocry-fbd 0.3"
+#define FBD_VERSION	"nocry-fbd 0.4"
 #define MIB		(1u << 20)
 #define BUFCAP		(4 * MIB)		/* queue buffer size = largest block */
 #define NQ		8
@@ -417,7 +417,7 @@ static void getvar_one(const char *v, char *out)
 	else if (!strcmp(v, "secure")) strcpy(out, "no");
 	else if (!strcmp(v, "unlocked")) strcpy(out, "yes");
 	else if (!strcmp(v, "critical-unlocked")) strcpy(out, critical_unlocked ? "yes" : "no");
-	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put");
+	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy");
 	else if (!strcmp(v, "slot-count")) strcpy(out, "2");
 	else if (!strcmp(v, "current-slot")) { int s = current_slot(); if (s >= 0) strcpy(out, s ? "b" : "a"); }
 	else if (!strncmp(v, "has-slot:", 9))
@@ -608,6 +608,39 @@ static void cmd_nocry_write(char *arg)
 	OKAY("");
 }
 
+/* nocry-copy:<name>:<src off>:<dst off>:<size> (hex, 512-aligned, inside <name>, not overlapping):
+ * copies on the board, so the data does not travel to the computer and back. Megabytes that are
+ * already identical are not written; each one written is read back and compared.
+ * Answer: OKAY<bytes written, hex>. */
+static void cmd_nocry_copy(char *arg)
+{
+	static u8 *cbuf; struct region r; char why[80], *f[4]; u64 src, dst, size, bytes, written = 0; int i, e = 0;
+	for (i = 0, f[0] = arg; i < 3; i++) {
+		f[i + 1] = f[i] ? strchr(f[i], ':') : NULL;
+		if (!f[i + 1]) { FAIL("usage: nocry-copy:<name>:<src off>:<dst off>:<size>"); return; }
+		*f[i + 1]++ = 0;
+	}
+	if (region_find(f[0], &r, why)) { FAIL("%s", why); return; }
+	if (need_critical(&r)) return;
+	src = strtoull(f[1], NULL, 16); dst = strtoull(f[2], NULL, 16); size = strtoull(f[3], NULL, 16);
+	bytes = r.nblk * 512;
+	if (!size || (src | dst | size) % 512) { FAIL("offsets and size must be non-zero multiples of 512"); return; }
+	if (src > bytes || dst > bytes || size > bytes - src || size > bytes - dst) { FAIL("range exceeds '%s'", f[0]); return; }
+	if (src < dst + size && dst < src + size) { FAIL("source and destination overlap"); return; }
+	if (!cbuf && !(cbuf = xalign(MIB))) { FAIL("out of memory"); return; }
+	src += r.lba * 512; dst += r.lba * 512;
+	while (size && !e) {
+		size_t k = size > MIB ? MIB : size;
+		if (dread(src, cbuf, k) || dread(dst, vbuf, k)) e = -EIO;
+		else if (memcmp(cbuf, vbuf, k)) { e = dwrite_verified(dst, cbuf, k); written += k; }
+		src += k; dst += k; size -= k;
+	}
+	fdatasync(disk);
+	if (e == -EILSEQ) FAIL("verify failed: the destination does not read back what was written");
+	else if (e) FAIL("read or write error");
+	else OKAY("%llx", (unsigned long long)written);
+}
+
 static void cmd_nocry_hash(char *arg)
 {
 	struct region r; u64 off, size, chunk, nch; struct span sp; pthread_t th; u8 *b; size_t n;
@@ -732,6 +765,7 @@ static void dispatch(char *c)
 	else if (!strncmp(c, "fetch:", 6)) cmd_fetch(c + 6);
 	else if (!strncmp(c, "nocry-write:", 12)) cmd_nocry_write(c + 12);
 	else if (!strncmp(c, "nocry-hash:", 11)) cmd_nocry_hash(c + 11);
+	else if (!strncmp(c, "nocry-copy:", 11)) cmd_nocry_copy(c + 11);
 	else if (!strncmp(c, "nocry-secure-erase:", 19)) cmd_nocry_secure_erase(c + 19);
 	else if (!strcmp(c, "nocry-dmesg")) cmd_nocry_dmesg();
 	else if (!strncmp(c, "nocry-put:", 10)) cmd_nocry_put(c + 10);

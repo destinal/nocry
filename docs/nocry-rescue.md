@@ -132,6 +132,8 @@ Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (ker
 
 - **First run over Wi-Fi (from a Mac):** pairing worked, but reading the board's details did not finish: finding the firmware version read each slot's whole system partition, and the board was sending at 5.5 Mbit/s. The version lookup now fetches only the blocks it needs (about 0.4 MB of a 200 MB system, `squashfs::Paged`). The slow sending rate is unexplained.
 
+- **Copying a slot** went through the computer (read slot A, send it back for slot B), which over Wi-Fi is the whole firmware twice through a slow link. `nocry-fbd` 0.4 has `nocry-copy`: the board copies, nocry asks for 16 MiB at a time, shows progress and compares the board's checksums of both sides. Tested on a PC against a disk image through `nocry-netd`: 512 MiB of slot in 0.6 s, both slots byte-identical, a repeat writes nothing. With an older service nocry copies the old way.
+
 Missing: a run over the board's Wi-Fi instead of the tunnel (the development PC has no Wi-Fi adapter), and the model and serial number tail in the announcement so two boards can be told apart in the list.
 
 ## Open points

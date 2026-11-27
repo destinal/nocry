@@ -255,6 +255,14 @@ impl Fastboot {
         Ok(())
     }
 
+    /// nocry-copy (nocry-fbd 0.4+): copies `size` bytes inside <name> on the board itself, from
+    /// `src` to `dst`. Parts that are already identical are not written; written parts are read
+    /// back and compared by the board. Returns the bytes written.
+    pub fn copy(&mut self, name: &str, src: u64, dst: u64, size: u64) -> Result<u64> {
+        let r = self.command_timeout(&format!("nocry-copy:{name}:{src:x}:{dst:x}:{size:x}"), Duration::from_secs(300))?;
+        u64::from_str_radix(r.trim(), 16).with_context(|| format!("nocry-copy: bad answer {r:?}"))
+    }
+
     /// nocry-hash (nocry-fbd only): one digest per `chunk` bytes, computed on the board.
     pub fn hash(&mut self, algo: Hash, name: &str, off: u64, size: u64, chunk: u64) -> Result<Vec<Vec<u8>>> {
         let n = self.expect_data(&format!("nocry-hash:{}:{name}:{off:x}:{size:x}:{chunk:x}", algo.name()))?;
