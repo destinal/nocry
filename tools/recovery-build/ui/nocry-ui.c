@@ -641,6 +641,7 @@ static void wifi_done(int rc, char *out)
 		snprintf(body, sizeof body, "Connected to \"%s\".\nWeb interface: http://%s", kv(st, "ssid"), kv(st, "address"));
 		depth = 1; show(); message("Connected", body);
 	} else if (rc == 2) remark("Not accepted", why);		/* refused before anything was tried: the typed text stays */
+	else if (rc == 3) show();					/* the owner cancelled it: nothing to explain */
 	else if (rc) {
 		snprintf(body, sizeof body, "%s%s%s", why, *why ? "\n" : "", !strcmp(kv(st, "mode"), "ap") ? "The board is in access point mode." : "");
 		remark("Connection failed", body);
@@ -849,10 +850,27 @@ static void net_cb(lv_event_t *e)
 	}
 }
 /* push-button WPS: the router gives the board its name and password after its button was pressed */
+static lv_obj_t *wps_text, *wps_stop;
+static void wps_cancel_cb(lv_event_t *e)
+{
+	(void)e;
+	start(NULL, NULL, "nocry-wifi", "wps-cancel", NULL);	/* the waiting command ends within a second and answers */
+	lv_label_set_text(wps_text, "Cancelling...\nReturning to access point mode.");
+	lv_obj_add_flag(wps_stop, LV_OBJ_FLAG_HIDDEN);
+}
 static void wps_yes(void)
 {
+	lv_obj_t *box, *r, *s;
 	snprintf(chosen, sizeof chosen, "WPS");
-	busy("Waiting for the router...\nUp to two minutes.");
+	box = modal_box();		/* like busy(), with a way out; the command has its own two-minute limit */
+	r = row(box); lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_style_pad_column(r, 12, 0);
+	s = lv_spinner_create(r, 1000, 60); lv_obj_set_size(s, 36, 36);
+	lv_obj_set_style_arc_width(s, 5, 0); lv_obj_set_style_arc_width(s, 5, LV_PART_INDICATOR);
+	wps_text = text(r, "Waiting for the router's WPS button...\nUp to two minutes.");
+	lv_obj_set_width(wps_text, LV_SIZE_CONTENT); lv_obj_set_flex_grow(wps_text, 1);
+	wps_stop = wide(grey(button(box, "Cancel", wps_cancel_cb, NULL)));
 	start(wifi_done, NULL, "nocry-wifi", "wps", NULL);
 }
 static void wps_cb(lv_event_t *e)

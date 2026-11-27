@@ -12,6 +12,7 @@
 #                                   for one (PASSWORD "" for an open network; "" skips a field)
 #   nocry-wifi wps                  join the router whose WPS button was just pressed (push-button
 #                                   WPS, two minutes); back to the own network if that fails
+#   nocry-wifi wps-cancel           stop waiting for the router's WPS button (exit status 3 there)
 #   nocry-wifi off                  leave the network and keep the radio off (until a network is
 #                                   chosen, the own network is opened, or the board restarts)
 #   nocry-wifi rejoin               join the last network again
@@ -214,6 +215,10 @@ join_wps() {
     log "WPS: waiting for a router with its button pressed"
     i=0; s=
     while [ $i -lt 120 ]; do
+        if [ -e $RUN/nocry-wps.stop ]; then
+            wpa_cli -p $CTRL -i $IF wps_cancel >/dev/null 2>&1
+            WHY="cancelled"; CANCELLED=1; log "WPS: cancelled"; return 1
+        fi
         s=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^wpa_state=//p')
         [ "$s" = COMPLETED ] && break
         grep -q "WPS-OVERLAP-DETECTED" $RUN/nocry-wpa.log 2>/dev/null && { WHY="more than one router is offering WPS right now; wait two minutes and try again"; log "WPS: overlap"; return 1; }
@@ -279,11 +284,14 @@ case "$1" in
     locked; rm -f $RUN/nocry-sta.conf $STATIC; start_ap chosen ;;
   wps)
     locked
+    rm -f $RUN/nocry-wps.stop
     if join_wps; then exit 0; fi
-    rm -f $RUN/nocry-sta.conf
+    rm -f $RUN/nocry-sta.conf $RUN/nocry-wps.stop
     start_ap "failed:WPS"
     echo "${WHY:-WPS did not complete}" >&2       # last: it is the line the screen shows
+    [ -n "$CANCELLED" ] && exit 3
     exit 1 ;;
+  wps-cancel) : > $RUN/nocry-wps.stop ;;        # no lock: the one waiting holds it
   off)
     locked; rm -f $RUN/nocry-sta.conf $STATIC
     was=$(sed -n 's/^ssid=//p' $STATE 2>/dev/null)
