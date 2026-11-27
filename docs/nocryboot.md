@@ -56,7 +56,7 @@ USB boot mode is requested the way Ingenic's own tools do it: the value `0x42575
 
 "Holds a kernel" means a uImage header with the Linux type and a plausible load address and size; the data is not checksummed (that would cost boot time). When the SPL starts the other slot it does not change the `ota` record, so the system then runs from the slot it believes inactive; treat that as an emergency start and repair the board.
 
-State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest.bin` is a loader that only opens the door, to check on a board that the boot ROM honours the request.
+State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. The loaders with the door are not installed on a board yet.
 
 ### Build and try
 

@@ -29,7 +29,7 @@ for p in "$HERE"/patches/*.patch; do patch -s -d "$WORK/src" -p1 < "$p"; done
 
 # doortest: a loader that does nothing but restart the board into USB boot mode; start it
 # with `nocry run-spl` to check that a board's boot ROM honours the recovery door.
-for fam in nebula k1 doortest; do
+for fam in nebula k1 doortest_nebula doortest_k1; do
   t=nocryboot_$fam; o="$OUT/$t"; mkdir -p "$o"
   docker run --rm -v "$WORK/src:/src:ro" -v "$o:/out" nocry-uboot-build bash -c "
     cp -a /src /w && cd /w &&
@@ -37,8 +37,8 @@ for fam in nebula k1 doortest; do
     cp spl/u-boot-spl spl/u-boot-spl.map spl/u-boot-spl-pad.bin /out/ &&
     mipsel-linux-gnu-objdump -d spl/u-boot-spl > /out/u-boot-spl.dis &&
     chown -R $(id -u):$(id -g) /out" || { echo "build of $t failed, see $o/build.log" >&2; exit 1; }
-  cp "$o/u-boot-spl-pad.bin" "$OUT/nocryboot-$fam.bin"
-  python3 -I - "$OUT/nocryboot-$fam.bin" "$o/u-boot-spl.dis" <<'PY'
+  f="$OUT/nocryboot-${fam//_/-}.bin"; cp "$o/u-boot-spl-pad.bin" "$f"
+  python3 -I - "$f" "$o/u-boot-spl.dis" <<'PY'
 import sys, re
 b = open(sys.argv[1], 'rb').read(); dis = open(sys.argv[2]).read()
 assert len(b) == 24576, 'loader must be exactly 24 KiB, is %d' % len(b)
@@ -49,4 +49,4 @@ assert b'lcm_id=' in b and b'sn_mac' in b and b'ota:kernel2' in b
 assert b'restarting in USB boot mode' in b
 PY
 done
-cd "$OUT" && sha256sum nocryboot-nebula.bin nocryboot-k1.bin nocryboot-doortest.bin
+cd "$OUT" && sha256sum nocryboot-nebula.bin nocryboot-k1.bin nocryboot-doortest-nebula.bin nocryboot-doortest-k1.bin
