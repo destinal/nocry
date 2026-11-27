@@ -1,0 +1,203 @@
+nocryboot: hold the screen at power-on to start the rescue system
+
+The Nebula Pad build reads the touch chip once at start (NS2009, I2C bit-banged on PC25/PC26).
+If the screen is pressed it loads the rescue system, a Linux kernel kept as a file on the data
+partition, from the sector runs noted in the third sector of "ota", checks it against the sum
+noted there, and starts it with nocry.rescue=touch. Anything missing or wrong and the board
+starts as always. Version 0.2.
+---
+diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
+index 6e6d88620..686321199 100644
+--- a/common/spl/spl_jzsdhci.c
++++ b/common/spl/spl_jzsdhci.c
+@@ -2065,6 +2065,7 @@ void spl_mmc_mcu_rtos_boot(void)
+ #ifdef CONFIG_NOCRYBOOT
+ extern void nocryboot_usb_boot_mode(const char *why);
+ extern int nocryboot_console_asks(void);
++extern int nocryboot_touch_held(void);
+ extern const char nocryboot_ident[];
+ 
+ /*
+@@ -2216,6 +2217,76 @@ static int nocryboot_slot_state(int slot_b)
+  *     nocryboot:incomplete=B    parts missing, left it
+  *     nocryboot:unconfirmed=B   never reported success, but nothing else to start
+  */
++#ifdef CONFIG_NOCRYBOOT_TOUCH
++/*
++ * The rescue system: a Linux kernel with its files built in, kept as a file on the data
++ * partition.  The SPL cannot read a file system, so whoever puts the file there notes in
++ * the third sector of "ota" where its blocks are:
++ *
++ *     nocryboot:rescue:<sum> <sector>+<count> <sector>+<count> ...
++ *
++ * all in hexadecimal: the runs of 512-byte sectors that make up the file, in order, and the
++ * sum of all its 32-bit words.  The file is a uImage named "nocry-rescue...", a Linux kernel
++ * that needs no unpacking by the loader.  If the note is missing, or what the runs hold is
++ * not that file any more (moved, deleted, overwritten: the sum is wrong), this returns and
++ * the board starts as always.  Otherwise it does not return.
++ */
++#define NB_SCRATCH	0x8f000000	/* far above anything loaded */
++
++static u32 nb_hex(char **p)	/* the next number of the note; 0 at its end */
++{
++	u32 v = 0;
++	int d, any = 0;
++	char c;
++
++	for (;; (*p)++) {
++		c = **p;
++		d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
++		if (d < 0) {
++			if (any || c < ' ')
++				return v;
++			continue;
++		}
++		v = v << 4 | d;
++		any = 1;
++	}
++}
++
++static void nocryboot_rescue(unsigned int ota)
++{
++	char *note = (char *)NB_SCRATCH, *p = note + 17;
++	struct image_header *ih = (struct image_header *)(NB_SCRATCH + 512);
++	u32 want, sector, count, sum = 0, *first, *dst, *w;
++
++	if (mmc_block_read(ota + 2, 1, (u32 *)note) < 0 || strncmp(note, "nocryboot:rescue:", 17))
++		return;
++	note[511] = 0;
++	want = nb_hex(&p);
++	sector = nb_hex(&p);
++	count = nb_hex(&p);
++	if (!sector || mmc_block_read(sector, 1, (u32 *)ih) < 0 ||
++	    image_get_magic(ih) != IH_MAGIC || image_get_os(ih) != IH_OS_LINUX ||
++	    image_get_comp(ih) != IH_COMP_NONE || strncmp((char *)ih->ih_name, "nocry-rescue", 12))
++		return;
++	first = dst = (u32 *)(image_get_load(ih) - sizeof(*ih));
++	spl_image.entry_point = image_get_ep(ih);
++	while (sector && count) {
++		if (count > 0xffff || dst + count * 128 > (u32 *)0x88000000 ||
++		    mmc_block_read(sector, count, dst) < 0)
++			return;
++		dst += count * 128;
++		sector = nb_hex(&p);
++		count = nb_hex(&p);
++	}
++	for (w = first; w < dst; w++)
++		sum += *w;
++	if (sum != want)
++		return;
++	puts("nocryboot: screen held; rescue\n");
++	jump_to_image_linux("nocry.rescue=touch");
++}
++#endif
++
+ static char *nocryboot_load(void)
+ {
+ 	char *buf = (char *)CONFIG_SYS_TEXT_BASE;
+@@ -2230,6 +2301,14 @@ static char *nocryboot_load(void)
+ 	/* test build: checks that the boot ROM honours the request */
+ 	nocryboot_usb_boot_mode("door test");
+ #endif
++#ifdef CONFIG_NOCRYBOOT_TOUCH
++	/* the screen held at power-on asks for the rescue system */
++	if (nocryboot_touch_held()) {
++		spl_get_built_in_gpt_partition(CONFIG_SPL_OTA_NAME, &ota, NULL);
++		nocryboot_rescue(ota);
++		puts("nocryboot: screen held, but no rescue system\n");
++	}
++#endif
+ 
+ 	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, (u32 *)buf) &&
+ 	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
+diff --git a/common/spl/spl_nocryboot.c b/common/spl/spl_nocryboot.c
+index bc17057ed..9f0476129 100644
+--- a/common/spl/spl_nocryboot.c
++++ b/common/spl/spl_nocryboot.c
+@@ -38,6 +38,64 @@ void nocryboot_usb_boot_mode(const char *why)
+ 		;
+ }
+ 
++#ifdef CONFIG_NOCRYBOOT_TOUCH
++/*
++ * Is the screen being pressed?  One pressure reading of the NS2009 touch chip, the I2C
++ * bus bit-banged on the two pins as open-drain lines (driven low or released to the
++ * pull-ups).  Not pressed reads 0, a finger about 2200 of 4095; a chip that does not answer
++ * counts as not pressed.  Three readings 20 ms apart must agree, so noise cannot open it.
++ */
++#define GPC		0xb0010200
++#define T_SCL		(1 << 25)
++#define T_SDA		(1 << 26)
++static void t_pin(u32 pin, int high)	/* PAT1 set = input (released), clear = output low */
++{
++	writel(pin, GPC + (high ? 0x34 : 0x38));
++	udelay(5);
++}
++static u32 t_xfer(u32 out)		/* nine bits out (1 = released), nine bits back */
++{
++	u32 in = 0;
++	int i;
++
++	for (i = 8; i >= 0; i--) {
++		t_pin(T_SDA, (out >> i) & 1);
++		t_pin(T_SCL, 1);
++		in = in << 1 | ((readl(GPC) >> 26) & 1);
++		t_pin(T_SCL, 0);
++	}
++	return in;
++}
++static void t_start(void) { t_pin(T_SDA, 1); t_pin(T_SCL, 1); t_pin(T_SDA, 0); t_pin(T_SCL, 0); }
++static void t_stop(void) { t_pin(T_SDA, 0); t_pin(T_SCL, 1); t_pin(T_SDA, 1); }
++
++int nocryboot_touch_held(void)
++{
++	u32 a, b, nak;
++	int n;
++
++	writel(T_SCL | T_SDA, GPC + 0x18);	/* not interrupts */
++	writel(T_SCL | T_SDA, GPC + 0x24);	/* plain GPIO */
++	writel(T_SCL | T_SDA, GPC + 0x48);	/* when driven: low */
++	for (n = 0; n < 3; n++) {
++		t_start();
++		nak = t_xfer(0x90 << 1 | 1) & 1;		/* address 0x48, write */
++		nak |= t_xfer(0xe0 << 1 | 1) & 1;		/* measure pressure (Z1) */
++		t_stop();
++		udelay(200);
++		t_start();
++		nak |= t_xfer(0x91 << 1 | 1) & 1;		/* address 0x48, read */
++		a = t_xfer(0xff << 1) >> 1;			/* acknowledged */
++		b = t_xfer(0x1ff) >> 1;				/* last byte */
++		t_stop();
++		if (nak || (a << 4 | b >> 4) < 600)
++			return 0;
++		udelay(20000);
++	}
++	return 1;
++}
++#endif
++
+ /*
+  * Someone at the serial console asking for the door: at least three ESC
+  * characters, and nothing else, received since the console came up.
+diff --git a/include/configs/nocryboot.h b/include/configs/nocryboot.h
+index 3eda3a42f..8fab27be8 100644
+--- a/include/configs/nocryboot.h
++++ b/include/configs/nocryboot.h
+@@ -21,7 +21,7 @@
+ #ifdef CONFIG_NOCRYBOOT_DOOR_TEST
+ #define NOCRYBOOT_VERSION	"0.1-doortest"	/* never installed: it only opens the door */
+ #else
+-#define NOCRYBOOT_VERSION	"0.1"
++#define NOCRYBOOT_VERSION	"0.2"
+ #endif
+ 
+ #define CONFIG_ROOTFS_SQUASHFS
+@@ -37,6 +37,8 @@
+ #if defined(CONFIG_NOCRYBOOT_NEBULA)
+ #define CONFIG_SYS_UART_INDEX		4
+ #define NOCRYBOOT_FAMILY		"nebula"
++/* the Nebula Pad's touch chip (NS2009 on PC25 clock, PC26 data): screen held at power-on = rescue */
++#define CONFIG_NOCRYBOOT_TOUCH
+ #define CONFIG_SYS_UART4_PA		/* on pins PA2/PA3 */
+ #elif defined(CONFIG_NOCRYBOOT_K1)
+ #define CONFIG_SYS_UART_INDEX		2
