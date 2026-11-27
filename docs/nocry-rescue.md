@@ -24,7 +24,7 @@ It needs nocryboot as the board's loader. USB boot mode stays the last resort be
 | First version | **decided:** Nebula Pad first. Network setup, slot choice, factory reset, start normally, control from nocry over the LAN. |
 | Firmware install from the touchscreen | **decided:** second step (needs nocry's install engine built for the board) |
 | LAN access | proposed: pairing code shown on the touchscreen, typed into nocry on the PC; discovery by mDNS |
-| Interface | LVGL, starting from GuppyScreen / NebulaOS-nebulascreen (GPL-3.0); rescue's interface is its own GPL-3.0 program |
+| Interface | **built:** `nocry-ui`, its own small program (GPL-2.0-or-later) on LVGL 8.3 (MIT), drawing into the frame buffer and reading the touch chip itself; every action is a `nocry-rescue-do` / `nocry-wifi` command, the same ones the web pages use |
 
 ## Why a file and a pointer
 
@@ -88,6 +88,19 @@ The NS2009 is resistive, so the interface needs a one-time calibration screen (s
 - Status: loader, firmware versions, why rescue was started (the loader's note).
 
 Second step: install firmware from Creality's list or a USB stick on the printer itself.
+
+### As built (`tools/recovery-build/ui/nocry-ui.c`)
+
+- Home: six tiles (Wi-Fi, Firmware slots, Install firmware, Repair, About this board, Start the printer), the network and address underneath, the pairing code top right on every screen.
+- Wi-Fi: scan, choose, type the password on an on-screen keyboard, join; back to the board's own network; save the network for the installed firmware.
+- Slots: what is in A and B, which one starts, switch, copy one over the other.
+- Install firmware: the list for this board (refreshed from the internet on request), into the starting slot or the other one; downloaded and checked first, then a summary to confirm.
+- Repair: check either file system, storage health, remove system modifications, factory reset.
+- Long work shows a progress bar and a Stop button that says what stopping leaves behind. Anything that erases asks first.
+- Touch calibration: three crosses, once; kept next to the rescue image on the data partition. Holding a finger anywhere for ten seconds starts it again, so a wrong calibration cannot lock anyone out.
+- `nocry-ui --sim SCRIPT` runs it on a PC without screen or touch chip (taps from a script, pictures to files, commands from `$PATH`): how the screens were checked before they ran on a board.
+
+Not on the screen yet: uploading a firmware file (web pages only), boot loader and boot logo changes, files and logs.
 
 ## Order of work
 

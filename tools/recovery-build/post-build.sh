@@ -24,6 +24,20 @@ if [ -e "$T/usr/sbin/wpa_supplicant" ]; then
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-banner" "$HERE/screen/nocry-banner.c"
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-webd" "$HERE/webd/nocry-webd.c"
   "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-netd" "$T/usr/sbin/nocry-banner" "$T/usr/sbin/nocry-webd"
+  # the touch interface, on LVGL (MIT; fetched by build.sh). The library's objects are kept
+  # between builds: they only change with the library or its settings.
+  if [ -d /w/lvgl/src ]; then
+    O=/w/lvgl-obj; stamp="$(cd /w/lvgl && git rev-parse HEAD 2>/dev/null) $(sha256sum < "$HERE/ui/lv_conf.h")"
+    if [ "$(cat $O/stamp 2>/dev/null)" != "$stamp" ]; then
+      rm -rf $O; mkdir -p $O
+      ( cd $O && find /w/lvgl/src -name '*.c' | xargs -P "$(nproc)" -n 16 "$HOST_DIR/bin/mipsel-linux-gcc" -c -O2 -w -I"$HERE/ui" -I/w/lvgl -DLV_CONF_INCLUDE_SIMPLE )
+      rm -f $O/liblvgl.a; "$HOST_DIR/bin/mipsel-linux-ar" rcs $O/liblvgl.a $O/*.o; echo "$stamp" > $O/stamp
+    fi
+    "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -I"$HERE/ui" -I/w/lvgl -DLV_CONF_INCLUDE_SIMPLE -o "$T/usr/sbin/nocry-ui" "$HERE/ui/nocry-ui.c" $O/liblvgl.a -lm
+    "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-ui"
+  else
+    echo "post-build: no LVGL source in /w/lvgl; the rescue image gets no touch interface" >&2; rm -f "$T/usr/sbin/nocry-ui"
+  fi
   chmod 755 "$T/usr/sbin/nocry-wifi" "$T/etc/init.d/S45nocry-rescue"
   # nocry itself, for the board: the rescue pages install firmware, the boot loader and the boot
   # logo with the same program and checks as on a computer (docs/nocry-rescue.md)

@@ -73,6 +73,8 @@ elif ! git -C "$WORK/linux" diff | cmp -s - "$KP"; then
   exit 1
 fi
 [ -d "$WORK/buildroot" ] || git clone -q --depth 1 --branch "$BR_TAG" "$BR_REPO" "$WORK/buildroot"
+# the graphics library of the rescue system's touch interface (MIT), a fixed release
+[ -d "$WORK/lvgl/src" ] || git clone -q --depth 1 --branch v8.3.11 https://github.com/lvgl/lvgl "$WORK/lvgl"
 
 # --- initramfs (Buildroot)
 # a changed defconfig (e.g. arch/ABI) needs a clean Buildroot build; packages are not rebuilt otherwise

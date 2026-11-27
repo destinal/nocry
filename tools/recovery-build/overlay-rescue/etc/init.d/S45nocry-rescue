@@ -1,6 +1,6 @@
 #!/bin/sh
-# nocry-rescue, until the touch interface exists: get the board onto a network, start the
-# service nocry on a computer talks to, and show on the screen how to reach it.
+# nocry-rescue: get the board onto a network, start the service nocry on a computer talks to,
+# the web pages and the touch interface (nocry-ui).
 #
 # Network (all of it in /usr/sbin/nocry-wifi):
 #   1. the Wi-Fi network the installed firmware has saved, if there is one and it is in reach;
@@ -67,8 +67,15 @@ start() {
     # the web pages, on whatever network the board is on (in a session of their own)
     setsid nocry-webd >/dev/null 2>/dev/console </dev/null &
     nocry-wifi auto >/dev/null 2>&1 &
-    # keep the screen in step with the network and the pairing code
-    ( last=; while :; do
+    # The touch interface. Its calibration is kept next to the rescue image on the data
+    # partition. Without the program (or a screen it can use) the plain text screen stays,
+    # kept in step with the network and the pairing code.
+    nocry-rescue-do get nocry-rescue/touch.cal > /run/nocry-touch.cal 2>/dev/null || rm -f /run/nocry-touch.cal
+    ( while [ -x /usr/sbin/nocry-ui ]; do
+          nocry-ui 2>/dev/console; [ $? = 1 ] && break     # 1: no usable screen; anything else: start it again
+          sleep 1
+      done
+      last=; while :; do
           now="$(cat $CODE 2>/dev/null)|$(cat $STATE 2>/dev/null)"
           [ "$now" != "$last" ] && { last=$now; show; }
           sleep 1
@@ -77,6 +84,6 @@ start() {
 
 case "$1" in
   start) start ;;
-  stop) killall nocry-netd nocry-webd wpa_supplicant dnsmasq mdnsd udhcpc 2>/dev/null ;;
+  stop) killall nocry-ui nocry-netd nocry-webd wpa_supplicant dnsmasq mdnsd udhcpc 2>/dev/null ;;
 esac
 exit 0
