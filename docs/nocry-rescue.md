@@ -186,6 +186,10 @@ Steps 8 and 9 are not a second implementation. The rescue system carries the `no
 - **Stopping:** `nocry` now treats a polite kill like Cancel in the window: it finishes the write under way, then stops. A second one ends it at once.
 - New in the command line for this, usable anywhere: `nocry install <firmware> [--clean | --other-slot] [--yes]` (the window's install, with `--report` for other programs), `nocry catalog --tsv`.
 
+### The same actions from a computer
+
+`nocry-rescue-do` is in the plain recovery image too, and the service passes a fixed list of its verbs on (`nocry-do:<verb>[:<argument, hex>]`: status, health, job, cancel, check, ls, get, put, rm, bundle, wifi-save, restart; `do` in `nocry-ext`). nocry on a computer uses that over USB or the network: `nocry board health | check data|settings | ls [DIR] | get FILE -o OUT | put LOCAL FILE | rm FILE | logs -o OUT | config -o OUT | restart`. Answers of up to 32 MiB travel this way; larger files need the web pages or a backup. The window's dialogs for these are still to be written.
+
 Tested on a PC: `nocry` for the board under an emulator (qemu) installing firmware onto a disk image, checked by the desktop build; the memory limits above; every install and boot page against stand-in tools; a 300 MB upload arriving byte-identical with 2 MB of server memory, and a cut-off upload leaving nothing behind. **Not yet run on a board.**
 
 Tested (second round, 2026-11-27): browsing, downloads, an upload of text and of 2 MB of binary data, deleting, an over-size upload, an upload without a session, paths that climb out, all on a PC against a stand-in folder; on the Nebula Pad the read-only parts (storage report, file listing, log and identity downloads). Not yet run on a board: upload, delete, the file system check, saving the Wi-Fi network, restart.

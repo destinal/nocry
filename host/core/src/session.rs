@@ -472,6 +472,144 @@ pub fn connect_network_board(addr: &str, code: &str) -> Result<(String, String)>
     Ok((product, version))
 }
 
+// --- the board's own repair actions (nocry-rescue-do on the board, reached through its service) ---
+
+fn do_service() -> Result<fastboot::Fastboot> {
+    let mut fb = match network_board() {
+        Some((addr, code)) => fastboot::Fastboot::open_net(&addr, &code)?,
+        None => {
+            let f = match usb::running_recovery(SOCS)?.into_iter().next() {
+                Some(f) => f,
+                None => start_recovery(&SOCS[0], None, None, None, None, None, 60.0).context("no board is connected, or the recovery system could not be started on it")?,
+            };
+            fastboot::Fastboot::open(&f)?
+        }
+    };
+    fb.info = Box::new(|_| {});
+    if !fb.getvar("nocry-ext").unwrap_or_default().split(',').any(|e| e == "do") {
+        bail!("the recovery system running on this board is too old for this (its service has no repair actions); get the current board images");
+    }
+    Ok(fb)
+}
+
+fn do_text(verb: &str, arg: Option<&str>) -> Result<String> {
+    Ok(String::from_utf8_lossy(&do_service()?.board_do(verb, arg, None, Duration::from_secs(120))?).into_owned())
+}
+
+fn kv(text: &str, key: &str) -> String {
+    text.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('='))).unwrap_or("").to_string()
+}
+
+/// The storage chip's own wear report and the state of the data partition.
+#[derive(Debug, Clone, Default)]
+pub struct Health {
+    pub chip: String,
+    /// "0-10", "10-20" ... "over-100", or "unknown": percent of the chip's life used, for its two kinds of cells
+    pub wear_a: String,
+    pub wear_b: String,
+    pub spare: String,
+    /// "readable" or "no file system"
+    pub data_state: String,
+    pub data_total_mb: u64,
+    pub data_used_mb: u64,
+    pub data_free_mb: u64,
+}
+
+pub fn board_health() -> Result<Health> {
+    let t = do_text("health", None)?;
+    let n = |k: &str| kv(&t, k).parse().unwrap_or(0);
+    Ok(Health {
+        chip: kv(&t, "chip"),
+        wear_a: kv(&t, "wear_a"),
+        wear_b: kv(&t, "wear_b"),
+        spare: kv(&t, "spare"),
+        data_state: kv(&t, "data_state"),
+        data_total_mb: n("data_total_mb"),
+        data_used_mb: n("data_used_mb"),
+        data_free_mb: n("data_free_mb"),
+    })
+}
+
+/// Check and repair a file system on the board ("data": settings and files; "settings": the
+/// overlay with system changes). Runs on the board; this waits for it and reports its verdict.
+/// A cancel request is passed on to the board, which stops at its next safe point.
+pub fn board_check(which: &str) -> Result<String> {
+    if which != "data" && which != "settings" {
+        bail!("check \"data\" or \"settings\"");
+    }
+    let mut fb = do_service()?;
+    fb.board_do("check", Some(which), None, Duration::from_secs(60))?;
+    let mut asked = false;
+    loop {
+        std::thread::sleep(Duration::from_millis(1500));
+        if !asked && crate::events::check_cancelled().is_err() {
+            asked = true;
+            let _ = fb.board_do("cancel", None, None, Duration::from_secs(30));
+        }
+        let j = String::from_utf8_lossy(&fb.board_do("job", None, None, Duration::from_secs(60))?).into_owned();
+        match kv(&j, "state").as_str() {
+            "running" => crate::events::progress(&kv(&j, "what"), 0, 0, ""),
+            "done" => {
+                crate::events::progress_end();
+                return Ok(kv(&j, "message"));
+            }
+            "cancelled" => {
+                crate::events::progress_end();
+                bail!("cancelled");
+            }
+            _ => {
+                crate::events::progress_end();
+                bail!("{}", kv(&j, "message"));
+            }
+        }
+    }
+}
+
+/// One entry of a folder of the data partition.
+#[derive(Debug, Clone)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+pub fn board_list(dir: &str) -> Result<Vec<DirEntry>> {
+    Ok(do_text("ls", Some(if dir.is_empty() { "/" } else { dir }))?
+        .lines()
+        .filter_map(|l| {
+            let mut p = l.splitn(3, '\t');
+            let (t, size, name) = (p.next()?, p.next()?, p.next()?);
+            (!name.is_empty()).then(|| DirEntry { name: name.to_string(), is_dir: t == "d", size: size.parse().unwrap_or(0) })
+        })
+        .collect())
+}
+
+/// A file of the data partition (up to 32 MiB this way).
+pub fn board_get(path: &str) -> Result<Vec<u8>> {
+    do_service()?.board_do("get", Some(path), None, Duration::from_secs(300))
+}
+
+pub fn board_put(path: &str, data: &[u8]) -> Result<()> {
+    if data.len() > 32 << 20 {
+        bail!("files over 32 MiB cannot be sent this way");
+    }
+    do_service()?.board_do("put", Some(path), Some(data), Duration::from_secs(300)).map(|_| ())
+}
+
+pub fn board_delete(path: &str) -> Result<()> {
+    do_text("rm", Some(path)).map(|_| ())
+}
+
+/// "logs" or "config": a tar.gz of what the board holds of it.
+pub fn board_bundle(what: &str) -> Result<Vec<u8>> {
+    do_service()?.board_do("bundle", Some(what), None, Duration::from_secs(300))
+}
+
+/// Leave the recovery or rescue system: restart the board normally.
+pub fn board_restart() -> Result<()> {
+    do_text("restart", None).map(|_| ())
+}
+
 /// What the board's Wi-Fi is doing (nocry-rescue), and what it could join.
 #[derive(Debug, Clone, Default)]
 pub struct WifiStatus {

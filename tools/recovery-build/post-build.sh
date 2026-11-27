@@ -10,6 +10,9 @@ sed -i '/# GENERIC_SERIAL/a ::respawn:/bin/sh -c "while [ ! -e /dev/ttyGS0 ]; do
 HERE=$(cd "$(dirname "$0")" && pwd)
 "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -pthread -o "$T/usr/sbin/nocry-fbd" "$HERE/fbd/nocry-fbd.c" -lcrypto
 "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-fbd"
+# the board's own repair actions, in the recovery and in the rescue system alike: nocry on a
+# computer reaches them through the service (nocry-do), the rescue pages run them directly
+chmod 755 "$T/usr/sbin/nocry-rescue-do"
 
 # nocry-rescue only (its system has the Wi-Fi tools): the network service and the status screen
 if [ -e "$T/usr/sbin/wpa_supplicant" ]; then
@@ -17,7 +20,7 @@ if [ -e "$T/usr/sbin/wpa_supplicant" ]; then
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-banner" "$HERE/screen/nocry-banner.c"
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-webd" "$HERE/webd/nocry-webd.c"
   "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-netd" "$T/usr/sbin/nocry-banner" "$T/usr/sbin/nocry-webd"
-  chmod 755 "$T/usr/sbin/nocry-wifi" "$T/usr/sbin/nocry-rescue-do" "$T/etc/init.d/S45nocry-rescue"
+  chmod 755 "$T/usr/sbin/nocry-wifi" "$T/etc/init.d/S45nocry-rescue"
   # nocry itself, for the board: the rescue pages install firmware, the boot loader and the boot
   # logo with the same program and checks as on a computer (docs/nocry-rescue.md)
   if [ -d /repo/host ] && command -v cargo >/dev/null 2>&1; then

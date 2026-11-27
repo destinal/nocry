@@ -36,18 +36,8 @@ Last updated: 2026-11-27.
 - [ ] **Rescue web pages** (pairing code once, Wi-Fi, slots, copy, resets, jobs with progress): work on the Nebula. Next, in this order:
   - [ ] **Install firmware, boot loader, boot logo and full backup from the page:** written; nocry itself runs on the board for it (built for mipsel, staged unpacking so it fits in memory). Tested on a PC and under an emulator; needs its first run on the Nebula: a download and install, an upload, the loader and logo pages, a stop in the middle.
   - [ ] the rescue functions below, on the pages too
-- [ ] **Rescue functions for both the desktop app and the web pages** (asked for 2026-11-27; what each has today in brackets):
-  - [ ] Remove system modifications only [web: yes; desktop: factory reset can keep files, but not as its own clearly named action]
-  - [ ] Check and repair the data file system [web: yes, not yet run on a board; desktop: no]
-  - [ ] File browser for the data partition: browse, download, delete, upload [web: yes, writing not yet run on a board; desktop: no]
-  - [ ] Save before wiping [web: configuration, logs, identity record; desktop: full and per-partition backup, no configuration-only download]
-  - [ ] "Why didn't it start?" in one file [web: printer logs, rescue kernel log, status, the nocryboot note; desktop: board log only. Neither has the kernel log of the last normal start]
-  - [ ] Storage health [web: yes; desktop: no]
-  - [ ] Write the Wi-Fi network into the installed firmware's settings [web: yes, not yet run on a board; desktop: no]
-  - [ ] Restart [web: into the firmware, not yet run on a board; neither: the other slot once, USB boot mode; desktop: none]
-  - [ ] Screen and touch test [neither]
-  - [ ] Identity: show and repair [desktop: yes; web: printer type and a download of the record]
-  - [ ] Boot loader and boot logo [desktop: yes; web: no]
+- [ ] **Rescue functions in the window.** The web pages and the command line (`nocry board ...`, `nocry install`) have them; the window still needs its dialogs for: storage health, file system check, the file browser, saving logs and configuration, restart, saving the Wi-Fi network for the firmware, and "remove system modifications" as its own clearly named action. None of the `nocry board` commands has run against a real board yet.
+- [ ] **Still missing everywhere:** the kernel log of the last normal start; restart into the other slot once or into USB boot mode; a screen and touch test; changing a board's printer type from the web pages.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot logo program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.

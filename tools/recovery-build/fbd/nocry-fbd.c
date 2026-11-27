@@ -36,6 +36,7 @@
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <linux/fs.h>
 #include <openssl/evp.h>
 #ifndef FBD_NO_FFS
@@ -54,6 +55,10 @@ typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t
 #define DL_MAX		(64 * MIB)
 #define FETCH_MAX	0x40000000u
 #define CMD_MAX		4096
+#ifndef DO_TOOL
+#define DO_TOOL		"/usr/sbin/nocry-rescue-do"	/* the board's own repair actions */
+#endif
+#define DO_MAX		(32 * MIB)			/* most a nocry-do answer may hold */
 #ifndef WIFI_TOOL
 #define WIFI_TOOL	"/usr/sbin/nocry-wifi"	/* nocry-rescue only */
 #endif
@@ -433,6 +438,7 @@ static void getvar_one(const char *v, char *out)
 	else if (!strcmp(v, "nocry-ext")) {
 		strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put,copy,zero,pcopy");
 		if (!access(WIFI_TOOL, X_OK)) strcat(out, ",wifi");	/* the rescue system only */
+		if (!access(DO_TOOL, X_OK)) strcat(out, ",do");
 	}
 	else if (!strcmp(v, "slot-count")) strcpy(out, "2");
 	else if (!strcmp(v, "current-slot")) { int s = current_slot(); if (s >= 0) strcpy(out, s ? "b" : "a"); }
@@ -830,6 +836,48 @@ static void cmd_nocry_wifi(char *arg)
 	OKAY("");
 }
 
+/* nocry-do:<verb>[:<argument, hex>]: one of the board's own repair actions (nocry-rescue-do), so
+ * that nocry on a computer offers what the board's web pages offer. Only the verbs listed here.
+ * "put" takes the data sent before with "download". Answer: DATA with what the action printed,
+ * then OKAY; or FAIL with its message. */
+static void cmd_nocry_do(char *arg)
+{
+	static const char *const verbs[] = { "status", "health", "job", "cancel", "check", "ls", "get", "put", "rm", "bundle", "wifi-save", "restart", NULL };
+	char *a1 = strchr(arg, ':'), val[600] = "", err[400] = ""; u8 *out; size_t n = 0, en = 0; ssize_t k;
+	int i, in[2], po[2], pe[2], st = 0; pid_t pid;
+	if (a1) *a1++ = 0;
+	for (i = 0; verbs[i] && strcmp(verbs[i], arg); i++) ;
+	if (!verbs[i]) { FAIL("unknown action"); return; }
+	if (access(DO_TOOL, X_OK)) { FAIL("this system has no repair actions"); return; }
+	if (a1 && unhex(a1, val, sizeof(val))) { FAIL("bad argument"); return; }
+	if (!strcmp(arg, "bundle") && strcmp(val, "logs") && strcmp(val, "config")) { FAIL("only the logs and the configuration can be fetched this way"); return; }
+	if (!(out = malloc(DO_MAX))) { FAIL("out of memory"); return; }
+	if (pipe(in) || pipe(po) || pipe(pe)) { free(out); FAIL("cannot start the action"); return; }
+	fflush(NULL);
+	pid = fork();
+	if (pid == 0) {
+		dup2(in[0], 0); dup2(po[1], 1); dup2(pe[1], 2);
+		for (i = 3; i < 256; i++) close(i);
+		if (a1) execl(DO_TOOL, DO_TOOL, arg, val, (char *)NULL); else execl(DO_TOOL, DO_TOOL, arg, (char *)NULL);
+		_exit(127);
+	}
+	close(in[0]); close(po[1]); close(pe[1]);
+	if (!strcmp(arg, "put") && dl && dl_size) { size_t off = 0; while (off < dl_size && (k = write(in[1], dl + off, dl_size - off)) > 0) off += k; }
+	close(in[1]);
+	while (n < DO_MAX && (k = read(po[0], out + n, DO_MAX - n)) > 0) n += k;
+	if (n == DO_MAX && read(po[0], err, 1) > 0) { kill(pid, SIGKILL); snprintf(err, sizeof(err), "too large to fetch this way (over 32 MiB)"); en = strlen(err); st = -1; }
+	else while (en < sizeof(err) - 1 && (k = read(pe[0], err + en, sizeof(err) - 1 - en)) > 0) en += k;
+	close(po[0]); close(pe[0]);
+	if (pid > 0) { int w; waitpid(pid, &w, 0); if (!st) st = WIFEXITED(w) ? WEXITSTATUS(w) : -1; }
+	err[en] = 0; while (en && (err[en - 1] == '\n' || err[en - 1] == '\r')) err[--en] = 0;
+	if (st) FAIL("%.200s", en ? err : "the action failed");
+	else {
+		if (!n) { out[0] = '\n'; n = 1; }
+		if (!resp("DATA", "%08x", (u32)n) && !data_write(out, n)) OKAY("");
+	}
+	free(out);
+}
+
 static void cmd_nocry_dmesg(void)
 {
 	int n = klogctl(10 /* SYSLOG_ACTION_SIZE_BUFFER */, NULL, 0);
@@ -902,6 +950,7 @@ static void dispatch(char *c)
 	else if (!strncmp(c, "nocry-secure-erase:", 19)) cmd_nocry_secure_erase(c + 19);
 	else if (!strcmp(c, "nocry-dmesg")) cmd_nocry_dmesg();
 	else if (!strncmp(c, "nocry-wifi:", 11)) cmd_nocry_wifi(c + 11);
+	else if (!strncmp(c, "nocry-do:", 9)) cmd_nocry_do(c + 9);
 	else if (!strncmp(c, "nocry-put:", 10)) cmd_nocry_put(c + 10);
 	else if (!strncmp(c, "set_active:", 11)) cmd_set_active(c + 11);
 	else if (!strcmp(c, "flashing unlock_critical")) { critical_unlocked = 1; INFO("critical regions (mmc0, gpt, bootloader, sn_mac) writable until reboot"); OKAY(""); }

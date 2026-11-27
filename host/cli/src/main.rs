@@ -42,8 +42,47 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// What the board can do for its own repair (needs the recovery or rescue system of the same version)
+#[derive(Subcommand)]
+enum BoardCmd {
+    /// The storage chip's wear and how full the data partition is
+    Health,
+    /// Check and repair a file system: "data" (settings and files) or "settings" (system changes)
+    Check { which: String },
+    /// List a folder of the data partition (the printer's /usr/data)
+    Ls {
+        #[arg(default_value = "")]
+        dir: String,
+    },
+    /// Fetch a file of the data partition
+    Get {
+        path: String,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Store a local file in the data partition (a file of the same name is replaced)
+    Put { local: PathBuf, path: String },
+    /// Delete a file or an empty folder of the data partition
+    Rm { path: String },
+    /// Save the logs (the printer's and the recovery system's) as one tar.gz
+    Logs {
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Save the printer's configuration files as one tar.gz
+    Config {
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Leave the recovery system: restart the board normally
+    Restart,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
+    /// Repair actions run by the board itself: storage health, file system check, files, logs, restart
+    #[command(subcommand)]
+    Board(BoardCmd),
     /// The Wi-Fi of a board running nocry-rescue: show what it is on and what is in range.
     /// --join makes it join a network (it returns to its own network if that fails);
     /// --own opens its own network "nocry" again
@@ -616,6 +655,54 @@ fn main() -> Result<()> {
                     println!("looking for the board (put this computer on the same network)...");
                     let addr = nocry_core::session::refind_network_board(Duration::from_secs(180))?;
                     println!("found it at {addr}; use --net {addr} with the same code");
+                }
+            }
+        }
+        Cmd::Board(b) => {
+            use nocry_core::session as s;
+            match b {
+                BoardCmd::Health => {
+                    let h = s::board_health()?;
+                    println!("storage chip {}: {} % of its life used{}, spare blocks: {}", h.chip, h.wear_a, if h.wear_b != h.wear_a { format!(" ({} % for its other kind of cells)", h.wear_b) } else { String::new() }, h.spare);
+                    if h.data_state == "readable" {
+                        println!("settings and files: {} MB used of {} MB, {} MB free", h.data_used_mb, h.data_total_mb, h.data_free_mb);
+                    } else {
+                        println!("settings and files: {}", h.data_state);
+                    }
+                }
+                BoardCmd::Check { which } => println!("{}", s::board_check(&which)?),
+                BoardCmd::Ls { dir } => {
+                    for e in s::board_list(&dir)? {
+                        if e.is_dir { println!("{:>12}  {}/", "", e.name) } else { println!("{:>12}  {}", e.size, e.name) }
+                    }
+                }
+                BoardCmd::Get { path, output } => {
+                    let d = s::board_get(&path)?;
+                    std::fs::write(&output, &d)?;
+                    println!("{} bytes saved to {}", d.len(), output.display());
+                }
+                BoardCmd::Put { local, path } => {
+                    let d = std::fs::read(&local).with_context(|| format!("reading {}", local.display()))?;
+                    s::board_put(&path, &d)?;
+                    println!("{} bytes stored as {path}", d.len());
+                }
+                BoardCmd::Rm { path } => {
+                    s::board_delete(&path)?;
+                    println!("deleted {path}");
+                }
+                BoardCmd::Logs { output } => {
+                    let d = s::board_bundle("logs")?;
+                    std::fs::write(&output, &d)?;
+                    println!("logs saved to {} ({} bytes)", output.display(), d.len());
+                }
+                BoardCmd::Config { output } => {
+                    let d = s::board_bundle("config")?;
+                    std::fs::write(&output, &d)?;
+                    println!("configuration saved to {} ({} bytes)", output.display(), d.len());
+                }
+                BoardCmd::Restart => {
+                    s::board_restart()?;
+                    println!("the board is restarting normally");
                 }
             }
         }

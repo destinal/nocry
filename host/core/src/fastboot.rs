@@ -304,7 +304,31 @@ impl Fastboot {
         self.command_timeout(&format!("nocry-wifi:{what}"), Duration::from_secs(15)).map(|_| ())
     }
 
-    /// nocry-dmesg (nocry-fbd 0.2+): the recovery system's kernel log.
+    /// nocry-do (nocry-fbd 0.4+): one of the board's own repair actions; what it printed.
+    /// `stdin` (for "put") is sent first.
+    pub fn board_do(&mut self, verb: &str, arg: Option<&str>, stdin: Option<&[u8]>, timeout: Duration) -> Result<Vec<u8>> {
+        if let Some(d) = stdin {
+            self.download(d)?;
+        }
+        let cmd = match arg {
+            Some(a) => format!("nocry-do:{verb}:{}", a.bytes().map(|b| format!("{b:02x}")).collect::<String>()),
+            None => format!("nocry-do:{verb}"),
+        };
+        self.send(cmd.as_bytes())?;
+        let (kind, rest) = self.response(timeout)?;
+        if kind != "DATA" {
+            bail!("{}", if rest.is_empty() { "the board refused".to_string() } else { rest });
+        }
+        let n = usize::from_str_radix(&rest, 16).with_context(|| format!("bad DATA length {rest:?}"))?;
+        let mut all = Vec::with_capacity(n);
+        self.read_data(n, |b| {
+            all.extend_from_slice(b);
+            Ok(())
+        })?;
+        Ok(all)
+    }
+
+
     pub fn dmesg(&mut self) -> Result<String> {
         let n = self.expect_data("nocry-dmesg")?;
         let mut all = Vec::with_capacity(n);
