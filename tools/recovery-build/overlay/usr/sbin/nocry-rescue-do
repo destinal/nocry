@@ -243,7 +243,12 @@ wifi_save() {
 clock() {
     [ "$(date +%Y)" -ge 2025 ] && return 0
     # the Date line of any web server's answer is close enough (plain http: no certificate needed yet)
-    d=$(wget -q -S -T 8 -O /dev/null http://github.com/ 2>&1 | sed -n 's/^ *[Dd]ate: *[A-Za-z]*, *//p' | head -1 | tr -d '\r')
+    # (pages made for exactly this kind of question: they answer over plain http and carry a date)
+    d=
+    for u in http://example.com/ http://detectportal.firefox.com/success.txt http://neverssl.com/; do
+        d=$(wget -q -S -T 6 -O /dev/null $u 2>&1 | sed -n 's/^ *[Dd]ate: *[A-Za-z]*, *//p' | head -1 | tr -d '\r')
+        [ -n "$d" ] && break
+    done
     set -- $d       # 27 Nov 2026 10:11:12 GMT
     case "$2" in Jan) m=01 ;; Feb) m=02 ;; Mar) m=03 ;; Apr) m=04 ;; May) m=05 ;; Jun) m=06 ;; Jul) m=07 ;; Aug) m=08 ;; Sep) m=09 ;; Oct) m=10 ;; Nov) m=11 ;; Dec) m=12 ;; *) return 1 ;; esac
     date -u -s "$3-$m-$1 $4" >/dev/null 2>&1
