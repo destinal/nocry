@@ -66,6 +66,15 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Try a first-stage loader without installing it: from USB boot mode, run the given eMMC
+    /// loader (the factory one or nocryboot's) from RAM; it then boots what is on the eMMC
+    RunSpl {
+        /// Loader image as it sits on the eMMC (header + code, at most 24 KiB)
+        spl: PathBuf,
+        /// Send it even if it does not look like an eMMC loader or the chip is not an X2000
+        #[arg(long)]
+        force: bool,
+    },
     /// Export the board's eMMC as a USB disk (boots stage1+stage2 if the board is in USB boot mode)
     Ums {
         /// Read-only stage2 (for backups); default read-write
@@ -554,6 +563,10 @@ fn main() -> Result<()> {
             if n > 0 {
                 bail!("{n} error(s)");
             }
+        }
+        Cmd::RunSpl { spl, force } => {
+            let s1 = read(&spl)?;
+            run_spl_only(soc, &s1, device.as_deref(), force)?;
         }
         Cmd::Boot { spl, stage2, spl_timeout, wait, force } => {
             let s1 = read(&spl)?;

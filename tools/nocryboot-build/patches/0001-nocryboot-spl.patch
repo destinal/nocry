@@ -1,0 +1,292 @@
+diff --git a/arch/mips/cpu/xburst2/ddr_innophy.c b/arch/mips/cpu/xburst2/ddr_innophy.c
+index f210ed070..a233f1268 100644
+--- a/arch/mips/cpu/xburst2/ddr_innophy.c
++++ b/arch/mips/cpu/xburst2/ddr_innophy.c
+@@ -721,7 +721,9 @@ void sdram_init(void)
+ 	type = get_ddr_type();
+ 
+ #if defined(CONFIG_X2600) || defined(CONFIG_X2000_V12)
++#ifndef CONFIG_SPL_NO_EFUSE
+ 	efuse_trim1_overrides();
++#endif
+ #endif
+ 
+ 	clk_set_rate(DDR, global_reg_value->h.freq);
+@@ -737,8 +739,12 @@ void sdram_init(void)
+ 	ddr_writel(0x8 << 20, DDRC_CTRL);
+ 	mdelay(1);
+ 	ddrp_cfg(global_reg_value, rate);
++#else
++#ifdef CONFIG_DDRC_PHY_RESET_PLAIN
++	ddr_writel(0x1 << 20, DDRC_CTRL);  /* ddrc_reset_phy */
+ #else
+ 	ddr_writel(0x1 << 20 | 1 << 23, DDRC_CTRL);  /* ddrc_reset_phy , keep dfi_rst_n low*/
++#endif
+ 	mdelay(1);
+ 
+ 	ddrp_cfg(global_reg_value);
+diff --git a/board/ingenic/x2000_base/nocryboot/partitions.tab b/board/ingenic/x2000_base/nocryboot/partitions.tab
+new file mode 100644
+index 000000000..21897ec62
+--- /dev/null
++++ b/board/ingenic/x2000_base/nocryboot/partitions.tab
+@@ -0,0 +1,21 @@
++# nocryboot: the start of the eMMC as Creality's X2000E boards lay it out.
++# Only the partitions the SPL reads are listed; they sit at the same place on
++# the Nebula Pad family and on the K1 family (what follows differs per board
++# and per storage size, and the SPL never looks at it).
++property:
++    disk_size = 60m
++    gpt_header_lba = 512
++    custom_signature = 0
++
++partition:
++	#name     =  start,   size, fstype
++	xboot     =     0m,     1m,
++	ota       =     1m,     1m, EMPTY
++	sn_mac    =     2m,     1m, EMPTY
++	rtos      =     3m,     4m, EMPTY
++	rtos2     =     7m,     4m, EMPTY
++	kernel    =    11m,     8m, EMPTY
++	kernel2   =    19m,     8m, EMPTY
++	rest      =    27m,    33m, LINUX_FS
++
++#fstype could be: LINUX_FS, FAT_FS, EMPTY
+diff --git a/boards.cfg b/boards.cfg
+index e82addec3..05ec85c91 100755
+--- a/boards.cfg
++++ b/boards.cfg
+@@ -763,6 +763,8 @@ x2100l_base_xImage_sfc_nand	 mips        xburst2	x2000_base	 ingenic	x2000_v12	x
+ x2100l_base_rtos_sfc_nor     mips        xburst2    x2000_base   ingenic    x2000_v12   x2000_base:SPL_SFC_NOR,ENV_IS_IN_SFC,MTD_SFCNOR,SPL_RTOS_BOOT,X2100L,RMEM_MB=32,SPL_PARAMS_FIXER
+ x2100l_base_rtos_sfc_nand     mips        xburst2    x2000_base   ingenic    x2000_v12   x2000_base:SPL_SFC_NAND,MTD_SFCNAND,SPL_RTOS_BOOT,X2100L,RMEM_MB=32,SPL_PARAMS_FIXER
+ x2000_base_rtos_xImage_mmc0         mips        xburst2    x2000_base	 ingenic	x2000_v12	x2000_base:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,RTOS_BOOT_ON_SECOND_CPU,RMEM_MB=32,SPL_PARAMS_FIXER
++nocryboot_nebula                    mips        xburst2    x2000_base	 ingenic	x2000_v12	nocryboot:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,SPL_OS_OTA_BOOT,RTOS_BOOT_ON_SECOND_CPU,SPL_PARAMS_FIXER,NOCRYBOOT_NEBULA
++nocryboot_k1                    mips        xburst2    x2000_base	 ingenic	x2000_v12	nocryboot:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,SPL_OS_OTA_BOOT,RTOS_BOOT_ON_SECOND_CPU,SPL_PARAMS_FIXER,NOCRYBOOT_K1
+ x2000_base_rtos_xImage_sfc_nor     mips        xburst2    x2000_base   ingenic    x2000_v12   x2000_base:SPL_SFC_NOR,ENV_IS_IN_SFC,MTD_SFCNOR,SPL_RTOS_BOOT,SPL_OS_BOOT,RTOS_BOOT_ON_SECOND_CPU,RMEM_MB=32,SPL_PARAMS_FIXER
+ x2000_base_ilock_rtos_xImage_mmc0_emmc_coexist           mips        xburst2	 x2000_base	  ingenic	 x2000_v12	 x2000_base:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC0,SPL_RTOS_BOOT,SPL_OS_BOOT,RTOS_BOOT_ON_SECOND_CPU,BOOT_FAST_FIXED,STORAGE_REDUCE_SD,RTOS_SIZE_MB=32,SPL_PARAMS_FIXER,GPT_TABLE_PATH=$(TOPDIR)/board/$(BOARDDIR)/ilock
+ x2000_base_ilock_rtos_xImage_mmc2_sd_nand_coexist     mips        xburst2    x2000_base   ingenic    x2000_v12   x2000_base:SPL_JZMMC_SUPPORT,ENV_IS_IN_MMC,GPT_CREATOR,JZ_MMC_MSC2,SPL_RTOS_BOOT,SPL_OS_BOOT,RTOS_BOOT_ON_SECOND_CPU,BOOT_FAST_FIXED,STORAGE_REDUCE_MMC,RTOS_SIZE_MB=32,SPL_PARAMS_FIXER,GPT_TABLE_PATH=$(TOPDIR)/board/$(BOARDDIR)/ilock
+diff --git a/common/spl/spl.c b/common/spl/spl.c
+index e3e11f2ca..0a511d400 100644
+--- a/common/spl/spl.c
++++ b/common/spl/spl.c
+@@ -85,6 +85,7 @@ __weak char* spl_board_process_bootargs(char *arg)
+ }
+ 
+ extern char* spl_board_process_mem_bootargs(char *arg);
++extern char *spl_process_lcm_bootargs(char *arg);
+ 
+ void spl_parse_image_header(const struct image_header *header)
+ {
+@@ -288,6 +289,9 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
+ 
+ 		cmdargs = cmdargs ? cmdargs : CONFIG_SYS_SPL_ARGS_ADDR;
+ 		cmdargs = spl_board_process_bootargs(cmdargs);
++#ifdef CONFIG_SPL_RTOS_LCM_ID
++		cmdargs = spl_process_lcm_bootargs(cmdargs);
++#endif
+ #if defined(CONFIG_SPL_AUTO_PROBE_ARGS_MEM) && !defined(CONFIG_SPL_RTOS_LOAD_KERNEL)
+ 		cmdargs = spl_board_process_mem_bootargs(cmdargs);
+ #endif
+diff --git a/common/spl/spl_auto_args_mem.c b/common/spl/spl_auto_args_mem.c
+index 6f64c2880..0fbf94acf 100644
+--- a/common/spl/spl_auto_args_mem.c
++++ b/common/spl/spl_auto_args_mem.c
+@@ -135,6 +135,14 @@ static char* process_mem_bootargs(char *cmdargs, int ram_size)
+ 	args_mem = add_mem(args_mem, "share_mem=", ram_size, share_mem_size, kb_flags);
+ 	ram_size += share_mem_size;
+ 
++#ifdef CONFIG_SPL_ARGS_MEM_ALWAYS_HIGH
++	if (real_size >= 256) {
++		real_size = real_size - 256;
++		args_mem += string_copy(args_mem, " mem=", 5);
++		args_mem += int_to_string(args_mem, real_size, 10);
++		args_mem += string_copy(args_mem, "M@0x30000000", 12);
++	} else
++#endif
+ 	if (real_size > 256) {
+ 		real_size = real_size - 256;
+ 		real_size = kb_flags ? real_size * 1024 : real_size;
+@@ -191,3 +199,24 @@ char* spl_board_process_mem_bootargs(char *cmdargs)
+ 
+ 	return process_mem_bootargs(cmdargs, ram_size);
+ }
++
++#ifdef CONFIG_SPL_RTOS_LCM_ID
++extern unsigned int spl_rtos_lcm_id;
++
++/* Replace "[lcm-start...lcm-end]" in the kernel arguments by "lcm_id=<n>". */
++char *spl_process_lcm_bootargs(char *cmdargs)
++{
++	char *start = strstr(cmdargs, "[lcm-start");
++	char *end = strstr(cmdargs, "lcm-end]");
++
++	if (!start || !end)
++		return cmdargs;
++	end += strlen("lcm-end]");
++
++	start += string_copy(start, "lcm_id=", 7);
++	start += int_to_string(start, spl_rtos_lcm_id, 10);
++	memmove(start, end, strlen(end) + 1);
++
++	return cmdargs;
++}
++#endif
+diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
+index 94d5f08d4..4cc8e789a 100644
+--- a/common/spl/spl_jzsdhci.c
++++ b/common/spl/spl_jzsdhci.c
+@@ -1670,10 +1670,25 @@ static stop_second_cpu(void)
+ 	local_irq_restore(flags);
+ }
+ 
++#ifdef CONFIG_SPL_RTOS_LCM_ID
++/*
++ * Panel id reported by the rtos image.  The image receives the size of the
++ * mapped partition in the word that rtos_header.mapped_rtosdata_size points
++ * to, and overwrites that word with the id of the panel it found before it
++ * signals that it is done.  An unchanged word means "no id".
++ */
++unsigned int spl_rtos_lcm_id;
++#endif
++
+ static void start_second_cpu(void)
+ {
+ 	unsigned long value;
+ 	volatile unsigned long *rtos_start = (unsigned long *)rtos_header.img_start;
++#ifdef CONFIG_SPL_RTOS_LCM_ID
++	volatile unsigned int *lcm = (unsigned int *)rtos_header.mapped_rtosdata_size;
++
++	spl_rtos_lcm_id = *lcm;
++#endif
+ 
+ 	value = *rtos_start;
+ 
+@@ -1685,6 +1700,9 @@ static void start_second_cpu(void)
+ 			mdelay(1);
+ 		}
+ 
++#ifdef CONFIG_SPL_RTOS_LCM_ID
++		spl_rtos_lcm_id = (*lcm == spl_rtos_lcm_id) ? 0 : *lcm;
++#endif
+ 		stop_second_cpu();
+ 	}
+ }
+diff --git a/drivers/gpio/jz_gpio_common.c b/drivers/gpio/jz_gpio_common.c
+index 11b0db520..1a331f9b4 100644
+--- a/drivers/gpio/jz_gpio_common.c
++++ b/drivers/gpio/jz_gpio_common.c
+@@ -194,7 +194,9 @@ void gpio_set_func(enum gpio_port n, enum gpio_function func, unsigned int pins)
+ #endif
+ 
+ /* pull down */
+-#if defined(PXPDS) && defined(PXPDC) && defined(PXPD)
++#if defined(CONFIG_GPIO_KEEP_PULLDOWN)
++	/* pull-downs stay as the boot ROM left them */
++#elif defined(PXPDS) && defined(PXPDC) && defined(PXPD)
+ 	writel(func & 0x20? pins : 0, base + PXPDS);
+ 	writel(func & 0x20? 0 : pins, base + PXPDC);
+ #elif defined(PXPELS) && defined(PXPELC) && defined(PXPE_PULLDN)
+diff --git a/include/configs/nocryboot.h b/include/configs/nocryboot.h
+new file mode 100644
+index 000000000..2a4c925ef
+--- /dev/null
++++ b/include/configs/nocryboot.h
+@@ -0,0 +1,84 @@
++/*
++ * nocryboot: open boot loader for Creality's Ingenic X2000E boards
++ * (Nebula Pad family and K1 family).  SPDX-License-Identifier: GPL-2.0+
++ *
++ * This is the first stage (SPL) that the SoC's boot ROM loads from the eMMC.
++ * It does what the factory SPL does:
++ *   1. read the "ota" record to choose slot A or B,
++ *   2. load the rtos image of that slot and run it on CPU core 1 (boot picture),
++ *      with the whole "sn_mac" partition placed at the top of its heap,
++ *   3. load the kernel of that slot and start Linux, passing the panel id that
++ *      the rtos image reported (lcm_id=<n>).
++ *
++ * Select the board family with NOCRYBOOT_NEBULA or NOCRYBOOT_K1 in boards.cfg.
++ */
++#ifndef __NOCRYBOOT_H__
++#define __NOCRYBOOT_H__
++
++#define CONFIG_NOCRYBOOT
++
++#define CONFIG_ROOTFS_SQUASHFS
++#define CONFIG_ROOTFS2_SQUASHFS
++#define CONFIG_SPL_SERIAL_SUPPORT
++
++/* Not applied on x2000_v12 (the call is disabled in soc.c); the GPIO driver
++ * still wants them defined. */
++#define CONFIG_VDD_CIM_VOLTAGE	GPIO_VOLTAGE_3V3
++#define CONFIG_VDD_SD_VOLTAGE	GPIO_VOLTAGE_3V3
++
++/* Debug UART = Linux console: UART4 on the Nebula Pad, UART2 on K1 boards. */
++#if defined(CONFIG_NOCRYBOOT_NEBULA)
++#define CONFIG_SYS_UART_INDEX		4
++#define CONFIG_SYS_UART4_PA		/* on pins PA2/PA3 */
++#elif defined(CONFIG_NOCRYBOOT_K1)
++#define CONFIG_SYS_UART_INDEX		2
++#else
++#error "nocryboot: choose NOCRYBOOT_NEBULA or NOCRYBOOT_K1"
++#endif
++
++#define CONFIG_BAUDRATE			115200
++
++/* Slot A = rtos/kernel/rootfs (partition 7), slot B = rtos2/kernel2/rootfs2 (8). */
++#define CONFIG_ROOTFS_DEV		"root=/dev/mmcblk0p7 rootwait"
++#define CONFIG_ROOTFS2_DEV		"root=/dev/mmcblk0p8 rootwait"
++#define CONFIG_SPL_RTOS_NAME2		"rtos2"
++
++/* Replaced at run time by "lcm_id=<n>", the panel the rtos image found. */
++#define CONFIG_SPL_RTOS_LCM_ID
++#define CONFIG_ARGS_EXTRA		"[lcm-start-----------------lcm-end]"
++
++/* Partitions the SPL needs; identical on both board families. */
++#define CONFIG_GPT_TABLE_PATH		"$(TOPDIR)/board/ingenic/x2000_base/nocryboot"
++
++#include "x2000_base_common.h"
++
++/*
++ * These boards all carry an X2000E, whose built-in memory is the W97BV6MK
++ * LPDDR2.  With a single memory type the SPL uses it directly and never has
++ * to read the SoC id from the eFuse block; nocryboot does not touch eFuse.
++ */
++#define CONFIG_SPL_NO_EFUSE
++#undef  CONFIG_DDR_TYPE_LPDDR3
++#undef  CONFIG_LPDDR3_W63AH6NKB_BI
++#undef  CONFIG_LPDDR3_NK6CL256M16DKX_H1
++
++/*
++ * Where the current Ingenic code differs from the SPL Creality ships, keep
++ * what these boards have always run with:
++ *  - no on-die termination request (LPDDR2 has none),
++ *  - "active power-down" for idle memory,
++ *  - the plain PHY reset sequence,
++ *  - pull-downs of the boot pins left as the boot ROM set them,
++ *  - the second memory bank named in the kernel arguments even when empty.
++ */
++#undef  CONFIG_DDR_CHIP_ODT
++#define CONFIG_DDRC_ACTIVE_POWER_DOWN
++#define CONFIG_DDRC_PHY_RESET_PLAIN
++#define CONFIG_GPIO_KEEP_PULLDOWN
++#define CONFIG_SPL_ARGS_MEM_ALWAYS_HIGH
++
++/* The rtos image gets the device identity instead of an "rtosdata" file system. */
++#undef  CONFIG_SPL_RTOS_LINUX_MAPPED_FILESYSTEM_NAME
++#define CONFIG_SPL_RTOS_LINUX_MAPPED_FILESYSTEM_NAME	"sn_mac"
++
++#endif /* __NOCRYBOOT_H__ */
+diff --git a/tools/ingenic-tools/ddr_creator_x2000/ddr_params_creator.c b/tools/ingenic-tools/ddr_creator_x2000/ddr_params_creator.c
+index 96b2a5aee..23346254f 100644
+--- a/tools/ingenic-tools/ddr_creator_x2000/ddr_params_creator.c
++++ b/tools/ingenic-tools/ddr_creator_x2000/ddr_params_creator.c
+@@ -392,6 +392,9 @@ static void ddrc_config_creator(struct ddrc_reg *ddrc, struct ddr_params *p)
+ 	/* CTRL */
+ 	ddrc->ctrl = DDRC_CTRL_PDT_32  | DDRC_CTRL_CKE |
+ 		DDRC_CTRL_PD_CCE | DDRC_CTRL_SR_CCE;
++#ifdef CONFIG_DDRC_ACTIVE_POWER_DOWN
++	ddrc->ctrl |= DDRC_CTRL_ACTPD;
++#endif
+ 
+ 	/* MMAP0,1 */
+ 	memsize_cs0 = p->size.chip0;

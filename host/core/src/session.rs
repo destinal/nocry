@@ -72,6 +72,35 @@ pub fn check_images(soc: &SocProfile, spl: Option<&[u8]>, stage2: Option<&[u8]>)
 }
 
 /// Load stage1+stage2 into the board in USB boot mode; returns the stage2 USB device.
+/// Start a first-stage loader that boots the board from its eMMC on its own (the factory SPL,
+/// or nocryboot's), straight from USB boot mode. Nothing is written: the loader runs from RAM
+/// and then starts whatever is installed. Used to try a loader before installing it.
+pub fn run_spl_only(soc: &SocProfile, spl: &[u8], device: Option<&str>, force: bool) -> Result<()> {
+    if spl.len() > soc.s1_max {
+        bail!("the loader is {} bytes; the boot ROM takes at most {}", spl.len(), soc.s1_max);
+    }
+    // An eMMC loader starts with "MSPL" and carries its memory settings ("INGE") at 0x100.
+    if (spl.len() < 0x900 || &spl[..4] != b"LPSM" || &spl[0x100..0x104] != b"INGE") && !force {
+        bail!("this does not look like a first-stage loader for the eMMC (no MSPL/INGE header); not sending it");
+    }
+    let f = usb::select(soc, device)?;
+    say!("device {} (port {})", f.id(), f.port_path());
+    let mut b = Bootrom::new(usb::open(&f)?);
+    b.log = Box::new(move |m| say!("{m}"));
+    let info = b.cpu_info().context("bootrom did not answer GET_CPU_INFO")?;
+    say!("bootrom cpu info: {info:?}");
+    if !info.to_ascii_uppercase().starts_with("X2000") && !force {
+        bail!("this board reports the processor {info:?}, not the X2000 family; nothing was sent");
+    }
+    say!("loader: {} bytes -> {:#010x}, exec {:#010x}", spl.len(), soc.s1_load, soc.s1_exec);
+    b.download(soc.s1_load, spl)?;
+    if let Err(e) = b.prog_stage1(soc.s1_exec) {
+        say!("start request not acknowledged ({e:#}); the loader has probably started already");
+    }
+    say!("loader started; the board now boots from its eMMC and leaves USB boot mode");
+    Ok(())
+}
+
 pub fn boot_board(soc: &SocProfile, s1: &[u8], s2: &[u8], device: Option<&str>, spl_timeout: f32, wait: f32, force: bool) -> Result<Option<usb::Found>> {
     let n = check_images(soc, Some(s1), Some(s2));
     if n > 0 && !force {

@@ -11,5 +11,7 @@ nocry-identities.log
 /tools/burner-build/out/
 /tools/recovery-build/out/
 /tools/rtos-build/out/
+/tools/nocryboot-build/out/
+/tools/nocryboot-analysis/out/
 __pycache__/
 *.pyc

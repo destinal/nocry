@@ -84,3 +84,6 @@ A full on-eMMC open boot chain would add:
 
 The dormant U-Boot above shows the hardware supports all of this; the stock firmware simply does
 not wire a door to it. An open SPL can.
+
+The whole open boot loader is called **nocryboot**. Its first stage (SPL) now exists: see
+[nocryboot.md](nocryboot.md).
