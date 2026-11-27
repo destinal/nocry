@@ -117,7 +117,7 @@ The picture of the first seconds after power-on comes from the boot picture imag
 
 The firmware's own image is kept when it is replaced, in the unused second half of the same 4 MiB partition: the image at 2 MiB, and in the sector before it a line `nocry:firmware-picture size=<n> sha256=<hex>`. Going back copies it to the start again and needs no firmware file. A firmware update done by the printer itself rewrites the start of the partition of the slot it updates, which brings Creality's picture back for that slot.
 
-State: tested on disk images of both boards (set, loader run in the emulator, back; install with and without the tick). Not yet used on a board through these commands; nocry's image itself has run on the Nebula Pad for some time.
+State: tested on disk images of both boards (set, loader run in the emulator, back; install with and without the tick). First use on a board (2026-11-27): `nocry picture --nocry` on a Nebula Pad with nocryboot 0.1; it shows the nocry picture and then starts normally. Going back to the firmware's picture has not been done on a board yet.
 
 ### Next
 
