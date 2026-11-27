@@ -28,6 +28,7 @@ ap.add_argument('--note', help='text to put in the second sector of ota before t
 ap.add_argument('--family', choices=['nebula', 'k1'], default='nebula', help='where the root file systems sit')
 ap.add_argument('--copy-a-to-b', action='store_true', help='read slot B (rtos2, kernel2) from slot A')
 ap.add_argument('--console-input', default='', help='characters waiting at the serial console, e.g. "\\x1b\\x1b\\x1b"'); ap.add_argument('--ram-mb', type=int, default=256)
+ap.add_argument('--touch', type=int, default=0, help='pressure the touch chip reports (0 = not touched, about 2200 = a finger)')
 ap.add_argument('--limit', type=int, default=400_000_000); ap.add_argument('-o', default='trace.txt')
 args = ap.parse_args()
 

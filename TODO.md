@@ -38,6 +38,7 @@ Last updated: 2026-11-27.
   - [ ] the rescue functions below, on the pages too
 - [ ] **Rescue functions in the window.** The web pages and the command line (`nocry board ...`, `nocry install`) have them; the window still needs its dialogs for: storage health, file system check, the file browser, saving logs and configuration, restart, saving the Wi-Fi network for the firmware, and "remove system modifications" as its own clearly named action. None of the `nocry board` commands has run against a real board yet.
 - [ ] **Still missing everywhere:** the kernel log of the last normal start; restart into the other slot once or into USB boot mode; a screen and touch test; changing a board's printer type from the web pages.
+- [ ] **Rescue by flash disk** (for a board with a broken screen): a stick with a marker file, and later commands and Wi-Fi details on it. Parked 2026-11-27. What is known: the U-Boot tree has USB host, storage and FAT for this chip and they build (`tools/nocryboot-build/stage2/0001-nb2test-experiment.patch`, an experiment, used by no build); on the Nebula Pad the A sockets see nothing while the board is powered through its USB-C socket, in NebulaOS as in the experiment, so it can only be tried on a board powered through its 10-pin ribbon.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot logo program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.
