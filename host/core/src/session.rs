@@ -164,6 +164,9 @@ pub fn images_dir(opt: Option<&PathBuf>) -> Result<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         cands.push(cwd.join("tools/burner-build/out"));
     }
+    // a build from source on a computer that cannot build the board images (they need Linux
+    // tools): the release's board images, unpacked into the user's data folder
+    cands.push(user_images_dir());
     let explicit = opt.is_some();
     for c in &cands {
         if c.join("spl-x2000e/spl-x2000e.bin").is_file() {
@@ -174,9 +177,24 @@ pub fn images_dir(opt: Option<&PathBuf>) -> Result<PathBuf> {
         }
     }
     bail!(
-        "cannot find the built images (looked in: {}). Build them with tools/burner-build/build.sh \
-         or pass --images DIR",
-        cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ")
+        "cannot find the board images (looked in: {}). Build them with tools/burner-build/build.sh, \
+         pass --images DIR, or unpack nocry-board-images-*.tar.gz from a nocry release into {}",
+        cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", "),
+        user_images_dir().display()
+    )
+}
+
+/// Where a user can put the board images of a release (`nocry-board-images-*.tar.gz`).
+pub fn user_images_dir() -> PathBuf {
+    crate::catalog::default_data_dir().join("images")
+}
+
+/// Why this copy of nocry has no image of `what` for a board, and what to do about it.
+fn no_image(what: &str) -> String {
+    format!(
+        "this copy of nocry has no {what} image for this board family. Installed releases include it; a copy built \
+         from source needs the board images: unpack nocry-board-images-*.tar.gz from the nocry releases page into {}",
+        user_images_dir().display()
     )
 }
 
@@ -1152,7 +1170,7 @@ fn apply_picture(
         }
         match (want, info.kind) {
             (P::Kind::Nocry, P::Kind::Firmware) | (P::Kind::Nocry, P::Kind::Nocry) => {
-                let img = nocry_picture_image(images, family).context("this copy of nocry has no boot picture image for this board family")?;
+                let img = nocry_picture_image(images, family).with_context(|| no_image("boot picture"))?;
                 if cur == img {
                     continue;
                 }
@@ -1280,7 +1298,7 @@ fn loader_state(t: &restore::Target, images: Option<&PathBuf>) -> Result<(crate:
             Some("the board's identity record and its loader name different board families".to_string())
         }
         (Some(f), _) => L::check_layout(&g, f).err().map(|e| e.to_string()).or_else(|| match &available {
-            None => Some("this copy of nocry has no nocryboot image for this board family".to_string()),
+            None => Some(no_image("nocryboot")),
             Some(a) if a.family != Some(f) || !matches!(a.kind, L::Kind::Nocryboot { .. }) => {
                 Some("the nocryboot image found is not for this board family".to_string())
             }

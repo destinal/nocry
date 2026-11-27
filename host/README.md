@@ -111,3 +111,7 @@ To enter USB boot mode: hold BOOT, tap RESET, release BOOT. The board then appea
 | A folder with `xImage`, `rootfs.squashfs`, `zero.bin` | kernel, rootfs, rtos | E.g. from `extract_creality_ota.py`. |
 
 Firmware for another mainboard is refused: the printer it is for is read from `etc/ota_info` inside the root filesystem, and only Nebula-family ids (NEBULA, F003, F004, F005) are accepted. K1-series and Ender-3 V3 (F001/F002, K1 mainboard) files open correctly but are rejected. Update files for Allwinner-based printers (K2, Ender-3 V4, Creality Hi) use a different container and are not read.
+
+## Board images for a build from source
+
+The loader, boot picture and recovery images that nocry sends to a board are built with Linux tools (`tools/*/build.sh`) and are not in git. A copy of nocry built from source on another system finds them in the user's data folder: unpack `nocry-board-images-<version>.tar.gz` from the releases page into `images` there (`~/Library/Application Support/nocry/images` on macOS, `%LOCALAPPDATA%\nocry\images` on Windows, `~/.local/share/nocry/images` on Linux). Installed releases carry them already.
