@@ -173,6 +173,26 @@ pub unsafe extern "C" fn nocry_install_json(os_path: *const c_char, keep_data: c
 pub unsafe extern "C" fn nocry_install2_json(
     os_path: *const c_char, keep_data: c_int, execute: c_int, safety_dir: *const c_char, model: *const c_char, mainboard: *const c_char,
 ) -> *mut c_char {
+    nocry_install3_json(os_path, keep_data, execute, safety_dir, model, mainboard, 2)
+}
+
+fn picture_choice(n: c_int) -> session::PictureChoice {
+    match n {
+        1 => session::PictureChoice::Nocry,
+        2 => session::PictureChoice::Firmware,
+        _ => session::PictureChoice::Default,
+    }
+}
+
+/// Like nocry_install2_json, with the boot picture: 0 = nocry's where proven on the board
+/// family's screens, 1 = nocry's, 2 = the firmware's own.
+/// # Safety
+/// All pointers must be NULL or valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_install3_json(
+    os_path: *const c_char, keep_data: c_int, execute: c_int, safety_dir: *const c_char, model: *const c_char, mainboard: *const c_char,
+    picture: c_int,
+) -> *mut c_char {
     let os = opt_path(os_path).unwrap_or_default();
     let safety = opt_path(safety_dir);
     let text = |p: *const c_char| if p.is_null() { None } else { Some(CStr::from_ptr(p).to_string_lossy().to_string()) };
@@ -183,7 +203,7 @@ pub unsafe extern "C" fn nocry_install2_json(
     let r = std::panic::catch_unwind(|| {
         session::install(
             &nocry_core::bootrom::SOCS[0], Via::Auto, &os, keep_data != 0, execute != 0, safety.as_deref(), target.as_ref(),
-            model.as_deref(), mainboard.as_deref(),
+            model.as_deref(), mainboard.as_deref(), picture_choice(picture),
         )
     });
     install_json(r)
@@ -210,11 +230,11 @@ fn install_json(r: std::thread::Result<anyhow::Result<session::InstallReport>>) 
                 "{{\"ok\":true,\"firmware_board\":\"{}\",\"firmware_version\":\"{}\",\"has_boot_area\":{},\
                  \"device_firmware\":\"{}\",\"model_before\":\"{}\",\"model_after\":\"{}\",\"identity_generated\":{},\
                  \"notes\":[{}],\"details\":\"{}\",\"bytes_to_write\":{},\"executed\":{},\"safety_copy\":\"{}\",\
-                 \"model_before_name\":\"{}\",\"model_after_name\":\"{}\",\"firmware_name\":\"{}\",\"device_firmware_name\":\"{}\",\"blank_board\":{},\"target_slot\":\"{}\"}}",
+                 \"model_before_name\":\"{}\",\"model_after_name\":\"{}\",\"firmware_name\":\"{}\",\"device_firmware_name\":\"{}\",\"blank_board\":{},\"target_slot\":\"{}\",\"nocry_picture\":{}}}",
                 esc(&i.firmware_board), esc(&i.firmware_version), i.has_boot_area, esc(&i.device_firmware),
                 esc(&i.model_before), esc(&i.model_after), i.identity_generated, notes.join(","), esc(&i.details),
                 i.bytes_to_write, i.executed, esc(&i.safety_copy), esc(&i.model_before_name),
-                esc(&i.model_after_name), esc(&i.firmware_name), esc(&i.device_firmware_name), i.blank_board, esc(&i.target_slot)
+                esc(&i.model_after_name), esc(&i.firmware_name), esc(&i.device_firmware_name), i.blank_board, esc(&i.target_slot), i.nocry_picture
             );
             format!("{}{}", base.trim_end_matches('}'), extra)
         }
@@ -269,6 +289,33 @@ pub unsafe extern "C" fn nocry_copy_slot_json(from: *const c_char, safety_dir: *
     slots_json(std::panic::catch_unwind(|| {
         session::copy_slot(&nocry_core::bootrom::SOCS[0], Via::Auto, &from, safety.as_deref(), test_target().as_ref())
     }))
+}
+
+/// The boot picture of the firmware slots. `want`: -1 = report, 0 = nocry's where proven,
+/// 1 = nocry's, 2 = the firmware's own. Applies to every slot that holds firmware.
+/// {"ok":true,"a":"nocry|firmware|none","b":...,"a_kept":bool,"b_kept":bool,"proven":bool,"available":bool,"changed":bool}
+#[no_mangle]
+pub extern "C" fn nocry_picture_json(want: c_int, execute: c_int) -> *mut c_char {
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| {
+        let w = (want >= 0).then(|| picture_choice(want));
+        session::set_picture(&nocry_core::bootrom::SOCS[0], Via::Auto, None, w, execute != 0, test_target().as_ref())
+    });
+    out(match r {
+        Ok(Ok(x)) => {
+            let k = |i: &session::PictureInfo| match i.kind {
+                nocry_core::picture::Kind::Nocry => "nocry",
+                nocry_core::picture::Kind::Firmware => "firmware",
+                nocry_core::picture::Kind::None => "none",
+            };
+            format!(
+                "{{\"ok\":true,\"a\":\"{}\",\"b\":\"{}\",\"a_kept\":{},\"b_kept\":{},\"proven\":{},\"available\":{},\"changed\":{}}}",
+                k(&x.a), k(&x.b), x.a.firmware_kept, x.b.firmware_kept, x.proven, x.available, x.changed
+            )
+        }
+        Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
 }
 
 /// The board's first-stage boot loader. `action`: 0 = report, 1 = install nocryboot,
@@ -533,10 +580,18 @@ pub extern "C" fn nocry_generate_identity_json() -> *mut c_char {
 /// `os_path` must be a valid NUL-terminated path; `safety_dir` NULL or likewise.
 #[no_mangle]
 pub unsafe extern "C" fn nocry_install_slot_json(os_path: *const c_char, execute: c_int, safety_dir: *const c_char) -> *mut c_char {
+    nocry_install_slot2_json(os_path, execute, safety_dir, 2)
+}
+
+/// Like nocry_install_slot_json, with the boot picture choice (see nocry_install3_json).
+/// # Safety
+/// `os_path` must be a valid NUL-terminated path; `safety_dir` NULL or likewise.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_install_slot2_json(os_path: *const c_char, execute: c_int, safety_dir: *const c_char, picture: c_int) -> *mut c_char {
     let (os, safety) = (opt_path(os_path).unwrap_or_default(), opt_path(safety_dir));
     events::reset_cancel();
     install_json(std::panic::catch_unwind(|| {
-        session::install_other_slot(&nocry_core::bootrom::SOCS[0], Via::Auto, &os, execute != 0, safety.as_deref(), test_target().as_ref())
+        session::install_other_slot(&nocry_core::bootrom::SOCS[0], Via::Auto, &os, execute != 0, safety.as_deref(), test_target().as_ref(), picture_choice(picture))
     }))
 }
 

@@ -107,6 +107,18 @@ First use on a board (2026-11-27): the window's Boot loader dialog installed noc
 
 The loader carries a text nocry reads, `nocryboot-loader <version> <family>`; it is also the first line it prints on the console.
 
+## Boot picture
+
+The picture of the first seconds after power-on comes from the boot picture image in the slot's `rtos` partition, not from the loader. Every Creality firmware brings its own (the Creality logo); nocry's open one is `rtos/` (see `docs/rtos-partition.md`). Either works with either loader.
+
+- **Install firmware** in the window has a tick box, on by default: "Show the nocry boot picture when the printer powers on". Unticked, the firmware's own stays.
+- **Advanced, Boot picture…**, or `nocry picture [--nocry|--firmware] [--yes]`, switches every installed slot later.
+- The default only takes effect on the Nebula Pad family. On the K1 family nocry's image has run on the mainboard but never on one of its own screens, and a wrong panel setup would leave the screen dark in Linux too, so there the firmware's picture stays unless chosen explicitly (`nocry picture --nocry`, or the button, which warns).
+
+The firmware's own image is kept when it is replaced, in the unused second half of the same 4 MiB partition: the image at 2 MiB, and in the sector before it a line `nocry:firmware-picture size=<n> sha256=<hex>`. Going back copies it to the start again and needs no firmware file. A firmware update done by the printer itself rewrites the start of the partition of the slot it updates, which brings Creality's picture back for that slot.
+
+State: tested on disk images of both boards (set, loader run in the emulator, back; install with and without the tick). Not yet used on a board through these commands; nocry's image itself has run on the Nebula Pad for some time.
+
 ### Next
 
 - Read the partition table from the disk instead of the built-in one.

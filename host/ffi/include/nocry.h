@@ -101,6 +101,17 @@ char *nocry_install2_json(const char *os_path, int keep_data, int execute, const
 
 char *nocry_install_slot_json(const char *os_path, int execute, const char *safety_dir);
 
+/* The install calls with a choice of boot picture (the splash of the first seconds after power-on):
+ * 0 = nocry's on board families where it is proven, 1 = nocry's, 2 = the firmware's own (Creality logo).
+ * The reports gain "nocry_picture":bool. The firmware's own image is kept on the board. */
+char *nocry_install3_json(const char *os_path, int keep_data, int execute, const char *safety_dir,
+                          const char *model, const char *mainboard, int picture);
+char *nocry_install_slot2_json(const char *os_path, int execute, const char *safety_dir, int picture);
+
+/* Boot picture of the installed slots. want: -1 = report, 0/1/2 as above; applies to every slot with firmware.
+ * {"ok":true,"a":"nocry|firmware|none","b":"...","a_kept":bool,"b_kept":bool,"proven":bool,"available":bool,"changed":bool} */
+char *nocry_picture_json(int want, int execute);
+
 /* Factory reset that also makes old settings and files unrecoverable.
  * {"ok":true,"bytes":N,"partitions":[{"name":"userdata","method":"secure-discard|discard|overwrite"}]} */
 char *nocry_secure_wipe_json(const char *safety_dir);

@@ -102,6 +102,20 @@ enum Cmd {
         #[arg(long = "try")]
         tries: Option<u8>,
     },
+    /// Show which boot picture (the splash of the first seconds) each firmware slot has.
+    /// --nocry puts nocry's open boot picture there, --firmware brings the firmware's own back
+    /// (it is kept on the board). Dry run unless --yes
+    Picture {
+        #[arg(long, conflicts_with = "firmware")]
+        nocry: bool,
+        #[arg(long)]
+        firmware: bool,
+        /// Work on a disk image file instead of a board
+        #[arg(long)]
+        target: Option<PathBuf>,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Show the board's first-stage boot loader. --install puts nocryboot there (the factory
     /// loader is kept on the board); --factory puts the factory loader back. Dry run unless --yes
     Loader {
@@ -513,6 +527,27 @@ fn main() -> Result<()> {
             println!("loader: {}", if s.loader_counts { "nocryboot (counts starts)" } else { "does not count starts" });
             if let Some(n) = &s.note {
                 println!("note: {}", n.describe());
+            }
+        }
+        Cmd::Picture { nocry, firmware, target, yes } => {
+            let want = if nocry { Some(PictureChoice::Nocry) } else if firmware { Some(PictureChoice::Firmware) } else { None };
+            let st = set_picture(soc, Via::Auto, images.as_ref(), want, yes, target.as_ref())?;
+            let show = |i: &PictureInfo| {
+                let k = match i.kind {
+                    nocry_core::picture::Kind::Nocry => "nocry",
+                    nocry_core::picture::Kind::Firmware => "the firmware's own",
+                    nocry_core::picture::Kind::None => "no image",
+                };
+                format!("{k}{}", if i.firmware_kept { " (the firmware's own is kept)" } else { "" })
+            };
+            println!("slot A: {}\nslot B: {}", show(&st.a), show(&st.b));
+            if !st.available {
+                println!("this copy of nocry has no boot picture image for this board family");
+            } else if !st.proven {
+                println!("note: nocry's boot picture has not been tested on this board family's own screens yet");
+            }
+            if want.is_some() && st.changed && !yes {
+                println!("dry run: nothing was written. Add --yes to do it.");
             }
         }
         Cmd::Loader { install, factory, file, target, yes } => {

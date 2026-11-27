@@ -17,6 +17,7 @@ pub mod gpt;
 pub mod image;
 pub mod loader;
 pub mod ota;
+pub mod picture;
 pub mod restore;
 pub mod rtos;
 pub mod session;

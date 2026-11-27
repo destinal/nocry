@@ -586,6 +586,8 @@ pub struct InstallReport {
     pub executed: bool,
     /// "a"/"b" when this installs into the inactive slot only; "" for a normal install
     pub target_slot: String,
+    /// the slot gets (got) nocry's boot picture instead of the firmware's
+    pub nocry_picture: bool,
     /// the board had no partition table: this is a rebuild from scratch
     pub blank_board: bool,
     /// where the pre-write copy of the first 3 MiB went, if one was taken
@@ -618,6 +620,7 @@ pub fn install(
     target: Option<&PathBuf>,
     model: Option<&str>,
     mainboard: Option<&str>,
+    picture: PictureChoice,
 ) -> Result<InstallReport> {
     let pkg = restore::Package::load(os)?;
     let line = pkg.ota_board.as_deref().and_then(crate::boards::line);
@@ -709,7 +712,37 @@ pub fn install(
     r.notes.extend(plan.notes.iter().cloned());
     r.details = plan.describe();
     r.bytes_to_write = plan.bytes();
-    if !execute || r.bytes_to_write == 0 {
+    // the boot picture of the slot being installed (A), decided by the family of the result
+    let fam = crate::boards::family_of_mainboard(&plan.snmac_new.board()).map(|f| f.id);
+    let nocry_picture = match (picture, fam) {
+        (PictureChoice::Firmware, _) | (_, None) => false,
+        (PictureChoice::Nocry, Some(f)) => nocry_picture_image(None, f).is_some(),
+        (PictureChoice::Default, Some(f)) => picture_proven(f) && nocry_picture_image(None, f).is_some(),
+    };
+    r.nocry_picture = nocry_picture;
+    if nocry_picture {
+        r.notes.push("The nocry boot picture is shown at power-on. Creality's is kept on the board and can be brought back (Advanced, Boot picture).".into());
+    }
+    // With the firmware already in place, setting the picture is all there is to do; it has to
+    // show up as work, or callers that stop at "nothing to write" would never get to it.
+    let picture_only = r.bytes_to_write == 0
+        && match (nocry_picture, fam, crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)) {
+            (true, Some(f), Ok(g)) => apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &["a"], false)?,
+            _ => false,
+        };
+    if picture_only {
+        r.bytes_to_write = nocry_picture_image(None, fam.unwrap()).map_or(0, |i| i.len() as u64);
+        r.details += "  rtos: the nocry boot picture\n";
+    }
+    if !execute {
+        return Ok(r);
+    }
+    if picture_only {
+        let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)?;
+        r.executed = apply_picture(&t, &g, None, fam.unwrap(), crate::picture::Kind::Nocry, &["a"], true)?;
+        return Ok(r);
+    }
+    if r.bytes_to_write == 0 {
         return Ok(r);
     }
     if let Some(dir) = safety_dir {
@@ -732,6 +765,10 @@ pub fn install(
         say!("the newly generated serial number and MAC address were recorded in {}", dir.display());
     }
     plan.execute(&t)?;
+    if let (true, Some(f)) = (nocry_picture, fam) {
+        let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)?;
+        apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &["a"], true)?;
+    }
     r.executed = true;
     say!("installation complete and verified");
     Ok(r)
@@ -946,6 +983,181 @@ pub fn start_trial(soc: &SocProfile, via: Via, slot: &str, tries: u8, target: Op
         if slot == "a" { "B" } else { "A" }
     );
     Ok(s)
+}
+
+/// Which boot picture a slot should show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PictureChoice {
+    /// nocry's on board families where it is proven on the real screens, else the firmware's
+    #[default]
+    Default,
+    Nocry,
+    Firmware,
+}
+
+/// Board families on whose own screens nocry's boot picture image has been seen working.
+/// (K1 family: runs on the mainboard, but its four 480x800 panels are still untested.)
+pub fn picture_proven(family: crate::boards::FamilyId) -> bool {
+    family == crate::boards::FamilyId::Nebula
+}
+
+/// nocry's boot picture image for a board family: `<images>/nocry-rtos/nocry-rtos-<family>.bin`
+/// (in a source tree: tools/rtos-build/out).
+pub fn nocry_picture_image(images: Option<&PathBuf>, family: crate::boards::FamilyId) -> Option<Vec<u8>> {
+    let (name, dev) = match family {
+        crate::boards::FamilyId::Nebula => ("nocry-rtos-nebula.bin", "nocry-rtos.bin"),
+        crate::boards::FamilyId::K1 => ("nocry-rtos-k1.bin", "nocry-rtos-k1.bin"),
+    };
+    let dir = images_dir(images).ok()?;
+    [dir.join("nocry-rtos").join(name), dir.join("../../rtos-build/out").join(dev)]
+        .iter()
+        .find_map(|p| std::fs::read(p).ok())
+        .filter(|b| crate::picture::kind(b) == crate::picture::Kind::Nocry && crate::picture::image_len(b) == Some(b.len()))
+}
+
+/// The boot picture of one slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PictureInfo {
+    pub kind: crate::picture::Kind,
+    /// the firmware's own image is kept in the partition and can be brought back
+    pub firmware_kept: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PictureStatus {
+    pub a: PictureInfo,
+    pub b: PictureInfo,
+    pub family: Option<crate::boards::FamilyId>,
+    /// nocry's picture is proven on this family's screens
+    pub proven: bool,
+    /// this nocry has its picture image for the family
+    pub available: bool,
+    pub changed: bool,
+}
+
+fn picture_of(t: &restore::Target, g: &crate::gpt::Gpt, part: &str) -> Result<(PictureInfo, Option<Vec<u8>>, Option<Vec<u8>>)> {
+    use crate::picture as P;
+    let none = (PictureInfo { kind: P::Kind::None, firmware_kept: false }, None, None);
+    let Some(p) = g.find(part) else { return Ok(none) };
+    if p.size() < 4 << 20 {
+        return Ok(none);
+    }
+    let cur = match P::image_len(&t.read(p.offset(), 512)?) {
+        Some(n) if (n as u64) <= P::KEPT_MARK_OFFSET => Some(t.read(p.offset(), n)?),
+        _ => None,
+    };
+    let kind = cur.as_deref().map_or(P::Kind::None, P::kind);
+    let mark = t.read(p.offset() + P::KEPT_MARK_OFFSET, 512)?;
+    let kept = match P::kept_size(&mark) {
+        Some(n) => P::kept_image(&mark, &t.read(p.offset() + P::KEPT_OFFSET, n)?),
+        None => None,
+    };
+    Ok((PictureInfo { kind, firmware_kept: kept.is_some() }, cur, kept))
+}
+
+fn board_family(t: &restore::Target, g: &crate::gpt::Gpt) -> Result<Option<crate::boards::FamilyId>> {
+    let from_identity = g
+        .find("sn_mac")
+        .and_then(|p| t.read(p.offset(), 4096).ok())
+        .and_then(|a| crate::snmac::SnMac::parse(&a))
+        .and_then(|sm| crate::boards::family_of_mainboard(&sm.board()).map(|f| f.id));
+    Ok(from_identity.or(crate::loader::inspect(&t.read(crate::loader::SPL_OFFSET, crate::loader::SPL_SIZE)?).family))
+}
+
+/// Puts the chosen boot picture into the given slots ("a", "b"); slots without a valid image
+/// are skipped. Returns whether anything was (or would be) written.
+fn apply_picture(
+    t: &restore::Target,
+    g: &crate::gpt::Gpt,
+    images: Option<&PathBuf>,
+    family: crate::boards::FamilyId,
+    want: crate::picture::Kind,
+    slots: &[&str],
+    execute: bool,
+) -> Result<bool> {
+    use crate::picture as P;
+    let mut changed = false;
+    for slot in slots {
+        let part = if *slot == "b" { "rtos2" } else { "rtos" };
+        let (info, cur, kept) = picture_of(t, g, part)?;
+        let (Some(p), Some(cur)) = (g.find(part), cur) else { continue };
+        let s = slot.to_uppercase();
+        match (want, info.kind) {
+            (P::Kind::Nocry, P::Kind::Firmware) | (P::Kind::Nocry, P::Kind::Nocry) => {
+                let img = nocry_picture_image(images, family).context("this copy of nocry has no boot picture image for this board family")?;
+                if cur == img {
+                    continue;
+                }
+                changed = true;
+                say!("slot {s}: nocry boot picture{}", if info.kind == P::Kind::Firmware { " (the firmware's own is kept)" } else { " (updated)" });
+                if execute {
+                    if info.kind == P::Kind::Firmware && kept.as_deref() != Some(&cur[..]) {
+                        t.write_verified(p.offset() + P::KEPT_OFFSET, &cur, part)?;
+                        t.write_verified(p.offset() + P::KEPT_MARK_OFFSET, &P::kept_mark(&cur), part)?;
+                    }
+                    // the loader reads exactly the image; clear what a longer old one leaves behind it
+                    let mut data = img.clone();
+                    data.resize(cur.len().max(img.len()), 0);
+                    t.write_verified(p.offset(), &data, part)?;
+                }
+            }
+            (P::Kind::Firmware, P::Kind::Nocry) => {
+                let Some(fw) = kept else {
+                    bail!("slot {s} holds no copy of its firmware's boot picture; install the firmware again to get it back. Nothing was changed in this slot");
+                };
+                changed = true;
+                say!("slot {s}: the firmware's own boot picture");
+                if execute {
+                    let mut data = fw.clone();
+                    data.resize(cur.len().max(fw.len()), 0);
+                    t.write_verified(p.offset(), &data, part)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(changed)
+}
+
+/// Which boot picture each slot shows.
+pub fn picture_status(soc: &SocProfile, via: Via, images: Option<&PathBuf>, target: Option<&PathBuf>) -> Result<PictureStatus> {
+    set_picture(soc, via, images, None, false, target)
+}
+
+/// Choose the boot picture for every slot that holds firmware. `want` None only reports.
+pub fn set_picture(
+    soc: &SocProfile,
+    via: Via,
+    images: Option<&PathBuf>,
+    want: Option<PictureChoice>,
+    execute: bool,
+    target: Option<&PathBuf>,
+) -> Result<PictureStatus> {
+    use crate::picture as P;
+    let write = execute && want.is_some();
+    let t = open_target(soc, target, if write { Want::Rw } else { Want::PreferRw }, write, false, images, None, via)?;
+    let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)
+        .context("this board has no valid partition table (blank board?); install firmware first")?;
+    let family = board_family(&t, &g)?;
+    let mut changed = false;
+    if let Some(w) = want {
+        let fam = family.context("nocry cannot tell which board family this is")?;
+        let kind = match w {
+            PictureChoice::Nocry => P::Kind::Nocry,
+            PictureChoice::Firmware => P::Kind::Firmware,
+            PictureChoice::Default if picture_proven(fam) => P::Kind::Nocry,
+            PictureChoice::Default => P::Kind::Firmware,
+        };
+        changed = apply_picture(&t, &g, images, fam, kind, &["a", "b"], execute)?;
+    }
+    Ok(PictureStatus {
+        a: picture_of(&t, &g, "rtos")?.0,
+        b: picture_of(&t, &g, "rtos2")?.0,
+        family,
+        proven: family.is_some_and(picture_proven),
+        available: family.is_some_and(|f| nocry_picture_image(images, f).is_some()),
+        changed,
+    })
 }
 
 /// What `loader_status` and the install/restore calls report.
@@ -1612,6 +1824,7 @@ pub fn set_identity(
 /// one settings partition, so a different printer type in the other slot would not work.
 pub fn install_other_slot(
     soc: &SocProfile, via: Via, os: &std::path::Path, execute: bool, safety_dir: Option<&std::path::Path>, target: Option<&PathBuf>,
+    picture: PictureChoice,
 ) -> Result<InstallReport> {
     let pkg = restore::Package::load(os)?;
     let mut r = InstallReport {
@@ -1684,7 +1897,33 @@ pub fn install_other_slot(
         r.details += &format!("  {name}: {} of {} bytes differ\n", differ, data.len());
         r.bytes_to_write += differ;
     }
-    if !execute || r.bytes_to_write == 0 {
+    let fam = board_family(&t, &g)?;
+    let nocry_picture = match (picture, fam) {
+        (PictureChoice::Firmware, _) | (_, None) => false,
+        (PictureChoice::Nocry, Some(f)) => nocry_picture_image(None, f).is_some(),
+        (PictureChoice::Default, Some(f)) => picture_proven(f) && nocry_picture_image(None, f).is_some(),
+    };
+    r.nocry_picture = nocry_picture;
+    if nocry_picture {
+        r.notes.push("The nocry boot picture is shown when this slot starts. Creality's is kept on the board and can be brought back (Advanced, Boot picture).".into());
+    }
+    let picture_only = r.bytes_to_write == 0
+        && match (nocry_picture, fam) {
+            (true, Some(f)) => apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &[slot], false)?,
+            _ => false,
+        };
+    if picture_only {
+        r.bytes_to_write = nocry_picture_image(None, fam.unwrap()).map_or(0, |i| i.len() as u64);
+        r.details += "  rtos: the nocry boot picture\n";
+    }
+    if !execute {
+        return Ok(r);
+    }
+    if picture_only {
+        r.executed = apply_picture(&t, &g, None, fam.unwrap(), crate::picture::Kind::Nocry, &[slot], true)?;
+        return Ok(r);
+    }
+    if r.bytes_to_write == 0 {
         return Ok(r);
     }
     safety_copy(&t, safety_dir, "slot-install")?;
@@ -1693,6 +1932,9 @@ pub fn install_other_slot(
         write_range_m(&t, *off, data.len() as u64, name, |o, n| Ok(data[o as usize..o as usize + n].to_vec()), &mut m)?;
     }
     m.end();
+    if let (true, Some(f)) = (nocry_picture, fam) {
+        apply_picture(&t, &g, None, f, crate::picture::Kind::Nocry, &[slot], true)?;
+    }
     r.executed = true;
     say!("firmware {} installed into slot {} and verified; the active slot was not changed", r.firmware_version, slot.to_uppercase());
     Ok(r)
