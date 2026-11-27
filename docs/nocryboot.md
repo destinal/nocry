@@ -89,7 +89,7 @@ The loader is 244 bytes under its 24 KiB after this.
 
 Storing the rescue system: `nocry rescue --install` (it sends `nocry-rescue.uImage` to the board, which writes the file, works out the runs, reads them back raw to check the sum and only then writes the note); `nocry rescue` says whether it is there and intact; `--remove` takes it away. A factory reset from Creality's menu or anything else that rewrites the data partition leaves a note that no longer matches, which is harmless: store it again.
 
-Tested in the emulator (`splemu.py --touch N`): untouched, a light touch, held with the image in three scattered runs (started, with the right argument), held with one byte of the image changed, held without a note. On a Nebula Pad, with the loader started from memory (`nocry run-spl`) and the rescue system stored by `nocry rescue --install` (it lay in one run): screen held, the rescue kernel started from the eMMC with `nocry.rescue=touch`, the count ran and the rescue system came up. Not yet tried there: the loader installed on the eMMC, and letting go during the count.
+Tested in the emulator (`splemu.py --touch N`): untouched, a light touch, held with the image in three scattered runs (started, with the right argument), held with one byte of the image changed, held without a note. On a Nebula Pad, with the loader started from memory (`nocry run-spl`) and the rescue system stored by `nocry rescue --install` (it lay in one run): screen held, the rescue kernel started from the eMMC with `nocry.rescue=touch`, the count ran and the rescue system came up. Then with 0.2 installed on the eMMC: an untouched power-on starts the firmware, a held one shows the count and starts the rescue system. Not yet tried: letting go during the count.
 
 ### Build and try
 
