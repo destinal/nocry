@@ -56,11 +56,21 @@ A slot is only started if all three of its parts are there: kernel (uImage heade
 
 USB boot mode is requested the way Ingenic's own tools do it: the value `0x42575302` in the CPM register `SLPC` (0xb00000cc), then a watchdog reset.
 
-When the SPL starts the other slot it does not change the `ota` record (it cannot write to the eMMC yet), so the system then runs from the slot it believes inactive; treat that as an emergency start and repair the board.
+Whenever the SPL changes slot it rewrites the `ota` record. Creality's updater takes "the slot I may overwrite" from that record (`/etc/ota_bin/ota_local_method.sh`), so leaving it stale would make the next update overwrite the running system.
 
-Not covered: an image that looks valid but does not work (a kernel that panics, a boot picture image that hangs). That needs a count of failed starts, which needs the started system to report success; not built yet.
+#### Count of starts (trial)
 
-State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. On a K1 mainboard with the first sector of `rtos2` zeroed and slot B named, this loader (started from RAM) started slot A, with video (2026-11-26); an earlier build that started slot B without its boot picture image gave a running system with a dark screen. It is installed on the K1 mainboard; the Nebula Pad still carries the build without the door.
+A slot that looks complete can still fail: a kernel that panics, a boot picture image that hangs. For that there is a count of starts, as in other two-slot systems. It only runs when armed, because stock firmware never reports success by itself.
+
+- **Arming** (`nocry slots --set b --try 3`): nocry stores a small start-up script in the firmware's settings area (`rootfs_data`, file `upper/etc/init.d/S99zz_nocryboot`), writes `nocryboot:try=B:left=3` into the second sector of `ota`, and names the slot in the `ota` record. It refuses if the board's loader does not count, if the other slot is not complete (nothing to go back to), or if the settings area does not exist yet.
+- **Each start** of the slot on trial takes one off the count.
+- **Success**: the script runs last at start-up, waits 30 seconds, and erases the second sector of `ota`. From then on nothing is counted.
+- **Count at 0**: the SPL starts the other slot instead, names it in the `ota` record and leaves `nocryboot:failed=B`. If the other slot turns out not to be complete it keeps the slot and leaves `nocryboot:unconfirmed=B`.
+- A slot left because parts were missing gets `nocryboot:incomplete=B`. `nocry slots` shows these notes; choosing a slot without `--try` clears them.
+
+Limits: a factory reset erases the settings area and with it the script; a trial armed before that will fail and go back. The script is shared by both slots (one settings area). The count is a single digit. The SPL writes only the first two sectors of `ota` (its write routine refuses anything else).
+
+State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ... --note ... --emmc FILE` for a sequence of starts). The count of starts and the SPL's eMMC write have not run on a board yet. `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. On a K1 mainboard with the first sector of `rtos2` zeroed and slot B named, this loader (started from RAM) started slot A, with video (2026-11-26); an earlier build that started slot B without its boot picture image gave a running system with a dark screen. It is installed on the K1 mainboard; the Nebula Pad still carries the build without the door.
 
 ### Build and try
 

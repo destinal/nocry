@@ -464,6 +464,23 @@ impl Target {
     }
 
     /// Write, flush, then compare what the device holds (page cache dropped / on-board hash).
+    /// Store a small file in the ext4 file system of a partition (recovery service only).
+    /// Fails if the partition holds no file system yet.
+    pub fn put_file(&self, partition: &str, path: &str, mode: u32, data: &[u8]) -> Result<()> {
+        if !self.writable {
+            bail!("{} was opened read-only", self.path.display());
+        }
+        let Backend::Fb(fb) = &self.b else {
+            bail!("storing a file on the board needs the nocry recovery system (not a disk image or USB disk)");
+        };
+        let mut fb = fb.borrow_mut();
+        if !fb.getvar("nocry-ext").unwrap_or_default().split(',').any(|x| x == "put") {
+            bail!("this recovery image is too old to store files on the board (needs nocry-fbd 0.3)");
+        }
+        fb.download(data)?;
+        fb.command(&format!("nocry-put:{partition}:{mode:o}:{path}")).map(|_| ())
+    }
+
     pub fn write_verified(&self, off: u64, data: &[u8], what: &str) -> Result<()> {
         let chunk = 4 * MIB as usize;
         let total = data.len();

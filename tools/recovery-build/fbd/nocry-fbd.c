@@ -32,6 +32,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/klog.h>
+#include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <linux/fs.h>
@@ -44,7 +45,7 @@
 _Static_assert(sizeof(off_t) == 8, "64-bit file offsets required");
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
 
-#define FBD_VERSION	"nocry-fbd 0.2"
+#define FBD_VERSION	"nocry-fbd 0.3"
 #define MIB		(1u << 20)
 #define BUFCAP		(4 * MIB)		/* queue buffer size = largest block */
 #define NQ		8
@@ -205,7 +206,7 @@ static const char *gpt_check(u8 *img, u64 len, u64 disk_last)
 	return NULL;
 }
 
-struct part { char name[37]; u64 lba, nblk; };
+struct part { char name[37]; u64 lba, nblk; int num; };
 static struct part parts[128];
 static int nparts;
 
@@ -227,7 +228,7 @@ static int gpt_load(void)
 			parts[nparts].name[k] = ch < 0x80 ? ch : '?';
 		}
 		parts[nparts].name[k] = 0;
-		parts[nparts].lba = first; parts[nparts].nblk = last - first + 1;
+		parts[nparts].lba = first; parts[nparts].nblk = last - first + 1; parts[nparts].num = i + 1;
 		nparts++;
 	}
 	return 0;
@@ -416,7 +417,7 @@ static void getvar_one(const char *v, char *out)
 	else if (!strcmp(v, "secure")) strcpy(out, "no");
 	else if (!strcmp(v, "unlocked")) strcpy(out, "yes");
 	else if (!strcmp(v, "critical-unlocked")) strcpy(out, critical_unlocked ? "yes" : "no");
-	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg");
+	else if (!strcmp(v, "nocry-ext")) strcpy(out, "write,hash:sha256,hash:xxh64,secure-erase,dmesg,put");
 	else if (!strcmp(v, "slot-count")) strcpy(out, "2");
 	else if (!strcmp(v, "current-slot")) { int s = current_slot(); if (s >= 0) strcpy(out, s ? "b" : "a"); }
 	else if (!strncmp(v, "has-slot:", 9))
@@ -687,6 +688,41 @@ static void cmd_set_active(const char *slot)
 	if (dwrite_verified(r.lba * 512, zbuf, 512)) FAIL("write failed"); else { fdatasync(disk); OKAY(""); }
 }
 
+/*
+ * nocry-put:<partition>:<octal mode>:<path>
+ * Store the downloaded data as a file in the ext4 file system of a partition (parent
+ * folders are made). Used for small files in the firmware's settings area; the file
+ * system must exist already (the firmware makes it on its first start).
+ */
+static void cmd_nocry_put(char *arg)
+{
+	static const char *mnt = "/tmp/nocry-put";
+	char *mode = strchr(arg, ':'), *path = mode ? strchr(mode + 1, ':') : NULL;
+	char dev[40], full[512], tmp[520], *q; int i, fd, num = 0;
+	if (!path) { FAIL("usage: nocry-put:<partition>:<mode>:<path>"); return; }
+	*mode++ = 0; *path++ = 0;
+	if (!*path || path[0] == '/' || strstr(path, "..") || strlen(path) > 400) { FAIL("bad path"); return; }
+	if (!dl_size) { FAIL("no data downloaded"); return; }
+	if (gpt_load()) { FAIL("no valid GPT on the eMMC"); return; }
+	for (i = 0; i < nparts; i++) if (!strcmp(parts[i].name, arg)) num = parts[i].num;
+	if (!num) { FAIL("no partition '%.40s'", arg); return; }
+	if (!strcmp(arg, "sn_mac")) { FAIL("not a file system"); return; }
+	snprintf(dev, sizeof(dev), "/dev/mmcblk0p%d", num);
+	mkdir(mnt, 0700);
+	if (mount(dev, mnt, "ext4", MS_NOATIME, NULL)) { FAIL("'%s' holds no ext4 file system (%s)", arg, strerror(errno)); return; }
+	snprintf(full, sizeof(full), "%s/%s", mnt, path);
+	for (q = full + strlen(mnt) + 1; (q = strchr(q, '/')); q++) { *q = 0; mkdir(full, 0755); *q = '/'; }
+	snprintf(tmp, sizeof(tmp), "%s.new", full);
+	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0 || wr_full(fd, dl, dl_size) || fchmod(fd, strtoul(mode, NULL, 8) & 0777) || fsync(fd) || close(fd) || rename(tmp, full)) {
+		int e = errno; if (fd >= 0) close(fd); unlink(tmp); umount(mnt);
+		FAIL("cannot store the file (%s)", strerror(e)); return;
+	}
+	sync();
+	if (umount(mnt)) { FAIL("unmount failed (%s)", strerror(errno)); return; }
+	OKAY("");
+}
+
 static void dispatch(char *c)
 {
 	if (!strncmp(c, "getvar:", 7)) cmd_getvar(c + 7);
@@ -698,6 +734,7 @@ static void dispatch(char *c)
 	else if (!strncmp(c, "nocry-hash:", 11)) cmd_nocry_hash(c + 11);
 	else if (!strncmp(c, "nocry-secure-erase:", 19)) cmd_nocry_secure_erase(c + 19);
 	else if (!strcmp(c, "nocry-dmesg")) cmd_nocry_dmesg();
+	else if (!strncmp(c, "nocry-put:", 10)) cmd_nocry_put(c + 10);
 	else if (!strncmp(c, "set_active:", 11)) cmd_set_active(c + 11);
 	else if (!strcmp(c, "flashing unlock_critical")) { critical_unlocked = 1; INFO("critical regions (mmc0, gpt, bootloader, sn_mac) writable until reboot"); OKAY(""); }
 	else if (!strcmp(c, "flashing lock_critical")) { critical_unlocked = 0; OKAY(""); }

@@ -761,7 +761,64 @@ pub struct Slots {
     pub active: String,
     pub a: SlotInfo,
     pub b: SlotInfo,
+    /// nocryboot's note in the second sector of `ota`, if any
+    pub note: Option<BootNote>,
+    /// the first-stage loader on the board is nocryboot with the start counter
+    pub loader_counts: bool,
 }
+
+/// What nocryboot wrote (or was told) in the second sector of the `ota` partition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootNote {
+    /// slot ("a"/"b") is on trial with this many starts left
+    Trial { slot: String, left: u8 },
+    /// the slot never reported a working start; the loader went back to the other one
+    Failed(String),
+    /// the slot had parts missing; the loader went to the other one
+    Incomplete(String),
+    /// the slot never reported a working start, but there was nothing else to start
+    Unconfirmed(String),
+}
+
+impl BootNote {
+    pub fn parse(sector: &[u8]) -> Option<BootNote> {
+        let end = sector.iter().position(|&c| c == b'\n' || c == 0).unwrap_or(sector.len());
+        let t = std::str::from_utf8(&sector[..end]).ok()?.strip_prefix("nocryboot:")?;
+        let slot = |x: &str| match x {
+            "A" => Some("a".to_string()),
+            "B" => Some("b".to_string()),
+            _ => None,
+        };
+        if let Some(r) = t.strip_prefix("try=") {
+            let (s, l) = r.split_once(":left=")?;
+            return Some(BootNote::Trial { slot: slot(s)?, left: l.parse().ok().filter(|n| *n <= 9)? });
+        }
+        if let Some(r) = t.strip_prefix("failed=") {
+            return Some(BootNote::Failed(slot(r)?));
+        }
+        if let Some(r) = t.strip_prefix("incomplete=") {
+            return Some(BootNote::Incomplete(slot(r)?));
+        }
+        t.strip_prefix("unconfirmed=").and_then(slot).map(BootNote::Unconfirmed)
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            BootNote::Trial { slot, left } => format!("slot {} is on trial: {left} start(s) left to report success", slot.to_uppercase()),
+            BootNote::Failed(s) => format!("slot {} never reported a working start; the loader went back to the other slot", s.to_uppercase()),
+            BootNote::Incomplete(s) => format!("slot {} had parts missing; the loader started the other slot", s.to_uppercase()),
+            BootNote::Unconfirmed(s) => format!("slot {} never reported a working start, but there was no other slot to start", s.to_uppercase()),
+        }
+    }
+}
+
+/// The script nocry puts into the firmware's settings area so that a started system reports success.
+pub const CONFIRM_SCRIPT: &str = include_str!("../data/nocryboot-confirm.sh");
+pub const CONFIRM_SCRIPT_PATH: &str = "upper/etc/init.d/S99zz_nocryboot";
+/// First-stage loader on the eMMC: 24 KiB at this byte offset.
+pub const SPL_OFFSET: u64 = 0x4400;
+pub const SPL_SIZE: usize = 24 * 1024;
+
 
 fn read_slots(t: &restore::Target) -> Result<(crate::gpt::Gpt, Slots)> {
     let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)
@@ -782,7 +839,11 @@ fn read_slots(t: &restore::Target) -> Result<(crate::gpt::Gpt, Slots)> {
         }
         Ok(s)
     };
-    let slots = Slots { active: active.into(), a: slot("rtos", "kernel", "rootfs")?, b: slot("rtos2", "kernel2", "rootfs2")? };
+    let note = BootNote::parse(&t.read(ota.offset() + 512, 512)?);
+    let spl = t.read(SPL_OFFSET, SPL_SIZE)?;
+    let loader_counts = spl.windows(14).any(|w| w == b"nocryboot:try=");
+    let slots =
+        Slots { active: active.into(), a: slot("rtos", "kernel", "rootfs")?, b: slot("rtos2", "kernel2", "rootfs2")?, note, loader_counts };
     Ok((g, slots))
 }
 
@@ -824,9 +885,69 @@ pub fn set_active_slot(
     let mut rec = vec![0u8; 512];
     let text: &[u8] = if slot == "b" { b"ota:kernel2\n" } else { b"ota:kernel\n" };
     rec[..text.len()].copy_from_slice(text);
-    t.write_verified(g.find("ota").context("no ota partition")?.offset(), &rec, "ota")?;
+    let ota = g.find("ota").context("no ota partition")?.offset();
+    if s.note.is_some() {
+        t.write_verified(ota + 512, &[0u8; 512], "ota")?; // a plain choice ends a trial and clears old notes
+        s.note = None;
+    }
+    t.write_verified(ota, &rec, "ota")?;
     s.active = slot.into();
     say!("slot {} will start at the next power-on", slot.to_uppercase());
+    Ok(s)
+}
+
+/// Put a slot on trial: it starts at the next power-on, and unless the started system reports
+/// success within `tries` starts, nocryboot goes back to the other slot by itself.
+/// Needs nocryboot as the board's loader, and the firmware's settings area (the success
+/// script is stored there; a factory reset removes it).
+pub fn start_trial(soc: &SocProfile, via: Via, slot: &str, tries: u8, target: Option<&PathBuf>) -> Result<Slots> {
+    if slot != "a" && slot != "b" {
+        bail!("slot must be a or b");
+    }
+    if !(1..=9).contains(&tries) {
+        bail!("the number of starts must be 1 to 9");
+    }
+    let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
+    let (g, mut s) = read_slots(&t)?;
+    let (info, other) = if slot == "a" { (&s.a, &s.b) } else { (&s.b, &s.a) };
+    if !info.bootable() {
+        bail!("slot {} has no complete firmware installed; the board would not start from it", slot.to_uppercase());
+    }
+    if !s.loader_counts {
+        bail!(
+            "the loader on this board does not count starts (it is the factory loader or an older nocryboot); \
+             a trial needs nocryboot with the start counter. Nothing was changed"
+        );
+    }
+    if !other.bootable() {
+        bail!(
+            "slot {} has no complete firmware, so there is nothing to go back to if slot {} fails. Nothing was changed",
+            if slot == "a" { "B" } else { "A" },
+            slot.to_uppercase()
+        );
+    }
+    // 1. the success script, so a working system can say so. Without it the trial would always fail.
+    t.put_file("rootfs_data", CONFIRM_SCRIPT_PATH, 0o755, CONFIRM_SCRIPT.as_bytes()).context(
+        "could not store the success script in the settings area (after a factory reset or clean install \
+         the firmware creates that area on its first start; start the printer once, then try again). Nothing was changed",
+    )?;
+    let ota = g.find("ota").context("no ota partition")?.offset();
+    // 2. the count, 3. the slot choice (Creality's own record)
+    let mut note = vec![0u8; 512];
+    let text = format!("nocryboot:try={}:left={tries}\n", slot.to_uppercase());
+    note[..text.len()].copy_from_slice(text.as_bytes());
+    t.write_verified(ota + 512, &note, "ota")?;
+    let mut rec = vec![0u8; 512];
+    let text: &[u8] = if slot == "b" { b"ota:kernel2\n" } else { b"ota:kernel\n" };
+    rec[..text.len()].copy_from_slice(text);
+    t.write_verified(ota, &rec, "ota")?;
+    s.active = slot.into();
+    s.note = Some(BootNote::Trial { slot: slot.into(), left: tries });
+    say!(
+        "slot {} is on trial: it has {tries} start(s) to come up and report success, else the board returns to slot {}",
+        slot.to_uppercase(),
+        if slot == "a" { "B" } else { "A" }
+    );
     Ok(s)
 }
 
@@ -1455,4 +1576,41 @@ pub fn copy_slot(soc: &SocProfile, via: Via, from: &str, safety_dir: Option<&std
     m.end();
     say!("slot {} copied to slot {} and verified ({} bytes written); the active slot was not changed", from.to_uppercase(), to.to_uppercase(), written);
     Ok(read_slots(&t)?.1)
+}
+
+#[cfg(test)]
+mod boot_note_tests {
+    use super::BootNote;
+
+    fn sec(t: &str) -> Vec<u8> {
+        let mut v = vec![0u8; 512];
+        v[..t.len()].copy_from_slice(t.as_bytes());
+        v
+    }
+
+    #[test]
+    fn parses_what_the_loader_writes() {
+        assert_eq!(BootNote::parse(&sec("nocryboot:try=B:left=3\n")), Some(BootNote::Trial { slot: "b".into(), left: 3 }));
+        assert_eq!(BootNote::parse(&sec("nocryboot:try=A:left=0\n")), Some(BootNote::Trial { slot: "a".into(), left: 0 }));
+        assert_eq!(BootNote::parse(&sec("nocryboot:failed=B\n")), Some(BootNote::Failed("b".into())));
+        assert_eq!(BootNote::parse(&sec("nocryboot:incomplete=A\n")), Some(BootNote::Incomplete("a".into())));
+        assert_eq!(BootNote::parse(&sec("nocryboot:unconfirmed=A\n")), Some(BootNote::Unconfirmed("a".into())));
+    }
+
+    #[test]
+    fn ignores_everything_else() {
+        assert_eq!(BootNote::parse(&[0u8; 512]), None);
+        assert_eq!(BootNote::parse(&sec("ota:kernel2\n")), None);
+        assert_eq!(BootNote::parse(&sec("nocryboot:try=C:left=3\n")), None);
+        assert_eq!(BootNote::parse(&sec("nocryboot:try=B:left=12\n")), None);
+        assert_eq!(BootNote::parse(&[0xffu8; 512]), None);
+    }
+
+    #[test]
+    fn the_script_matches_the_note_format() {
+        // the script compares the first 14 bytes of the note with this text
+        assert!(super::CONFIRM_SCRIPT.contains("\"nocryboot:try=\""));
+        assert_eq!("nocryboot:try=".len(), 14);
+        assert!(super::CONFIRM_SCRIPT.contains("count=14"));
+    }
 }

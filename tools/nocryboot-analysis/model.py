@@ -14,3 +14,5 @@ MODEL[0xb30110cc] = lambda v: 3                                # memory PHY: cal
 MODEL[0xb2200020] = lambda v: 2 if core1['started'] else 0     # core 1 is asleep again
 for _r in (0xb0000010, 0xb0000014, 0xb0000018):
     MODEL[_r] = lambda v: v | 8 if v & 1 else v                # PLL: "on" follows "enable"
+# eMMC host: the routines around it are replaced, but a sector write polls these itself
+MODEL[0xb3450030] = lambda v: 0x33            # command done, transfer done, buffer ready

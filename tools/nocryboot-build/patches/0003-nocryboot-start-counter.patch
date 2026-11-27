@@ -1,0 +1,174 @@
+diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
+index 04575576e..987c0ae87 100644
+--- a/common/spl/spl_jzsdhci.c
++++ b/common/spl/spl_jzsdhci.c
+@@ -2066,6 +2066,71 @@ void spl_mmc_mcu_rtos_boot(void)
+ extern void nocryboot_usb_boot_mode(const char *why);
+ extern int nocryboot_console_asks(void);
+ 
++/*
++ * Write one sector.  The only thing nocryboot ever writes is its own notes in
++ * the first two sectors of the "ota" partition; anything else is refused.
++ */
++static int nocryboot_write_sector(u32 sector, u32 *src)
++{
++	unsigned int ota, timeout;
++	u32 x;
++	u8 *resp;
++	int i, ok = 0;
++
++	if (spl_get_built_in_gpt_partition(CONFIG_SPL_OTA_NAME, &ota, NULL) || sector < ota || sector > ota + 1)
++		return 0;
++
++	msc_writew(MSC_BLOCKSIZE_R, 0x200);
++	msc_writew(MSC_BLOCKCOUNT_R, 1);
++	msc_set_xfer_bus_width(bus_width);
++
++	x = msc_readw(MSC_XFER_MODE_R);
++	x &= ~(MSC_AUTO_CMD_ENABLE_MASK | MSC_MULTI_BLK_SEL_BIT | MSC_DATA_XFER_DIR_BIT);
++	x |= MSC_BLOCK_COUNT_ENABLE_BIT;
++	msc_writew(MSC_XFER_MODE_R, x);
++
++	mmc_cmd(MMC_CMD_SET_BLOCKLEN, 0x200, 0, MSC_CMDAT_RESPONSE_R1);
++	mmc_cmd(MMC_CMD_WRITE_SINGLE_BLOCK, highcap ? sector : sector * 512,
++		MSC_DATA_PRESENT_SEL_BIT, MSC_CMDAT_RESPONSE_R1);
++
++	for (timeout = 0xfffff; timeout; timeout--)
++		if (msc_readw(MSC_NORMAL_INT_STAT_R) & MSC_BUF_WR_READY_STAT_BIT)
++			break;
++	if (timeout) {
++		msc_writew(MSC_NORMAL_INT_STAT_R, MSC_BUF_WR_READY_STAT_BIT);
++		for (i = 0; i < 512 / 4; i++)
++			msc_writel(MSC_BUF_DATA_R, src[i]);
++		ok = !wait_xfer_complete();
++	}
++
++	msc_sync_abort();
++	msc_reset(MSC_SW_RST_CMD_BIT);
++	msc_reset(MSC_SW_RST_DAT_BIT);
++
++	/* wait until the card has stored it (it leaves the "programming" state) */
++	for (timeout = 100000; timeout; timeout--) {
++		resp = mmc_cmd(MMC_CMD_SEND_STATUS, 0x10 << 16, 0, MSC_CMDAT_RESPONSE_R1);
++		if (((resp[1] | (resp[2] << 8)) & (0xf << 9)) != (7 << 9))
++			break;
++		udelay(1);
++	}
++
++	return ok;
++}
++
++/* Write a short text (three pieces put together) as one sector. */
++static void nocryboot_note(u32 sector, const char *a, const char *b, const char *c)
++{
++	char *buf = (char *)CONFIG_SYS_TEXT_BASE;
++
++	memset(buf, 0, 512);
++	strcpy(buf, a);
++	strcat(buf, b);
++	strcat(buf, c);
++	if (!nocryboot_write_sector(sector, (u32 *)buf))
++		printf("nocryboot: could not write a note\n");
++}
++
+ #define NB_KERNEL	1
+ #define NB_RTOS		2
+ #define NB_ROOTFS	4
+@@ -2077,11 +2142,19 @@ static int nocryboot_read_head(const char *name, u32 *buf)
+ 	unsigned int sector;
+ 	u32 ret;
+ 
+-	memset(buf, 0, 512);
++	int tries;
++
+ 	if (spl_get_built_in_gpt_partition(name, &sector, NULL))
+ 		return 0;
+-	ret = mmc_block_read(sector, 1, buf);
+-	return ret != 0 && ret != (u32)-1;
++	/* a read that fails is tried again: a slot must not be given up for a hiccup */
++	for (tries = 0; tries < 3; tries++) {
++		memset(buf, 0, 512);
++		ret = mmc_block_read(sector, 1, buf);
++		if (ret != 0 && ret != (u32)-1)
++			return 1;
++	}
++	printf("nocryboot: cannot read %s\n", name);
++	return 0;
+ }
+ 
+ /*
+@@ -2122,16 +2195,32 @@ static int nocryboot_slot_state(int slot_b)
+ /*
+  * nocryboot's boot decision.  The factory loader takes the slot the "ota"
+  * record names and hangs if its boot picture image is missing or damaged.
++ *
+  * Here a slot is only started if all three of its parts are there:
+  *   - the named slot, if complete;
+  *   - else the other slot, if complete;
+  *   - else, or when asked at the serial console, USB boot mode.
++ *
++ * A count of starts catches a slot that looks complete but does not work.
++ * It only runs when armed.  The second sector of "ota" then holds
++ *     nocryboot:try=B:left=3
++ * (slot under trial, starts left).  Each start takes one off.  The started
++ * system reports success by erasing that sector.  If the count reaches 0
++ * first, the other slot is started and named in "ota" from then on.
++ *
++ * Whenever nocryboot changes slot it rewrites the "ota" record, because the
++ * system's own updater takes "the slot I may overwrite" from there, and it
++ * leaves a note in the second sector saying why:
++ *     nocryboot:failed=B        tried, never reported success, left it
++ *     nocryboot:incomplete=B    parts missing, left it
++ *     nocryboot:unconfirmed=B   never reported success, but nothing else to start
+  */
+ static char *nocryboot_load(void)
+ {
+-	u32 *buf = (u32 *)CONFIG_SYS_TEXT_BASE;
+-	unsigned int sector;
+-	int slot = 0;
++	char *buf = (char *)CONFIG_SYS_TEXT_BASE;
++	unsigned int sector, ota = 0;
++	int slot = 0, tries = -1, ok;
++	char left[2] = "0";
+ 
+ 	if (nocryboot_console_asks())
+ 		nocryboot_usb_boot_mode("asked at the console");
+@@ -2140,15 +2229,32 @@ static char *nocryboot_load(void)
+ 	nocryboot_usb_boot_mode("door test");
+ #endif
+ 
+-	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, buf) &&
+-	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, (char *)buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
++	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, (u32 *)buf) &&
++	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
+ 		slot = 1;
+ 
+-	if (nocryboot_slot_state(slot) != NB_COMPLETE) {
+-		slot = !slot;
+-		if (nocryboot_slot_state(slot) != NB_COMPLETE)
++	spl_get_built_in_gpt_partition(CONFIG_SPL_OTA_NAME, &ota, NULL);
++	memset(buf, 0, 512);
++	mmc_block_read(ota + 1, 1, (u32 *)buf);
++	if (!strncmp(buf, "nocryboot:try=", 14) && buf[14] == (slot ? 'B' : 'A') &&
++	    !strncmp(buf + 15, ":left=", 6) && buf[21] >= '0' && buf[21] <= '9')
++		tries = buf[21] - '0';
++
++	ok = nocryboot_slot_state(slot) == NB_COMPLETE;
++	if (!ok || tries == 0) {
++		if (nocryboot_slot_state(!slot) == NB_COMPLETE) {
++			printf("nocryboot: leaving slot %s\n", slot ? "B" : "A");
++			nocryboot_note(ota + 1, ok ? "nocryboot:failed=" : "nocryboot:incomplete=", slot ? "B" : "A", "\n");
++			slot = !slot;
++			nocryboot_note(ota, "ota:", slot ? CONFIG_SPL_OS_NAME2 : CONFIG_SPL_OS_NAME, "\n\n");
++		} else if (!ok) {
+ 			nocryboot_usb_boot_mode("no slot can be started");
+-		printf("nocryboot: starting slot %s instead\n", slot ? "B" : "A");
++		} else {
++			nocryboot_note(ota + 1, "nocryboot:unconfirmed=", slot ? "B" : "A", "\n");
++		}
++	} else if (tries > 0) {
++		left[0] = '0' + tries - 1;
++		nocryboot_note(ota + 1, slot ? "nocryboot:try=B:left=" : "nocryboot:try=A:left=", left, "\n");
+ 	}
+ 
+ 	spl_get_built_in_gpt_partition(slot ? CONFIG_SPL_RTOS_NAME2 : CONFIG_SPL_RTOS_NAME, &sector, NULL);

@@ -23,6 +23,8 @@ ap.add_argument('--delay', action='append', default=[], help='address of a delay
 ap.add_argument('--lcm', type=int, default=7, help='panel id the rtos image reports; -1: it reports none')
 ap.add_argument('--slot', choices=['a', 'b'], help='pretend the ota record selects this slot')
 ap.add_argument('--blank', default='', help='comma list of partitions to read as zeros: rtos,rtos2,kernel,kernel2,rootfs,rootfs2')
+ap.add_argument('--emmc', help='file that keeps what the SPL writes to the eMMC, so that several runs form a sequence of starts')
+ap.add_argument('--note', help='text to put in the second sector of ota before the run, e.g. nocryboot:try=B:left=3')
 ap.add_argument('--family', choices=['nebula', 'k1'], default='nebula', help='where the root file systems sit')
 ap.add_argument('--copy-a-to-b', action='store_true', help='read slot B (rtos2, kernel2) from slot A')
 ap.add_argument('--console-input', default='', help='characters waiting at the serial console, e.g. "\\x1b\\x1b\\x1b"'); ap.add_argument('--ram-mb', type=int, default=256)
@@ -100,6 +102,13 @@ reads = collections.Counter()
 lastreads = collections.deque(maxlen=8)
 core1 = {'started': False}
 RTOS = {}
+import json
+written = {}                         # sector -> bytes: what the SPL wrote
+if args.emmc and os.path.exists(args.emmc):
+    written = {int(k): bytes.fromhex(v) for k, v in json.load(open(args.emmc)).items()}
+if args.note is not None:
+    written[0x801] = (args.note + '\n').encode().ljust(512, b'\0') if args.note else bytes(512)
+wr = {'sector': None, 'words': []}
 PARTS = {'rtos': (0x1800, 0x2000), 'rtos2': (0x3800, 0x2000), 'kernel': (0x5800, 0x4000), 'kernel2': (0x9800, 0x4000)}
 _rs = 0xfa000 if args.family == 'nebula' else 0x96000
 PARTS.update(rootfs=(0xd800, _rs), rootfs2=(0xd800 + _rs, _rs))
@@ -120,6 +129,12 @@ def mmio_write(uc, off, size, value, ud):
             out('# uart%d: %s' % ((a >> 12) & 7, uart.decode('latin1').strip('\r'))); uart.clear()
         else:
             uart.append(value)
+        return
+    if a == 0xb3450020 and wr['sector'] is not None:           # data port: the sector being written
+        wr['words'].append(value)
+        if len(wr['words']) == 128:
+            d = struct.pack('<128I', *wr['words']); written[wr['sector']] = d
+            out('# eMMC WRITE: sector %#x = %r' % (wr['sector'], d.rstrip(b'\0')[:60])); wr['sector'] = None
         return
     out('W %-22s = %#010x   [%#x]' % (rname(a), value, here()))
     if a == 0xb0002004 and value & 1 and regs.get(0xb00000cc, 0) >> 8 == 0x425753:
@@ -169,8 +184,13 @@ def hook_r(uc, off, size, ud):
                     disk.seek((start - first + PARTS[name[:-1]][0]) * 512); data = disk.read(cnt * 512)
                 if name in args.blank.split(','):
                     data = bytes(len(data))
-        if start == 0x800 and args.slot:
+        if start == 0x800 and args.slot and 0x800 not in written:
             data = (b'ota:kernel2\n' if args.slot == 'b' else b'ota:kernel\n').ljust(len(data), b'\0')
+        if any(start <= w < start + cnt for w in written):
+            data = bytearray(data)
+            for w, d in written.items():
+                if start <= w < start + cnt: data[(w - start) * 512:(w - start + 1) * 512] = d
+            data = bytes(data)
         if len(data) >= 36 and data[8:12] == b'RTOS':          # the image the SPL is about to start on core 1
             h = struct.unpack('<9I', data[:36]); RTOS.update(start=h[4], size_word=h[8])
         uc.mem_write(P(dst), data)
@@ -178,10 +198,13 @@ def hook_r(uc, off, size, ud):
         return cnt
     if off == 0x44:                 # send command (index, argument): answer like an eMMC does
         out('# eMMC command %d, argument %#x' % (hargs[0], hargs[1]))
+        if hargs[0] == 24: wr['sector'] = hargs[1]; wr['words'] = []
+        if hargs[0] == 1: return 0x80000480                          # operating conditions: ready, sector addressed
         return 0x80000440 if hargs[0] in (8, 55) else 0x80000400     # no answer to the SD-only commands; else all ones
     return 0
 mu.mmio_map(HOOKIO, 0x1000, hook_r, None, hook_w, None)
 mu.mem_write(0x400, b'\xff' * 32)
+mu.mem_write(0x480, b'\xff\x80\x80\xff\xc0' + b'\xff' * 11)
 
 stop = {}
 def code(uc, a, size, ud):
@@ -219,5 +242,7 @@ else:
     out('# stopped without reaching the kernel. pc %#x ra %#x; last blocks %s' % (mu.reg_read(UC_MIPS_REG_PC), mu.reg_read(UC_MIPS_REG_RA), ' '.join('%x' % b for b in blocks)))
     out('# last register reads: ' + ' '.join(rname(a) for a in lastreads))
 if uart: out('# uart (unfinished line): ' + uart.decode('latin1'))
+if args.emmc:
+    json.dump({str(k): v.hex() for k, v in written.items()}, open(args.emmc, 'w'))
 open(args.o, 'w').write('\n'.join(log) + '\n')
 print('\n'.join(log[-25:]))

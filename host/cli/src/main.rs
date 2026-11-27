@@ -97,6 +97,10 @@ enum Cmd {
     Slots {
         #[arg(long)]
         set: Option<String>,
+        /// With --set: put the slot on trial for this many starts (1-9). Unless the started
+        /// system reports success in time, the nocryboot loader returns to the other slot
+        #[arg(long = "try")]
+        tries: Option<u8>,
     },
     /// Copy the firmware of one slot (a or b) into the other, verified. The active slot,
     /// settings and identity are not changed.
@@ -477,15 +481,21 @@ fn main() -> Result<()> {
                     if s.mainboards.is_empty() { String::new() } else { format!(" on {}", s.mainboards.join(", ")) });
             }
         }
-        Cmd::Slots { set } => {
-            let s = match set {
-                Some(x) => set_active_slot(soc, Via::Auto, &x.to_ascii_lowercase(), None, None)?,
-                None => slots(soc, Via::Auto, None)?,
+        Cmd::Slots { set, tries } => {
+            let s = match (set, tries) {
+                (Some(x), Some(n)) => start_trial(soc, Via::Auto, &x.to_ascii_lowercase(), n, None)?,
+                (Some(x), None) => set_active_slot(soc, Via::Auto, &x.to_ascii_lowercase(), None, None)?,
+                (None, Some(_)) => bail!("--try needs --set a|b"),
+                (None, None) => slots(soc, Via::Auto, None)?,
             };
             for (n, i) in [("A", &s.a), ("B", &s.b)] {
                 println!("{n}: {} {}  rtos {}  kernel {}  startable {}", i.firmware_name, i.firmware_version, i.has_rtos, i.has_kernel, i.bootable());
             }
             println!("active: {}", s.active.to_uppercase());
+            println!("loader: {}", if s.loader_counts { "nocryboot (counts starts)" } else { "does not count starts" });
+            if let Some(n) = &s.note {
+                println!("note: {}", n.describe());
+            }
         }
         Cmd::CopySlot { from, yes } => {
             let from = from.to_ascii_lowercase();
