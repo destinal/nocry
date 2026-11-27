@@ -46,7 +46,7 @@ struct Cli {
 enum Cmd {
     /// The Wi-Fi of a board running nocry-rescue: show what it is on and what is in range.
     /// --join makes it join a network (it returns to its own network if that fails);
-    /// --own opens its own network "nocry-rescue" again
+    /// --own opens its own network "nocry" again
     Wifi {
         #[arg(long)]
         join: Option<String>,
@@ -564,8 +564,8 @@ fn main() -> Result<()> {
                 let over_net = nocry_core::session::network_board().is_some();
                 nocry_core::session::wifi_change(join.as_deref(), &password)?;
                 match &join {
-                    Some(n) => println!("the board is joining {n}; if it cannot, its own network nocry-rescue comes back within a minute"),
-                    None => println!("the board is opening its own network nocry-rescue"),
+                    Some(n) => println!("the board is joining {n}; if it cannot, its own network \"nocry\" comes back within a minute"),
+                    None => println!("the board is opening its own network \"nocry\""),
                 }
                 if over_net {
                     println!("looking for the board (put this computer on the same network)...");
@@ -578,7 +578,7 @@ fn main() -> Result<()> {
             let found = nocry_core::discover::discover(Duration::from_secs(3));
             if found.is_empty() {
                 println!("no board running nocry-rescue answered on this network");
-                println!("(on the board's own Wi-Fi \"nocry-rescue\" its address is {})", nocry_core::discover::AP_ADDRESS);
+                println!("(on the board's own Wi-Fi \"nocry\" its address is {})", nocry_core::discover::AP_ADDRESS);
             }
             for b in found {
                 let how = if b.found_by == "mdns" { "announced itself" } else { "at the address of its own Wi-Fi" };

@@ -1471,12 +1471,12 @@ private:
         if (busy)
             return;
         setBusy(true);
-        const QString where = action == 1 ? ssid : QStringLiteral("nocry-rescue");
+        const QString where = action == 1 ? ssid : QStringLiteral("nocry");
         stateHint->setText(action == 1 ? tr("Telling the board to join %1.").arg(ssid) : tr("Telling the board to open its own network."));
         log->appendPlainText(stateHint->text());
         const QByteArray s = ssid.toUtf8(), p = password.toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
-        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, where] {
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, where, action] {
             const QJsonObject o = w->result();
             w->deleteLater();
             lastResult = o;
@@ -1504,14 +1504,14 @@ private:
             progressLabel->setText(tr("Looking for the board on the network"));
             allowCancel();
             auto *f = new QFutureWatcher<QJsonObject>(this);
-            connect(f, &QFutureWatcher<QJsonObject>::finished, this, [this, f, where] {
+            connect(f, &QFutureWatcher<QJsonObject>::finished, this, [this, f, where, action] {
                 const QJsonObject r = f->result();
                 f->deleteLater();
                 setBusy(false);
                 lastResult = r;
                 if (r.value("ok").toBool()) {
                     const QString a = r.value("address").toString();
-                    const bool fellBack = a.startsWith("192.168.77.") && where != "nocry-rescue";
+                    const bool fellBack = a.startsWith("192.168.77.") && action == 1;
                     const QString msg = fellBack
                         ? tr("The board is back on its own network (%1): it could not join %2. Check the password and that the network is a 2.4 GHz one in range, then try again.").arg(a, where)
                         : tr("Connected again: the board is at %1.").arg(a);

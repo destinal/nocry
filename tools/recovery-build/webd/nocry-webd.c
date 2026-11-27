@@ -2,7 +2,7 @@
  * nocry-webd: the set-up page of nocry-rescue's own Wi-Fi network (docs/nocry-rescue.md).
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * A phone or laptop that joins "nocry-rescue" opens http://192.168.77.1 (the access point
+ * A phone or laptop that joins the board's own network "nocry" opens http://192.168.77.1 (the access point
  * resolves every name to the board, so most devices show the page by themselves) and tells the
  * board which Wi-Fi network to join. That is all this server does:
  *
@@ -119,13 +119,19 @@ static const char *HEAD =
 static void page(struct buf *b, const char *error, const char *keep_ssid)
 {
 	char *st = slurp(statefile, 1024), *scan = run("scan", 16384), *line, *save;
-	char mode[32], ssid[128], src[160]; int any = 0;
+	char mode[32], ssid[128], src[160], hint[32]; int any = 0;
 	field(st, "mode", mode, sizeof mode); field(st, "ssid", ssid, sizeof ssid); field(st, "source", src, sizeof src);
+	field(st, "hint", hint, sizeof hint);
 	puts_(b, HEAD);
 	if (error) { puts_(b, "<p class=e>"); esc(b, error); puts_(b, "</p>"); }
 	else if (!strncmp(src, "failed:", 7)) {
 		puts_(b, "<p class=e>The board could not join <b>"); esc(b, src + 7);
-		puts_(b, "</b>: wrong password, or the network is out of range. Nothing was changed; try again.</p>");
+		puts_(b, "</b>: wrong password, or the network is out of range. Nothing was changed; try again.");
+		if (!strncmp(hint, "nonascii", 8))
+			puts_(b, " <b>The password you typed contained a character that is not on a plain keyboard</b>, such as a curly "
+				 "apostrophe (&rsquo;) instead of a straight one ('). Phones swap these in by themselves: "
+				 "on an iPhone, hold the apostrophe key and pick the straight one.");
+		puts_(b, "</p>");
 	}
 	puts_(b, "<p class=s>This printer board is running its rescue system on its own Wi-Fi network. "
 		 "Choose the Wi-Fi network it should join instead, so a computer on that network can reach it. "
@@ -156,10 +162,10 @@ static void joining(struct buf *b, const char *ssid)
 {
 	puts_(b, HEAD);
 	puts_(b, "<p class=s>The board is joining <b>"); esc(b, ssid);
-	puts_(b, "</b>.</p><p>This network (nocry-rescue) now disappears and your device will go back to its usual one.</p>"
+	puts_(b, "</b>.</p><p>This network (nocry) now disappears and your device will go back to its usual one.</p>"
 		 "<p><b>If it works,</b> the board's screen shows the new network and its address there. "
 		 "Put the computer with nocry on the same network; nocry finds the board by itself.</p>"
-		 "<p><b>If it does not,</b> nocry-rescue comes back within a minute: join it again and check the password.</p>");
+		 "<p><b>If it does not,</b> the network nocry comes back within a minute: join it again and check the password.</p>");
 }
 
 static int hexv(int c) { return isdigit(c) ? c - '0' : isxdigit(c) ? (tolower(c) - 'a' + 10) : -1; }

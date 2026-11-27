@@ -3,7 +3,7 @@
 #
 #   nocry-wifi auto                 at start: join the network the installed firmware saved,
 #                                   else open the board's own network
-#   nocry-wifi ap                   open the board's own network "nocry-rescue"
+#   nocry-wifi ap                   open the board's own network "nocry"
 #   nocry-wifi join SSID [PASSWORD] join a network; back to the own network if that fails
 #   nocry-wifi scan                 networks in range, strongest first: "signal<TAB>lock<TAB>name"
 #   nocry-wifi status               mode=ap|client|none, ssid=, address=, source=
@@ -15,18 +15,27 @@
 # written to /run (memory) and to nothing that survives a restart.
 
 IF=wlan0
-AP_SSID=nocry-rescue
-AP_PASS=nocry-rescue
+# Short on purpose: they are typed on a phone. WPA2 does not take a password under 8 characters.
+# It only gets a device onto this network; see the pairing code.
+AP_SSID=nocry
+AP_PASS=nocry111
 AP_ADDR=192.168.77.1
 RUN=/run
 STATE=$RUN/nocry-wifi.state
 CTRL=/var/run/wpa_supplicant
 LOCK=$RUN/nocry-wifi.lock
 
-log() { echo "nocry-wifi: $*" > /dev/console 2>/dev/null; echo "nocry-wifi: $*" >&2; }
+# What happened, for whoever has to find out why a join failed: $RUN/nocry-wifi.log (never a
+# password; only how long it was) and, for the last attempt, wpa_supplicant's own log.
+log() {
+    echo "nocry-wifi: $*" > /dev/console 2>/dev/null; echo "nocry-wifi: $*" >&2
+    echo "$(cut -d' ' -f1 /proc/uptime) $*" >> $RUN/nocry-wifi.log
+}
 
+HINT=
 state() {   # state MODE SSID ADDRESS SOURCE
-    printf 'mode=%s\nssid=%s\naddress=%s\nsource=%s\n' "$1" "$2" "$3" "$4" > $STATE.new && mv $STATE.new $STATE
+    pw=; [ "$1" = ap ] && pw=$AP_PASS      # the own network's password is public and shown on the screen
+    printf 'mode=%s\nssid=%s\naddress=%s\nsource=%s\nhint=%s\npassword=%s\n' "$1" "$2" "$3" "$4" "$HINT" "$pw" > $STATE.new && mv $STATE.new $STATE
 }
 
 part() {    # device of the partition named $1
@@ -101,7 +110,8 @@ CONF
     # every name resolves to the board, so a phone that joins is shown the set-up page by itself
     dnsmasq --interface=$IF --bind-interfaces --dhcp-range=192.168.77.10,192.168.77.50,12h \
         --dhcp-leasefile=$RUN/nocry-leases --pid-file=$RUN/nocry-dnsmasq.pid --address=/#/$AP_ADDR
-    nocry-webd --address $AP_ADDR 2>/dev/console &
+    # in a session of its own: it must outlive whoever asked for the network (a shell, the service)
+    setsid nocry-webd --address $AP_ADDR >/dev/null 2>/dev/console </dev/null &
     state ap "$AP_SSID" "$AP_ADDR" "$1"
     announce
     log "own network $AP_SSID open at $AP_ADDR"
@@ -112,14 +122,24 @@ join_conf() {
     radio_down
     set_mac
     state joining "$2" "" "$3"
-    wpa_supplicant -B -i $IF -D nl80211 -c "$1" >/dev/null 2>&1 || return 1
-    i=0
+    rm -f $RUN/nocry-wpa.log
+    wpa_supplicant -B -i $IF -D nl80211 -c "$1" -d -f $RUN/nocry-wpa.log >/dev/null 2>&1 || { log "wpa_supplicant did not start"; return 1; }
+    i=0; seen=
     while [ $i -lt 30 ]; do
         s=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^wpa_state=//p')
+        case " $seen " in *" $s "*) ;; *) seen="$seen $s" ;; esac
         [ "$s" = COMPLETED ] && break
         sleep 1; i=$((i+1))
     done
-    [ "$s" = COMPLETED ] || { log "could not join $2 (wrong password, or out of range)"; return 1; }
+    if [ "$s" != COMPLETED ]; then
+        # how far it got says what went wrong
+        if ! grep -q "selected BSS" $RUN/nocry-wpa.log 2>/dev/null; then why="the network was not seen (out of range, or not a 2.4 GHz network)"
+        elif grep -q "WRONG_KEY\|4-Way Handshake failed\|pre-shared key may be incorrect" $RUN/nocry-wpa.log; then why="the network refused the password"
+        elif grep -q "CTRL-EVENT-ASSOC-REJECT" $RUN/nocry-wpa.log; then why="the network turned the board away (with this Wi-Fi chip that is what a wrong password looks like)"
+        else why="no answer from the network"; fi
+        log "could not join $2: $why; states:$seen; $(grep -c CTRL-EVENT-ASSOC-REJECT $RUN/nocry-wpa.log 2>/dev/null) rejections"
+        return 1
+    fi
     ssid=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^ssid=//p')
     udhcpc -i $IF -n -q -t 8 -T 2 >/dev/null 2>&1 || { log "joined $ssid but got no address from it"; return 1; }
     udhcpc -i $IF -b -S >/dev/null 2>&1     # keep the lease alive
@@ -182,12 +202,18 @@ case "$1" in
     if [ $n -ne 0 ] && { [ $n -lt 8 ] || [ $n -gt 63 ]; }; then echo "a Wi-Fi password has 8 to 63 characters" >&2; exit 2; fi
     case "$3" in *'"'*) echo "a password with a double quote is not supported here" >&2; exit 2 ;; esac
     locked
+    # Phones like to turn ' into a curly apostrophe and " into curly quotes while typing; such a
+    # password is longer in bytes than it looks and does not match. Counted, never stored.
+    odd=$(printf '%s' "$3" | tr -d '\040-\176' | wc -c)
+    bytes=$(printf '%s' "$3" | wc -c)
+    [ "$odd" -gt 0 ] && HINT="nonascii:$odd"
+    log "join requested: name of ${#2} characters, password of $bytes bytes, $odd of them outside plain ASCII"
     {
         echo "ctrl_interface=$CTRL"
         echo "network={"
         echo "    ssid=$(hex "$2")"         # as hex: any character in a name is safe
         echo "    scan_ssid=1"
-        if [ $n -eq 0 ]; then echo "    key_mgmt=NONE"; else echo "    key_mgmt=WPA-PSK"; echo "    psk=\"$3\""; fi
+        if [ $n -eq 0 ]; then echo "    key_mgmt=NONE"; else echo "    key_mgmt=WPA-PSK"; printf '    psk="%s"\n' "$3"; fi
         echo "}"
     } > $RUN/nocry-sta.conf
     chmod 600 $RUN/nocry-sta.conf

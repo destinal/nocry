@@ -4,7 +4,7 @@
 #
 # Network (all of it in /usr/sbin/nocry-wifi):
 #   1. the Wi-Fi network the installed firmware has saved, if there is one and it is in reach;
-#   2. otherwise the board's own network "nocry-rescue" (WPA2, password "nocry-rescue"),
+#   2. otherwise the board's own network "nocry" (WPA2, password "nocry111"),
 #      board at 192.168.77.1, with a set-up page at http://192.168.77.1 for choosing a network.
 # The own network's password only gets a device onto that network. Driving the board, or
 # changing its network, needs the pairing code on the screen, which changes at every start
@@ -20,7 +20,7 @@ show() {
     case "$(val mode)" in
       ap)
         nocry-banner "#nocry-rescue" "" \
-            "Wi-Fi network   $(val ssid)" "password        nocry-rescue" \
+            "Wi-Fi network   $(val ssid)" "password        $(val password)" \
             "set-up page     http://$(val address)" "" "pairing code" "$code" ;;
       client)
         nocry-banner "#nocry-rescue" "" \
