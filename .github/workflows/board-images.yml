@@ -73,10 +73,12 @@ jobs:
           (cd dist-images && tar czf ../nocry-board-images.tar.gz .)
           sha256sum nocry-board-images.tar.gz > nocry-board-images.tar.gz.sha256
           notes="Everything nocry puts on a board (USB boot stages, the nocryboot loader, the boot picture program, the recovery Linux, nocry-rescue), built by GitHub from commit ${GITHUB_SHA} of this repository. Replaced whenever the sources of these images change; \`tools/get-images.sh\` downloads it. This is not a version of nocry: the programs are in the versioned releases."
-          if gh release view board-images -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit board-images -R "$GITHUB_REPOSITORY" --notes "$notes"
-          else
-            gh release create board-images -R "$GITHUB_REPOSITORY" --prerelease --latest=false --target "$GITHUB_SHA" \
-              --title "Board images (built from main)" --notes "$notes"
+          # The pre-release has to exist: this job's token may add files to a release but GitHub
+          # refuses it the creation of one with a new tag ("Resource not accessible by integration").
+          # Made once by hand: gh release create board-images --prerelease --latest=false
+          if ! gh release view board-images -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::the board-images pre-release does not exist; create it once by hand (see the comment in this step)"
+            exit 1
           fi
+          gh release edit board-images -R "$GITHUB_REPOSITORY" --notes "$notes"
           gh release upload board-images -R "$GITHUB_REPOSITORY" --clobber nocry-board-images.tar.gz nocry-board-images.tar.gz.sha256
