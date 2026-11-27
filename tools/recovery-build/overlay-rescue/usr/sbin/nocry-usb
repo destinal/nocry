@@ -1,0 +1,193 @@
+#!/bin/sh
+# nocry-usb: USB flash drives in the rescue system (docs/nocry-rescue.md).
+#
+#   nocry-usb daemon    run by the start-up script: decides whether the board's one USB
+#                       controller serves a computer (the board is the device: adb, nocry over
+#                       USB) or the A sockets (the board is the host: a flash drive), and
+#                       mounts a flash drive when one appears
+#   nocry-usb status    key=value lines: mounted=yes|no, and for a mounted drive device=,
+#                       fs=, label=, size=, free= (bytes), readonly=yes|no
+#   nocry-usb eject     write everything out and unmount: the drive can be pulled
+#   nocry-usb format exfat|fat32
+#                       erase the flash drive that is plugged in (mounted or not): a new
+#                       partition table with one partition, and that file system in it
+#
+# status also says which drive is there, mounted or not: disk= (sda), disk_bytes=, disk_model=.
+#
+# The drive is mounted at /run/nocry-usb. File systems tried: FAT (12/16/32), exFAT, NTFS
+# (Linux's ntfs3; a volume Windows did not shut down cleanly mounts read-only), ext2/3/4.
+#
+# Which role: the board has one controller. A computer on the USB-C socket supplies 5 V
+# there, which the board sees on a pin of its own (PD17, "vbus_detect"); then the board is
+# the device. Without it the board is the host and switches the 5 V of the A sockets on
+# (PC9 and PC10, as Creality's firmware does at every start). What this decides and why is
+# logged in /run/nocry-usb.log, which the log download of the web pages includes.
+
+RUN=${NOCRY_RUN:-/run}
+MNT=$RUN/nocry-usb
+STATE=$RUN/nocry-usb.state
+LOG=$RUN/nocry-usb.log
+HELD=$RUN/nocry-usb.ejected        # the device that was ejected: not mounted again until it is pulled
+SYS=${NOCRY_SYS:-/sys}
+
+log() { echo "$(cut -d' ' -f1 /proc/uptime 2>/dev/null) $*" >> $LOG; }
+
+state() { { printf '%s\n' "$@"; disk_lines; } > $STATE.new && mv $STATE.new $STATE; }
+
+# --- which role ---------------------------------------------------------------------------
+SWITCH=
+find_switch() { [ -n "$SWITCH" ] || SWITCH=$(find $SYS/devices -name sw_switch_hsotg 2>/dev/null | head -1); [ -n "$SWITCH" ]; }
+# is a computer supplying 5 V on the USB-C socket? prints yes, no or unknown
+pc_power() {
+    l=$(grep vbus_detect $SYS/kernel/debug/gpio 2>/dev/null | head -1)
+    [ -n "$l" ] || { echo unknown; return; }
+    case "$l" in *" lo"*) lvl=lo ;; *" hi"*) lvl=hi ;; *) echo unknown; return ;; esac
+    case "$l" in *"ACTIVE LOW"*) [ $lvl = lo ] && echo yes || echo no ;; *) [ $lvl = hi ] && echo yes || echo no ;; esac
+}
+attached() { ls $SYS/bus/usb/devices 2>/dev/null | grep -c '^[0-9]*-[0-9.]*$'; }      # devices behind the root hub
+sockets_on() {      # the 5 V of the A sockets: PC9 and PC10 driven high (port C at 0x10010200)
+    command -v devmem >/dev/null 2>&1 || return 0
+    for bit in 0x200 0x400; do
+        devmem 0x10010218 32 $bit; devmem 0x10010224 32 $bit      # not an interrupt; a GPIO
+        devmem 0x10010244 32 $bit; devmem 0x10010238 32 $bit      # level high first, then output
+    done >/dev/null 2>&1
+}
+ROLE=; FLIPS=0; FLIP_T=0; STUCK=         # ROLE empty: the first decision is always written
+set_role() {
+    [ "$1" = "$ROLE" ] && return
+    find_switch || { [ -n "$NOSWITCH" ] || log "no role switch in this kernel: the board stays a USB device"; NOSWITCH=1; return; }
+    now=$(cut -d. -f1 /proc/uptime)
+    [ $((now - FLIP_T)) -gt 30 ] && FLIPS=0
+    FLIPS=$((FLIPS + 1)); FLIP_T=$now
+    if [ $FLIPS -gt 6 ]; then
+        # the pin follows our own 5 V, or bounces: stop following it
+        log "role changed $FLIPS times in 30 s: staying host until the next start"; STUCK=1
+        [ "$ROLE" = host ] && return
+        set -- host
+    fi
+    echo "$1" > "$SWITCH" 2>/dev/null
+    ROLE=$1; log "role: $1 ($2)"
+    [ "$1" = host ] && sockets_on
+}
+role_tick() {
+    [ -n "$STUCK" ] && return
+    pc=$(pc_power)
+    case "$pc" in
+      no)  set_role host "no computer on USB-C" ;;
+      yes) if [ "$ROLE" = host ] && [ "$(attached)" -gt 0 ]; then :      # something is plugged into an A socket: keep it
+           else set_role device "a computer supplies USB-C"; fi ;;
+      *)   [ -n "$NOPIN" ] || log "the USB-C power pin cannot be read: the board stays a USB device"; NOPIN=1 ;;
+    esac
+}
+
+# --- the drive ----------------------------------------------------------------------------
+# the USB disk that is plugged in (the first, if there are several): prints its name (sda), or nothing
+usb_disk() {
+    for b in $SYS/block/sd*; do
+        [ -e "$b" ] || continue
+        readlink -f "$b" | grep -q /usb || continue
+        [ "$(cat "$b/size" 2>/dev/null)" -gt 0 ] 2>/dev/null || continue     # a card reader without a card
+        basename "$b"; return 0
+    done
+    return 1
+}
+disk_lines() {      # for the state: which drive is there at all
+    k=$(usb_disk) || return 0
+    echo "disk=$k"
+    echo "disk_bytes=$(( $(cat $SYS/block/$k/size) * 512 ))"
+    echo "disk_model=$(echo $(cat $SYS/block/$k/device/vendor 2>/dev/null) $(cat $SYS/block/$k/device/model 2>/dev/null) | tr -cd 'A-Za-z0-9 ._-')"
+}
+mounted_dev() { awk -v m="$MNT" '$2 == m { print $1 }' /proc/mounts | tail -1; }
+try_mount() {   # try_mount DEVICE: first file system that takes it, read-write if it can be
+    for t in vfat exfat ntfs3 ext4; do
+        case $t in vfat) o=utf8,shortname=mixed,noatime ;; exfat) o=iocharset=utf8,noatime ;; ntfs3) o=iocharset=utf8,noatime ;; *) o=noatime ;; esac
+        if mount -t $t -o rw,$o "$1" $MNT 2>/dev/null; then FS=$t; RO=no; return 0; fi
+        if mount -t $t -o ro,$o "$1" $MNT 2>/dev/null; then FS=$t; RO=yes; return 0; fi
+    done
+    return 1
+}
+fs_name() { case "$1" in vfat) echo FAT ;; exfat) echo exFAT ;; ntfs3) echo NTFS ;; *) echo "$1" ;; esac; }
+write_state() {
+    d=$(mounted_dev)
+    if [ -z "$d" ]; then
+        if [ -s $HELD ]; then state "mounted=no" "ejected=yes"; else state "mounted=no"; fi
+        return
+    fi
+    set -- $(df -k $MNT 2>/dev/null | tail -1)
+    label=$(blkid "$d" 2>/dev/null | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p' | tr -cd 'A-Za-z0-9 ._-')
+    state "mounted=yes" "device=$d" "fs=$(fs_name "$FS")" "label=$label" "size=$(( ${2:-0} * 1024 ))" "free=$(( ${4:-0} * 1024 ))" "readonly=$RO"
+}
+drive_tick() {
+    d=$(mounted_dev)
+    if [ -n "$d" ]; then
+        [ -b "$d" ] && [ -e "$SYS/class/block/$(basename "$d")" ] && { write_state; return; }
+        umount -l $MNT 2>/dev/null; log "drive $d pulled while mounted"
+    fi
+    # an ejected drive stays unmounted until it has been pulled
+    if [ -s $HELD ]; then
+        [ -e "$SYS/class/block/$(basename "$(cat $HELD)")" ] && { write_state; return; }
+        rm -f $HELD
+    fi
+    mkdir -p $MNT
+    for b in $SYS/block/sd*; do
+        [ -e "$b" ] || continue
+        readlink -f "$b" | grep -q /usb || continue        # USB only (the board has no other sd* disks, but a test rig may)
+        # its partitions, largest first; a drive without a partition table is one file system
+        cands=$(for p in "$b"/sd*[0-9]; do [ -e "$p" ] && echo "$(cat "$p/size") /dev/$(basename "$p")"; done | sort -rn | cut -d' ' -f2)
+        [ -n "$cands" ] || cands=/dev/$(basename "$b")
+        for c in $cands; do
+            [ -b "$c" ] || mknod "$c" b $(tr : ' ' < "$SYS/class/block/$(basename "$c")/dev") 2>/dev/null
+            if try_mount "$c"; then log "mounted $c ($FS, read-only: $RO)"; write_state; return; fi
+        done
+        [ -n "$SAID" ] || log "drive $(basename "$b"): no file system that can be mounted (FAT, exFAT, NTFS, ext)"; SAID=1
+        state "mounted=no" "unreadable=yes"; return
+    done
+    SAID=
+    write_state
+}
+
+case "$1" in
+  daemon)
+    mkdir -p $MNT; : > $LOG
+    mount -t debugfs none $SYS/kernel/debug 2>/dev/null
+    state "mounted=no"
+    while :; do
+        role_tick
+        drive_tick
+        sleep 1
+    done ;;
+  status)
+    cat $STATE 2>/dev/null || echo "mounted=no" ;;
+  eject)
+    d=$(mounted_dev)
+    [ -n "$d" ] || { echo "no drive is mounted" >&2; exit 1; }
+    sync
+    echo "$d" > $HELD
+    umount $MNT 2>/dev/null || { rm -f $HELD; echo "the drive is in use" >&2; exit 1; }
+    sync; log "ejected $d"
+    state "mounted=no" "ejected=yes"
+    echo "ejected=yes" ;;
+  format)
+    case "$2" in exfat) ptype=7 ;; fat32) ptype=c ;; *) echo "usage: nocry-usb format exfat|fat32" >&2; exit 2 ;; esac
+    k=$(usb_disk) || { echo "no USB flash drive is plugged in" >&2; exit 1; }
+    # only ever a USB disk: never the board's own storage, whatever else goes wrong
+    case "$k" in sd[a-z]) ;; *) echo "not a USB disk: $k" >&2; exit 1 ;; esac
+    readlink -f "$SYS/block/$k" | grep -q /usb || { echo "not a USB disk: $k" >&2; exit 1; }
+    d=/dev/$k
+    echo "$d" > $HELD                   # the daemon must not mount it while it is being made
+    m=$(mounted_dev)
+    if [ -n "$m" ]; then sync; umount $MNT 2>/dev/null || { rm -f $HELD; echo "the drive is in use" >&2; exit 1; }; fi
+    log "formatting $d as $2"
+    fail() { rm -f $HELD; log "format failed: $1"; echo "$1" >&2; exit 1; }
+    dd if=/dev/zero of=$d bs=1M count=4 conv=fsync 2>/dev/null || fail "the drive cannot be written (write-protected?)"
+    printf 'label: dos\n2048,,%s\n' $ptype | sfdisk -q $d >/dev/null 2>&1 || fail "the partition table could not be written"
+    blockdev --rereadpt $d 2>/dev/null
+    i=0; while [ ! -b ${d}1 ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i+1)); done
+    [ -b ${d}1 ] || fail "the new partition did not appear"
+    if [ "$2" = exfat ]; then mkfs.exfat -L NOCRY ${d}1 >/dev/null 2>&1; else mkfs.vfat -F 32 -n NOCRY ${d}1 >/dev/null 2>&1; fi || fail "making the file system failed"
+    sync
+    rm -f $HELD                         # the daemon mounts it at its next look
+    log "formatted $d as $2"
+    echo "formatted=$2" ;;
+  *) echo "usage: nocry-usb daemon|status|eject|format" >&2; exit 2 ;;
+esac

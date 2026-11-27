@@ -17,3 +17,10 @@ BR2_PACKAGE_DNSMASQ_DHCP=y
 BR2_PACKAGE_MDNSD=y
 # rescue-only files: start-up script, mDNS service description
 BR2_ROOTFS_OVERLAY="$(NOCRY_RECOVERY)/overlay $(NOCRY_RECOVERY)/overlay-rescue"
+# remote access the owner can turn on (nocry-remote): SSH; off unless turned on (post-build
+# removes the package's start-up script)
+BR2_PACKAGE_DROPBEAR=y
+# formatting a USB flash drive (nocry-usb format)
+BR2_PACKAGE_DOSFSTOOLS=y
+BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
+BR2_PACKAGE_EXFATPROGS=y

@@ -674,17 +674,20 @@ fn main() -> Result<()> {
             use nocry_core::session as s;
             if install {
                 let img = s::rescue_image(image.as_ref())?;
-                let pieces = s::rescue_install(&img)?;
-                println!("rescue image installed and verified ({pieces} piece(s) on the disk)");
-                println!("to boot it: hold the screen at power-on, and keep holding through the countdown");
-                println!("(that needs the nocryboot loader 0.2 or later: see `nocry loader`)");
+                let copies = s::rescue_install(&img)?;
+                println!("rescue image installed and verified ({copies} of 2 copies)");
+                if copies < 2 {
+                    println!("one slot has no room for a copy: its system image reaches into the last 32 MiB of the partition");
+                }
+                println!("to boot it: have a finger on the screen while switching the board on");
+                println!("(that needs the nocryboot loader 0.3 or later: see `nocry loader`)");
             } else if remove {
                 s::rescue_remove()?;
                 println!("rescue image removed");
             } else {
-                match s::rescue_status()?.as_str() {
-                    "yes" => println!("rescue image: installed, verified"),
-                    "damaged" => println!("rescue image: checksum mismatch (moved or overwritten); reinstall with --install"),
+                match s::rescue_status()? {
+                    (st, n) if st == "yes" => println!("rescue image: installed, verified ({n} of 2 copies)"),
+                    (st, _) if st == "damaged" => println!("rescue image: checksum mismatch (overwritten); reinstall with --install"),
                     _ => println!("rescue image: not installed (--install installs it)"),
                 }
             }

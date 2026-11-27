@@ -26,8 +26,18 @@
 #   nocry-rescue-do loader [install|factory]   the boot loader: say what is there, or change it
 #   nocry-rescue-do logo [nocry|firmware]      the boot logo: say what is there, or change it
 #   nocry-rescue-do rescue-status   is the rescue system stored on the board, and will the loader find it?
-#   nocry-rescue-do rescue-install  standard input (a rescue image) -> the data partition, and the loader's note
-#   nocry-rescue-do rescue-remove   take both away again
+#   nocry-rescue-do rescue-install  standard input (a rescue image) -> a copy behind each slot's system image
+#   nocry-rescue-do rescue-remove   take the copies away again
+#   nocry-rescue-do cal-get | cal-put   the touch calibration, kept beside the copies (cal-put: standard input)
+#   nocry-rescue-do usb-status      the USB flash drive: mounted=yes|no, fs=, label=, size=, free=, readonly=
+#   nocry-rescue-do usb-eject       write everything out and unmount it
+#   nocry-rescue-do usb-format exfat|fat32         erase the flash drive: one partition with that file system
+#   nocry-rescue-do usb-targets     what can be backed up: "full<TAB>bytes", then "<partition><TAB>bytes" lines
+#   nocry-rescue-do usb-backup full|PARTITION      the whole storage or one partition -> an image on the drive  (a job)
+#   nocry-rescue-do usb-list backups|fw            images / firmware files found on the drive (tab-separated)
+#   nocry-rescue-do usb-info FILE   what restoring that image would do (key=value lines)
+#   nocry-rescue-do usb-restore FILE               write that image back, verified                               (a job)
+#   nocry-rescue-do fw-check-usb FILE SLOT|KEEP    work out what installing a firmware file on the drive would do (a job)
 #   nocry-rescue-do job             the running or last job: state=, what=, done=, total=, message=
 #   nocry-rescue-do cancel          ask the running job to stop at its next safe point
 #
@@ -37,6 +47,7 @@
 DISK=${NOCRY_DISK:-/dev/mmcblk0}
 FBD=${NOCRY_FBD:-/usr/sbin/nocry-fbd}
 RUN=${NOCRY_RUN:-/run}
+SYS=${NOCRY_SYS:-/sys}; DEV=${NOCRY_DEV:-/dev}       # elsewhere only in tests
 JOB=$RUN/nocry-job
 LOCK=$RUN/nocry-job.lock
 STOP=$RUN/nocry-job.stop
@@ -46,8 +57,8 @@ fb() { "$FBD" --exec "$1" "$DISK" 2>/dev/null; }                 # prints "OKAY 
 ok() { r=$(fb "$1"); case "$r" in OKAY*) echo "${r#OKAY }"; return 0 ;; *) echo "${r#FAIL }"; return 1 ;; esac; }
 
 part() {    # device node of the partition named $1 (a real board), or nothing (a test image)
-    for u in /sys/class/block/mmcblk0p*/uevent; do
-        grep -q "^PARTNAME=$1\$" "$u" 2>/dev/null && { echo "/dev/$(basename "$(dirname "$u")")"; return 0; }
+    for u in $SYS/class/block/mmcblk0p*/uevent; do
+        grep -q "^PARTNAME=$1\$" "$u" 2>/dev/null && { echo "$DEV/$(basename "$(dirname "$u")")"; return 0; }
     done
     return 1
 }
@@ -133,13 +144,17 @@ over() {
 do_copy() {     # do_copy FROM(a|b)
     f=$(sfx "$1"); if [ "$1" = a ]; then t=2; else t=; fi
     TOTAL=0
+    # the last 32 MiB of a root file system partition are not firmware: each slot keeps its
+    # own copy of the rescue system there (see rescue_install)
     for p in rtos kernel rootfs; do
         s=$(size "$p$f") && d=$(size "$p$t") || { MSG="cannot read the size of $p"; return 1; }
         [ "$s" = "$d" ] || { MSG="$p$f and $p$t differ in size; the slot cannot be copied"; return 1; }
+        [ $p = rootfs ] && s=$((s - 33554432))
         TOTAL=$((TOTAL + s))
     done
     for p in rtos kernel rootfs; do
-        over "$p$t" "$(size "$p$f")" "nocry-pcopy:$p$f:$p$t" || return 1
+        s=$(size "$p$f"); [ $p = rootfs ] && s=$((s - 33554432))
+        over "$p$t" "$s" "nocry-pcopy:$p$f:$p$t" || return 1
     done
     MSG="copied and verified"
 }
@@ -215,7 +230,7 @@ bundle() {
     if [ "$1" = logs ]; then        # plus what the rescue system itself knows
         dmesg > $T/rescue-kernel.log 2>/dev/null
         status > $T/board-status.txt 2>/dev/null; health >> $T/board-status.txt 2>/dev/null
-        cp $RUN/nocry-check.log $T/ 2>/dev/null
+        cp $RUN/nocry-check.log $RUN/nocry-usb.log $T/ 2>/dev/null
         data_on ro || exit 1        # health unmounted it
     fi
     # one archive: the board's files under data/, the rescue system's own notes beside them
@@ -319,6 +334,8 @@ do_fw_fetch() {     # do_fw_fetch list KEY VERSION MODE | do_fw_fetch file NAME 
         mode=$4
         nocry_job $RUN/nocry-fetch.log fetch "$2" "$3" || { MSG=$(last_line $RUN/nocry-fetch.log); return 1; }
         file=$(tail -1 $RUN/nocry-fetch.log)
+    elif [ "$1" = usb ]; then
+        mode=$3; file=$2; keep=1        # the owner's file on the flash drive: read where it is, never removed
     else
         mode=$3; file=$WORKDIR/$2
     fi
@@ -327,7 +344,7 @@ do_fw_fetch() {     # do_fw_fetch list KEY VERSION MODE | do_fw_fetch file NAME 
     if [ "$mode" = slot ]; then set -- --other-slot; else set --; fi
     what="Verifying firmware"
     DONE=0; TOTAL=1; IDLE="unpacking image"     # not the download's numbers any more
-    nocry_job $RUN/nocry-plan.log install "$file" --report "$@" || { MSG=$(last_line $RUN/nocry-plan.log); rm -f "$file"; return 1; }
+    nocry_job $RUN/nocry-plan.log install "$file" --report "$@" || { MSG=$(last_line $RUN/nocry-plan.log); [ -n "$keep" ] || rm -f "$file"; return 1; }
     # the serial number and network address stay off the pages
     grep '^[a-z_]*=' $RUN/nocry-plan.log | grep -v '^note=sn_mac' > $SESSION/report
     MSG="verified; nothing written yet"
@@ -344,59 +361,251 @@ do_fw_install() {
 }
 
 # --- the rescue system stored on the board (docs/nocryboot.md) ---------------------------
-# A file on the data partition, and in the third sector of "ota" a note for the loader saying
-# where the file's blocks are and what they sum to. Hold the screen at power-on and the
-# nocryboot loader (0.2 or later, Nebula Pad) starts it.
-RESCUE_DIR=nocry-rescue
-RESCUE_FILE=$RESCUE_DIR/rescue.uImage
-ota_note() { p=$(part ota) || return 1; dd if="$p" bs=512 skip=2 count=1 2>/dev/null | tr -d '\000' | head -1; }
+# Two copies, one in the last 32 MiB of each root file system partition: nothing else writes
+# there (a system image ends far before it), so firmware updates, a factory reset and a
+# damaged data partition leave them alone. Hold the screen at power-on and the nocryboot
+# loader (0.3 or later, Nebula Pad) starts the first copy whose checksums are right.
+# Loader 0.2 instead read a file on the data partition, found through a note in the third
+# sector of "ota"; those are removed once the loader on the board is no longer 0.2.
+RESCUE_OLD=nocry-rescue/rescue.uImage
+loader_02() { dd if="$DISK" bs=512 skip=34 count=48 2>/dev/null | grep -q "nocryboot-loader 0\.2 "; }
 rescue_status() {
-    note=$(ota_note)
-    case "$note" in
-      nocryboot:rescue:*)
-        if echo "$note" | nocry-extent --check "$DISK"; then echo "stored=yes"; else echo "stored=damaged"; fi ;;
-      *) echo "stored=no" ;;
-    esac
-    if data_on ro 2>/dev/null; then
-        [ -f "$DATA/$RESCUE_FILE" ] && echo "file_bytes=$(ls -l "$DATA/$RESCUE_FILE" | awk '{print $5}')"
-        data_off
-    fi
+    any=no
+    for n in rootfs rootfs2; do
+        k=a; [ $n = rootfs2 ] && k=b
+        r=no; p=$(part $n) && r=$(nocry-rescue-copy status "$p" 2>/dev/null)
+        case "$r" in
+          yes*) echo "copy_$k=yes"; echo "bytes=${r#yes }"; any=yes ;;
+          damaged) echo "copy_$k=damaged"; [ $any = no ] && any=damaged ;;
+          *) echo "copy_$k=no" ;;
+        esac
+    done
+    echo "stored=$any"
+    loader_02 && echo "loader_reads=file"
+    return 0
 }
 rescue_install() {
     [ -d $LOCK ] && { echo "another job is still running" >&2; return 1; }
-    [ -d $SESSION ] && { echo "a firmware install is pending; finish or discard it first" >&2; return 1; }
-    o=$(part ota) || { echo "this board has no ota partition" >&2; return 1; }
-    u=$(part userdata) || { echo "no userdata partition" >&2; return 1; }
-    data_on rw || return 1
-    mkdir -p "$DATA/$RESCUE_DIR"
-    # take the old note away first: from here until the new one is written and checked, the
-    # loader finds nothing and starts the firmware
-    dd if=/dev/zero of="$o" bs=512 seek=2 count=1 conv=notrunc 2>/dev/null
-    rm -f "$DATA/$RESCUE_FILE"
-    cat > "$DATA/$RESCUE_FILE" || { data_off; echo "could not write the image (userdata full?)" >&2; return 1; }
-    sync
-    # what the loader will insist on: a kernel image named for it, needing no unpacking
-    if [ "$(dd if="$DATA/$RESCUE_FILE" bs=1 count=4 2>/dev/null | hexdump -v -e '/1 "%02x"')" != 27051956 ] ||
-       [ "$(dd if="$DATA/$RESCUE_FILE" bs=1 skip=32 count=12 2>/dev/null)" != nocry-rescue ]; then
-        rm -f "$DATA/$RESCUE_FILE"; data_off; echo "that is not a nocry rescue image" >&2; return 1
-    fi
-    note=$(nocry-extent "$DATA/$RESCUE_FILE" "$(cat /sys/class/block/$(basename "$u")/start)") || { data_off; return 1; }
-    data_off        # everything on the disk before it is read back raw
-    echo "$note" | nocry-extent --check "$DISK" || { echo "read-back checksum mismatch; the loader record was not written" >&2; return 1; }
-    { printf '%s\n' "$note"; dd if=/dev/zero bs=512 count=1 2>/dev/null; } | dd of="$o" bs=512 seek=2 count=1 conv=notrunc 2>/dev/null
-    sync
-    [ "$(ota_note)" = "$note" ] || { echo "could not write the loader record" >&2; return 1; }
-    echo "stored=yes"
-    echo "pieces=$(echo "$note" | tr ' ' '\n' | grep -c '+')"
+    new=$RUN/rescue.new
+    cat > $new || { rm -f $new; echo "could not receive the image (out of memory?)" >&2; return 1; }
+    nocry-rescue-copy check $new >/dev/null || { rm -f $new; return 1; }
+    ok=0
+    for n in rootfs2 rootfs; do
+        p=$(part $n) || continue
+        if nocry-rescue-copy store "$p" $new >/dev/null; then ok=$((ok + 1)); fi
+    done
+    rm -f $new; sync
+    [ $ok -gt 0 ] || { echo "the rescue image could not be stored in either slot" >&2; return 1; }
+    loader_02 || rescue_old_remove
+    rescue_status
+    echo "copies=$ok"
+}
+rescue_old_remove() {
+    o=$(part ota) && case "$(dd if="$o" bs=512 skip=2 count=1 2>/dev/null | tr -d '\000' | head -1)" in
+      nocryboot:rescue:*) dd if=/dev/zero of="$o" bs=512 seek=2 count=1 conv=notrunc 2>/dev/null ;;
+    esac
+    if [ ! -d $SESSION ] && data_on rw 2>/dev/null; then rm -f "$DATA/$RESCUE_OLD"; data_off; fi
 }
 rescue_remove() {
     [ -d $LOCK ] && { echo "another job is still running" >&2; return 1; }
-    o=$(part ota) && dd if=/dev/zero of="$o" bs=512 seek=2 count=1 conv=notrunc 2>/dev/null
-    if data_on rw 2>/dev/null; then rm -rf "$DATA/$RESCUE_DIR"; data_off; fi
+    for n in rootfs rootfs2; do p=$(part $n) && nocry-rescue-copy erase "$p" 2>/dev/null; done
+    rescue_old_remove
     sync; echo "stored=no"
 }
 
+# --- a USB flash drive (mounted by nocry-usb at $USB) ---------------------------------------
+# Backups are images as `nocry backup` on a computer writes them (raw, with a .sha256 beside
+# them), in the folder nocry-backups; FAT32 holds no file of 4 GiB, so there an image is
+# written in pieces (.img.001, .img.002, ...). nocry-image does the copying and checking.
+USB=$RUN/nocry-usb
+BACKUPS=nocry-backups
+ROOM=33554432           # the last 32 MiB of a root file system partition: a copy of the rescue system
+usb_on() { [ "$(nocry-usb status 2>/dev/null | sed -n 's/^mounted=//p')" = yes ] || { echo "no USB flash drive is mounted" >&2; return 1; }; }
+usb_val() { nocry-usb status 2>/dev/null | sed -n "s/^$1=//p"; }
+# a file on the drive; nothing that climbs out of it. Sets F (full path).
+usb_file() {
+    case "/$1/" in */../*|*/./*) echo "bad path" >&2; return 1 ;; esac
+    F=$USB/${1#/}
+}
+disk_bytes() { echo $(( $(cat $SYS/block/$(basename $DISK)/size) * 512 )); }
+part_bytes() { p=$(part "$1") || return 1; echo $(( $(cat $SYS/class/block/$(basename "$p")/size) * 512 )); }
+part_start() { p=$(part "$1") || return 1; echo $(( $(cat $SYS/class/block/$(basename "$p")/start) * 512 )); }
+part_names() { for u in $SYS/class/block/mmcblk0p*/uevent; do sed -n 's/^PARTNAME=//p' "$u" 2>/dev/null; done; }
+usb_targets() {
+    printf 'full\t%s\n' "$(disk_bytes)"
+    for n in $(part_names); do printf '%s\t%s\n' "$n" "$(part_bytes "$n")"; done
+}
+img_val() { nocry-image info "$1" 2>/dev/null | sed -n "s/^$2=//p"; }
+# what an image on the drive is: sets KIND (full, part or nothing), PART, BYTES
+classify() {    # classify IMAGE-PATH (without .001)
+    KIND=; PART=; BYTES=$(img_val "$1" bytes); [ -n "$BYTES" ] || return 1
+    if [ "$BYTES" = "$(disk_bytes)" ]; then KIND=full; return 0; fi
+    for n in $(part_names); do
+        case "$1" in *-"$n".img) [ "$BYTES" = "$(part_bytes "$n")" ] && { KIND=part; PART=$n; return 0; } ;; esac
+    done
+    return 1
+}
+usb_list() {
+    usb_on || return 1
+    case "$1" in
+      backups)
+        find $USB -maxdepth 3 -type f \( -name '*.img' -o -name '*.img.001' \) 2>/dev/null | sort -r | head -80 | while IFS= read -r f; do
+            b=${f%.001}
+            classify "$b" || continue
+            printf '%s\t%s\t%s\t%s\t%s\n' "$KIND" "$PART" "$BYTES" "$(img_val "$b" checksum)" "${b#$USB/}"
+        done ;;
+      fw)
+        find $USB -maxdepth 3 -type f \( -iname '*.img' -o -iname '*.ingenic' \) -size +1024k 2>/dev/null | sort | head -80 | while IFS= read -r f; do
+            # Creality's update files are 7z archives, .ingenic packages are zip archives
+            case "$(dd if="$f" bs=1 count=2 2>/dev/null)" in 7z|PK) printf '%s\t%s\n' "$(ls -l "$f" | awk '{print $5}')" "${f#$USB/}" ;; esac
+        done ;;
+      *) echo "usage: nocry-rescue-do usb-list backups|fw" >&2; return 2 ;;
+    esac
+}
+# is the identity record in a whole-storage image that of this board?
+same_identity() {   # same_identity IMAGE-PATH
+    f=$1; [ -f "$f" ] || f=$1.001
+    s=$(part sn_mac) || return 1
+    [ "$(dd if="$f" bs=512 skip=$(( $(part_start sn_mac) / 512 )) count=1 2>/dev/null | md5sum)" = "$(dd if="$s" bs=512 count=1 2>/dev/null | md5sum)" ]
+}
+usb_info() {
+    usb_on || return 1; usb_file "$1" || return 1
+    classify "$F" || { echo "that file is not a backup of this board's storage or of one of its partitions" >&2; return 1; }
+    echo "kind=$KIND"; echo "part=$PART"; echo "bytes=$BYTES"; echo "pieces=$(img_val "$F" pieces)"; echo "checksum=$(img_val "$F" checksum)"
+    if [ $KIND = full ]; then if same_identity "$F"; then echo "identity=same"; else echo "identity=different"; fi; fi
+}
+# runs nocry-image as a job: progress from its progress file, stopped politely on Cancel
+image_job() {
+    pf=$RUN/nocry-image.progress; rm -f $pf
+    nocry-image "$@" --progress $pf > $RUN/nocry-image.out 2> $RUN/nocry-image.err &
+    np=$!
+    while kill -0 $np 2>/dev/null; do
+        [ -e $STOP ] && kill -TERM $np 2>/dev/null
+        l=$(cat $pf 2>/dev/null)        # "<phase> <done> <total>"
+        if [ -n "$l" ]; then
+            TOTAL=${l##* }; l=${l% *}; DONE=${l##* }
+            job_state running "$what" "$DONE" "$TOTAL" "${l% *}"
+        fi
+        sleep 1
+    done
+    wait $np
+}
+do_usb_backup() {   # do_usb_backup full|PARTITION
+    TOTAL=1; DONE=0
+    if [ "$1" = full ]; then dev=$DISK; size=$(disk_bytes); else dev=$(part "$1") && size=$(part_bytes "$1") || { MSG="no $1 partition"; return 1; }; fi
+    mkdir -p "$USB/$BACKUPS" || { MSG="cannot create the folder $BACKUPS on the drive"; return 1; }
+    m=$(dd if="$(part sn_mac)" bs=512 count=1 2>/dev/null | tr '\000' '\n' | head -1 | cut -d';' -f3 | tr 'A-Z ' 'a-z-' | tr -cd 'a-z0-9-' | cut -c1-24); [ -n "$m" ] || m=board
+    grep -q '^mode=client' $RUN/nocry-wifi.state 2>/dev/null && clock >/dev/null 2>&1     # a date for the name, if the network has one
+    if [ "$(date +%Y)" -ge 2025 ]; then stamp=$(date +%Y%m%d-%H%M); else stamp=; fi
+    k=1
+    while :; do      # a name that is free
+        if [ -n "$stamp" ] && [ $k = 1 ]; then name=$m-$stamp-$1.img; else name=$m-${stamp:+$stamp-}$(printf '%03d' $k)-$1.img; fi
+        [ -e "$USB/$BACKUPS/$name" ] || [ -e "$USB/$BACKUPS/$name.001" ] || break
+        k=$((k + 1))
+    done
+    set --
+    [ "$(usb_val fs)" = FAT ] && set -- --split ${NOCRY_SPLIT:-4293918720}      # FAT32: no file of 4 GiB
+    image_job save "$dev" 0 "$size" "$USB/$BACKUPS/$name" "$@"; rc=$?
+    sync
+    if [ $rc = 0 ]; then
+        DONE=$size; TOTAL=$size
+        n=$(sed -n 's/^pieces=//p' $RUN/nocry-image.out)
+        MSG="saved and verified: $BACKUPS/$name"; [ "${n:-1}" -gt 1 ] && MSG="$MSG ($n pieces: .001 to .$(printf '%03d' $n))"
+        return 0
+    fi
+    [ $rc = 3 ] && MSG="cancelled; the incomplete file was removed" || MSG=$(last_line $RUN/nocry-image.err | sed 's/^nocry-image: //')
+    return 1
+}
+do_usb_restore() {  # do_usb_restore IMAGE-PATH KIND PART
+    TOTAL=1; DONE=0
+    if [ "$2" = full ]; then dev=$DISK; base=; names="rootfs rootfs2"; else dev=$(part "$3") || { MSG="no $3 partition"; return 1; }; base=0; names=$3; fi
+    img=$1; kind=$2; size=$(img_val "$1" bytes)
+    # a good copy of the rescue system on the board is not replaced by whatever the image has there
+    set --
+    for n in $names; do
+        case $n in rootfs|rootfs2) ;; *) continue ;; esac
+        p=$(part $n) || continue
+        case "$(nocry-rescue-copy status "$p" 2>/dev/null)" in yes*) ;; *) continue ;; esac
+        o=$(( ${base:-$(part_start $n)} + $(part_bytes $n) - ROOM ))
+        set -- "$@" --skip $o:$ROOM
+    done
+    image_job load "$img" "$dev" 0 "$size" "$@"; rc=$?
+    sync
+    [ "$kind" = full ] && { blockdev --rereadpt $DISK 2>/dev/null || partprobe $DISK 2>/dev/null; }
+    if [ $rc = 0 ]; then
+        DONE=$size; TOTAL=$size
+        MSG="restored and verified ($(( $(sed -n 's/^written=//p' $RUN/nocry-image.out) >> 20 )) MiB differed and were written)"
+        return 0
+    fi
+    [ $rc = 3 ] && MSG="cancelled before completion" || MSG=$(last_line $RUN/nocry-image.err | sed 's/^nocry-image: //')
+    return 1
+}
+# the board's storage must be nobody's while an image of it is read or written
+storage_free() {
+    [ -d $LOCK ] && { echo "another job is still running" >&2; return 1; }
+    [ -d $SESSION ] && { echo "a firmware install is pending; finish or discard it first" >&2; return 1; }
+    grep -q " $DATA " /proc/mounts && umount $DATA 2>/dev/null
+    return 0
+}
+
+# the touch calibration: beside each copy, so it survives what the copies survive
+cal_get() {
+    for n in rootfs rootfs2; do p=$(part $n) && nocry-rescue-copy keep-get "$p" 2>/dev/null && return 0; done
+    data_on ro 2>/dev/null || return 1         # where rescue kept it before
+    cat "$DATA/nocry-rescue/touch.cal" 2>/dev/null; rc=$?; data_off; return $rc
+}
+cal_put() {
+    cat > $RUN/cal.new; ok=1
+    for n in rootfs rootfs2; do p=$(part $n) && nocry-rescue-copy keep-put "$p" $RUN/cal.new 2>/dev/null && ok=0; done
+    rm -f $RUN/cal.new; [ $ok = 0 ] || echo "the calibration could not be saved" >&2; return $ok
+}
+
 case "$1" in
+  usb-status) nocry-usb status ;;
+  usb-eject)
+    [ -d $LOCK ] && { echo "a job is running; let it finish first" >&2; exit 1; }
+    case "$(cat $SESSION/file 2>/dev/null)" in $USB/*) echo "a firmware install from the drive is pending; install or discard it first" >&2; exit 1 ;; esac
+    nocry-usb eject ;;
+  usb-format)
+    [ -d $LOCK ] && { echo "a job is running; let it finish first" >&2; exit 1; }
+    case "$(cat $SESSION/file 2>/dev/null)" in $USB/*) echo "a firmware install from the drive is pending; install or discard it first" >&2; exit 1 ;; esac
+    nocry-usb format "$2" ;;
+  usb-targets) usb_targets ;;
+  usb-list) usb_list "$2" ;;
+  usb-info) usb_info "$2" ;;
+  usb-backup)
+    usb_on || exit 1
+    [ "$(usb_val readonly)" = yes ] && { echo "the drive is mounted read-only (an NTFS volume that Windows did not shut down cleanly, or a write-protected drive)" >&2; exit 1; }
+    if [ "$2" = full ]; then need=$(disk_bytes); t="Backing up eMMC"; else need=$(part_bytes "$2") || { echo "no such partition" >&2; exit 1; }; t="Backing up $2"; fi
+    free=$(usb_val free)
+    [ "${free:-0}" -gt $((need + 1048576)) ] || { echo "not enough free space on the drive: $((need >> 20)) MiB needed, $(( ${free:-0} >> 20 )) MiB free" >&2; exit 1; }
+    storage_free || exit 1
+    RISK="The incomplete backup file is removed. Nothing on the board is changed."
+    run_job "$t" do_usb_backup "$2" ;;
+  usb-restore)
+    usb_on || exit 1; usb_file "$2" || exit 1
+    classify "$F" || { echo "that file is not a backup of this board's storage or of one of its partitions" >&2; exit 1; }
+    if [ $KIND = full ]; then
+        same_identity "$F" || { echo "this backup is from another board (its identity record differs): restoring it would replace this board's serial number. Use nocry on a computer for that." >&2; exit 1; }
+        t="Restoring eMMC"
+        RISK="The storage is partly overwritten and the board may not start. Run the restore again to completion. If the board no longer starts at all, recover it over USB with nocry on a computer."
+    else
+        [ "$PART" = sn_mac ] && { echo "the identity record is not restored from here; use nocry on a computer" >&2; exit 1; }
+        t="Restoring $PART"
+        RISK="The partition $PART is partly overwritten. Run the restore again to completion."
+    fi
+    storage_free || exit 1
+    run_job "$t" do_usb_restore "$F" "$KIND" "$PART" ;;
+  fw-check-usb)
+    case "$3" in keep|slot) ;; *) echo "usage: nocry-rescue-do fw-check-usb FILE keep|slot" >&2; exit 2 ;; esac
+    usb_on || exit 1; usb_file "$2" || exit 1
+    [ -f "$F" ] || { echo "no such file on the drive" >&2; exit 1; }
+    [ -d $LOCK ] && { echo "another job is still running" >&2; exit 1; }
+    session_on || exit 1
+    RISK="Verification only: nothing on the board has been changed."
+    run_job "Verifying firmware" do_fw_fetch usb "$F" "$3" ;;
+  cal-get) cal_get ;;
+  cal-put) cal_put ;;
   status) status ;;
   health) health ;;
   rescue-status) rescue_status ;;
@@ -488,7 +697,8 @@ case "$1" in
   wifi-save) wifi_save ;;
   restart)
     [ -d $LOCK ] && { echo "a job is running; cancel it or let it finish first" >&2; exit 1; }
-    sync; ( sleep 2; reboot -f ) </dev/null >/dev/null 2>&1 & ;;
+    sync; nocry-usb eject >/dev/null 2>&1
+    ( sleep 2; reboot -f ) </dev/null >/dev/null 2>&1 & ;;
   switch)
     case "$2" in a|b) ;; *) echo "slot must be a or b" >&2; exit 2 ;; esac
     [ -d $LOCK ] && { echo "another job is still running" >&2; exit 1; }

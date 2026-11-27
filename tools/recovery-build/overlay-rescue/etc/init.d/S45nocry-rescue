@@ -16,61 +16,57 @@ STATE=/run/nocry-wifi.state
 
 val() { sed -n "s/^$1=//p" $STATE 2>/dev/null; }
 
+# Text on the screen, turned as the owner turned the touch interface (kept with the touch
+# calibration; without a kept turn the panel is used as it is, wide). An upright screen is
+# narrow: the name takes two lines there.
+ban() {
+    case "$NOCRY_TURN" in
+      90|270) nocry-banner "#nocry" "#rescue" "" "$@" ;;
+      *) nocry-banner "#nocry rescue" "" "$@" ;;
+    esac
+}
+
 show() {
     c=$(cat $CODE 2>/dev/null); code="#${c%???} ${c#???}"
     case "$(val mode)" in
       ap)
-        nocry-banner "#nocry" "#rescue" "" \
-            "Wi-Fi network  $(val ssid)" "password  $(val password)" \
+        ban \
+            "Wi-Fi network  $(val ssid)" "$(p=$(val password); [ -n "$p" ] && echo "password  $p" || echo "open network (no password)")" \
             "then open" "http://$(val address)" "" "pairing code" "$code" ;;
       client)
-        nocry-banner "#nocry" "#rescue" "" \
+        ban \
             "on Wi-Fi  $(val ssid)" "open" "http://$(val address)" "" "pairing code" "$code" ;;
       joining)
-        nocry-banner "#nocry" "#rescue" "" "joining Wi-Fi  $(val ssid)" "" "one moment..." ;;
+        ban "joining Wi-Fi  $(val ssid)" "" "one moment..." ;;
+      off)
+        ban "Wi-Fi off" "connect by USB" ;;
       none)
-        nocry-banner "#nocry" "#rescue" "" "no Wi-Fi found" "connect by USB" "" "pairing code" "$code" ;;
+        ban "no Wi-Fi found" "connect by USB" "" "pairing code" "$code" ;;
       *)
-        nocry-banner "#nocry" "#rescue" "" "starting..." ;;
+        ban "starting..." ;;
     esac
 }
 
-# Started by holding the screen at power-on (the loader says so): the screen has to stay held
-# for three more seconds, with a count on it, or the board restarts into its firmware. A stray
-# touch while switching on then costs a restart and nothing else.
-confirm_hold() {
-    grep -q 'nocry.rescue=touch' /proc/cmdline || return 0
-    n=3
-    while [ $n -gt 0 ]; do
-        nocry-banner "#nocry" "#rescue" "" "Keep holding" "the screen" "" "#$n"
-        i=0
-        while [ $i -lt 4 ]; do
-            nocry-touch --held; r=$?
-            # let go: back to the firmware. A chip that does not answer is not a reason to leave.
-            if [ $r = 1 ]; then
-                nocry-banner "#nocry" "#rescue" "" "Released:" "booting the firmware"
-                sync; reboot -f; sleep 30
-            fi
-            sleep 0.25; i=$((i+1))
-        done
-        n=$((n-1))
-    done
-    nocry-banner "#nocry" "#rescue" "" "Release the screen."
-    sleep 1
-}
+# Started by holding the screen at power-on: the loader has already made sure of the touch
+# (three readings over 40 ms, all pressed), so nothing more is asked of the finger here. A
+# count that had to be held through was tried first; stray touches turned out not to happen.
 
 start() {
     mkdir -p /run /var/run/wpa_supplicant
-    confirm_hold
+    # the kept settings first: which way up everything is drawn
+    nocry-rescue-do cal-get > /run/nocry-touch.cal 2>/dev/null || rm -f /run/nocry-touch.cal
+    NOCRY_TURN=$(sed -n 's/^turn //p' /run/nocry-touch.cal 2>/dev/null | head -1); export NOCRY_TURN=${NOCRY_TURN:-0}
+    # USB: a computer on the USB-C socket, or a flash drive in an A socket (nocry-usb)
+    setsid nocry-usb daemon >/dev/null 2>&1 </dev/null &
     show
-    nocry-netd --code-file $CODE 2>/dev/console &
+    # what the owner turned on for reaching the board over the network (nocry on a computer,
+    # adb, SSH: all off otherwise), and a pairing code for the web pages either way
+    nocry-remote apply
     # the web pages, on whatever network the board is on (in a session of their own)
     setsid nocry-webd >/dev/null 2>/dev/console </dev/null &
     nocry-wifi auto >/dev/null 2>&1 &
-    # The touch interface. Its calibration is kept next to the rescue image on the data
-    # partition. Without the program (or a screen it can use) the plain text screen stays,
-    # kept in step with the network and the pairing code.
-    nocry-rescue-do get nocry-rescue/touch.cal > /run/nocry-touch.cal 2>/dev/null || rm -f /run/nocry-touch.cal
+    # The touch interface. Without the program (or a screen it can use) the plain text screen
+    # stays, kept in step with the network and the pairing code.
     ( while [ -x /usr/sbin/nocry-ui ]; do
           nocry-ui 2>/dev/console; [ $? = 1 ] && break     # 1: no usable screen; anything else: start it again
           sleep 1
@@ -84,6 +80,6 @@ start() {
 
 case "$1" in
   start) start ;;
-  stop) killall nocry-ui nocry-netd nocry-webd wpa_supplicant dnsmasq mdnsd udhcpc 2>/dev/null ;;
+  stop) killall nocry-usb nocry-ui nocry-netd nocry-relay dropbear nocry-webd wpa_supplicant dnsmasq mdnsd udhcpc 2>/dev/null ;;
 esac
 exit 0

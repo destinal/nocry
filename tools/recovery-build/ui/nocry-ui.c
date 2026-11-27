@@ -8,24 +8,27 @@
  * separate program with its arguments as they are, never through a shell.  So the checks
  * exist once.
  *
- *   nocry-ui [--fb DEV] [--i2c DEV] [--turn 0|90|270]
+ *   nocry-ui [--fb DEV] [--i2c DEV] [--turn 0|90|180|270]
  *   nocry-ui --sim SCRIPT        no screen and no touch chip: follow a script of
  *                                "tap X Y", "hold X Y MS", "wait MS", "shot FILE.ppm" lines
- *                                (testing on a PC; commands come from $PATH; --turn 0 for
- *                                the wide layout)
+ *                                (testing on a PC; commands come from $PATH; the panel is
+ *                                taken to be 480x272; --turn 90 for the upright layout)
  *
- * Which way up: the 480x272 panel of the Nebula Pad and the printers built on it is used
- * upright (272 wide, 480 high), turned the same way as the boot logo.  A panel that is
- * already upright or is meant to be wide (the K1 family, once its panel and touch chip are
- * supported) is used as it is.  --turn overrides.  $NOCRY_UI_LOG=1 writes every touch to
- * standard error (where it landed, how hard).
+ * Which way up: the panel is used as it is (the Nebula Pad's is wide, 480x272) unless the
+ * owner turned the interface with the button on the home screen: a quarter turn clockwise each time,
+ * so upright (272 wide, 480 high) and both ways round.  The button sits in the same corner
+ * of the glass wide and upright (top right when wide, bottom right when upright).  --turn
+ * overrides.  $NOCRY_UI_LOG=1 writes every touch to standard error (where it landed, how hard).
  *
- * The touch position needs calibrating once (three crosses); it is kept on the data partition
- * next to the rescue image.  Holding a finger anywhere for ten seconds starts the calibration
- * again, so a wrong one cannot lock anybody out.
+ * The touch position needs calibrating once (three crosses).  It is worked out for the panel,
+ * not for one way up, so turning the interface needs no new calibration.  It is kept on the
+ * board beside the rescue image, with the turn and the other settings (/run/nocry-touch.cal
+ * while running).  Holding a finger anywhere for ten seconds starts the calibration again, so
+ * a wrong one cannot lock anybody out.
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -45,7 +48,27 @@
 #define MAXPIX (800 * 480)
 
 static int W = 480, H = 272;	/* as the interface sees the screen */
-static int turn;		/* 0, or 90 / 270: the panel is wide and the interface upright */
+static int PW = 480, PH = 272;	/* the panel itself */
+static int turn;		/* 0, 90, 180 or 270: how far the interface is turned on the panel */
+static int eject_ask = 1;	/* ask about ejecting the flash drive after using it */
+static int remote_lan, remote_adb, remote_ssh; static char ssh_pass[70];	/* remote access the owner turned on (nocry-remote reads these) */
+static char ap_ssid[40], ap_pass[70]; static int ap_own;	/* the owner's name and password for the board's own network, if set */
+
+/* a point of the interface on the panel, and back */
+static void to_panel(int x, int y, int *fx, int *fy)
+{
+	if (turn == 90) { *fx = y; *fy = W - 1 - x; }
+	else if (turn == 180) { *fx = W - 1 - x; *fy = H - 1 - y; }
+	else if (turn == 270) { *fx = H - 1 - y; *fy = x; }
+	else { *fx = x; *fy = y; }
+}
+static void from_panel(int fx, int fy, int *x, int *y)
+{
+	if (turn == 90) { *x = PH - 1 - fy; *y = fx; }
+	else if (turn == 180) { *x = PW - 1 - fx; *y = PH - 1 - fy; }
+	else if (turn == 270) { *x = fy; *y = PW - 1 - fx; }
+	else { *x = fx; *y = fy; }
+}
 static int touch_log;
 
 static const char *RUN = "/run";
@@ -74,22 +97,21 @@ static void flush(lv_disp_drv_t *d, const lv_area_t *a, lv_color_t *c)
 	for (y = 0; fb && y < H; y++)
 		for (x = 0; x < W; x++) {
 			lv_color_t px = frame[y * W + x];
-			int fx = turn == 90 ? y : turn == 270 ? H - 1 - y : x, fy = turn == 90 ? W - 1 - x : turn == 270 ? x : y;
+			int fx, fy;
+			to_panel(x, y, &fx, &fy);
 			if (fb_bpp == 4) memcpy(fb + fy * fb_stride + fx * 4, &px, 4);
 			else { uint16_t v = (px.ch.red >> 3) << 11 | (px.ch.green >> 2) << 5 | px.ch.blue >> 3; memcpy(fb + fy * fb_stride + fx * 2, &v, 2); }
 		}
 	lv_disp_flush_ready(d);
 }
 
-static int screen_open(const char *dev, int want_turn)
+static int screen_open(const char *dev)
 {
-	struct fb_var_screeninfo v; struct fb_fix_screeninfo f; int fd = open(dev, O_RDWR); size_t size;
+	struct fb_var_screeninfo v; struct fb_fix_screeninfo f; int fd = open(dev, O_RDWR | O_CLOEXEC); size_t size;
 	if (fd < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &v) || ioctl(fd, FBIOGET_FSCREENINFO, &f)) { perror(dev); return -1; }
 	fb_bpp = v.bits_per_pixel / 8; fb_stride = f.line_length; size = (size_t)fb_stride * v.yres_virtual;
 	if ((fb_bpp != 4 && fb_bpp != 2) || v.xres * v.yres > MAXPIX || v.xres < 272 || v.yres < 272) { fprintf(stderr, "nocry-ui: this screen is not supported\n"); return -1; }
-	/* the small wide panel (Nebula Pad and the printers built on it) is used upright, turned as the boot logo is */
-	turn = want_turn == 0 || want_turn == 90 || want_turn == 270 ? want_turn : v.xres == 480 && v.yres == 272 ? 90 : 0;
-	if (turn) { W = v.yres; H = v.xres; } else { W = v.xres; H = v.yres; }
+	PW = v.xres; PH = v.yres;
 	fb = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (fb == MAP_FAILED) { perror("mmap"); fb = NULL; return -1; }
 	memset(fb, 0, size);
@@ -99,7 +121,7 @@ static int screen_open(const char *dev, int want_turn)
 
 /* ---- the touch chip ---------------------------------------------------------------- */
 static int i2c = -1;
-static double cal[6]; static int cal_ok;	/* screen x = c0*rx + c1*ry + c2, y = c3*rx + c4*ry + c5 */
+static double cal[6]; static int cal_ok;	/* panel x = c0*rx + c1*ry + c2, y = c3*rx + c4*ry + c5 */
 static int raw_x, raw_y, raw_down;		/* the last reading, for the calibration screen */
 static int sim_x, sim_y, sim_down;
 static uint32_t held_since; static int want_calibration;
@@ -140,7 +162,7 @@ static void touch_read(lv_indev_drv_t *d, lv_indev_data_t *data)
 		down = 0; have = 0; raw_down = 0; if (z >= 0) errs = 0;
 	}
 	if (raw_down && cal_ok) {
-		last_x = (int)(cal[0] * raw_x + cal[1] * raw_y + cal[2]); last_y = (int)(cal[3] * raw_x + cal[4] * raw_y + cal[5]);
+		from_panel((int)(cal[0] * raw_x + cal[1] * raw_y + cal[2]), (int)(cal[3] * raw_x + cal[4] * raw_y + cal[5]), &last_x, &last_y);
 		if (last_x < 0) last_x = 0;
 		if (last_x >= W) last_x = W - 1;
 		if (last_y < 0) last_y = 0;
@@ -182,11 +204,12 @@ static const char *kv(const char *text, const char *key)
 	return o;
 }
 
-/* "12 MiB", "1.1 MiB", "640 KiB" */
+/* "7.3 GiB", "12 MiB", "1.1 MiB", "640 KiB" */
 static const char *amount(long long bytes)
 {
 	static char out[4][24]; static int k; char *o = out[k = (k + 1) & 3];
-	if (bytes >= 10 << 20) snprintf(o, 24, "%lld MiB", bytes >> 20);
+	if (bytes >= 1LL << 30) snprintf(o, 24, "%.1f GiB", bytes / 1073741824.0);
+	else if (bytes >= 10 << 20) snprintf(o, 24, "%lld MiB", bytes >> 20);
 	else if (bytes >= 1 << 20) snprintf(o, 24, "%.1f MiB", bytes / 1048576.0);
 	else snprintf(o, 24, "%lld KiB", bytes >> 10);
 	return o;
@@ -236,10 +259,26 @@ static void reap(lv_timer_t *t)
 	}
 }
 
+/* the settings, into the file the start-up script read them from and onto the board */
+static void settings_store(done_fn fn)
+{
+	char p[128]; FILE *f;
+	snprintf(p, sizeof p, "%s/nocry-touch.cal", RUN);
+	f = fopen(p, "w"); if (!f) { if (fn) { char e[] = ""; fn(1, e); } return; }
+	if (cal_ok) fprintf(f, "fb %dx%d %.9g %.9g %.9g %.9g %.9g %.9g\n", PW, PH, cal[0], cal[1], cal[2], cal[3], cal[4], cal[5]);
+	else fprintf(f, "no calibration\n");
+	fprintf(f, "turn %d\neject %s\n", turn, eject_ask ? "ask" : "never");
+	if (ap_own) fprintf(f, "ap_ssid %s\nap_pass %s\n", ap_ssid, ap_pass);	/* nocry-wifi reads these two */
+	fprintf(f, "remote_lan %s\nremote_adb %s\nremote_ssh %s\n", remote_lan ? "on" : "off", remote_adb ? "on" : "off", remote_ssh ? "on" : "off");
+	if (ssh_pass[0]) fprintf(f, "ssh_pass %s\n", ssh_pass);
+	fclose(f);
+	start(fn, p, "nocry-rescue-do", "cal-put", NULL);	/* kept beside the copies of the rescue image */
+}
+
 /* ---- the frame every screen shares ------------------------------------------------- */
 typedef void (*screen_fn)(void);
 static screen_fn stack[10]; static int depth;
-static lv_obj_t *title, *back_btn, *code_lbl, *content, *modal;
+static lv_obj_t *title, *back_btn, *code_lbl, *content, *modal, *rot_btn;
 static lv_timer_t *screen_timer;
 
 static lv_timer_t *busy_timer;
@@ -260,6 +299,7 @@ static void show(void)
 	lv_obj_set_style_pad_all(content, 8, 0);
 	lv_obj_scroll_to_y(content, 0, LV_ANIM_OFF);
 	if (depth > 1) lv_obj_clear_flag(back_btn, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(back_btn, LV_OBJ_FLAG_HIDDEN);
+	if (rot_btn) { if (depth > 1) lv_obj_add_flag(rot_btn, LV_OBJ_FLAG_HIDDEN); else lv_obj_clear_flag(rot_btn, LV_OBJ_FLAG_HIDDEN); }
 	stack[depth - 1]();
 }
 static void go(screen_fn f) { if (depth < 10) stack[depth++] = f; show(); }
@@ -468,14 +508,39 @@ static void job_cancel_cb(lv_event_t *e)
 	(void)e;
 	ask2("Cancel this job?", job_risk[0] ? job_risk : "It stops at the next safe point.", "Keep running", "Cancel job", 1, job_cancel_yes);
 }
+static int usb_used;		/* the flash drive was used by what is going on: ask about ejecting it at the end */
+static int job_pop;		/* screens under the job screen that a finished job leaves as well */
+static void eject_prompt(void);
 static void job_done_cb(lv_event_t *e)
 {
-	screen_fn n = job_next; int h = job_home, ok = lv_event_get_user_data(e) != NULL;
-	job_next = NULL; job_home = 0; job_undo = NULL;
+	screen_fn n = job_next; int h = job_home, ok = lv_event_get_user_data(e) != NULL, u = usb_used, pop = job_pop;
+	job_next = NULL; job_home = 0; job_undo = NULL; job_pop = 0;
+	if (!(ok && n)) usb_used = 0;	/* the last step, or it ended here */
 	depth--;			/* the job screen itself */
+	if (ok && depth > pop) depth -= pop;
 	if (ok && n) { depth = 1; go(n); }
 	else if (ok && h) home();	/* the screen that started it has nothing left to show */
 	else show();			/* failed or cancelled: back where it was started, to try again */
+	if (ok && !n && u) eject_prompt();
+}
+/* How fast the step that is running goes, and how long it still takes at that speed: from the
+   progress of the last twenty seconds, so it follows a drive that slows down.  A new step
+   (another total, or the count starting over) starts the measuring over. */
+static struct { uint32_t t; long long done; } eta_s[20]; static int eta_n; static long long eta_total;
+static const char *eta(long long done, long long total)
+{
+	static char out[80]; uint32_t now = nocry_ui_ms(); double rate, left;
+	out[0] = 0;
+	if (total != eta_total || (eta_n && done < eta_s[eta_n - 1].done)) { eta_n = 0; eta_total = total; }
+	if (eta_n == 20) { memmove(eta_s, eta_s + 1, sizeof eta_s[0] * 19); eta_n--; }
+	eta_s[eta_n].t = now; eta_s[eta_n].done = done; eta_n++;
+	if (eta_n < 4 || now - eta_s[0].t < 3000 || done <= eta_s[0].done || done >= total) return out;
+	rate = (double)(done - eta_s[0].done) * 1000 / (now - eta_s[0].t);	/* bytes a second */
+	left = (total - done) / rate;
+	if (left < 50) snprintf(out, sizeof out, "%.1f MiB/s, under a minute left", rate / 1048576);
+	else if (left < 5400) snprintf(out, sizeof out, "%.1f MiB/s, about %d min left", rate / 1048576, (int)((left + 30) / 60));
+	else snprintf(out, sizeof out, "%.1f MiB/s, about %d h %d min left", rate / 1048576, (int)(left / 3600), (int)(left / 60) % 60);
+	return out;
 }
 static void job_answer(int rc, char *out)
 {
@@ -489,7 +554,8 @@ static void job_answer(int rc, char *out)
 	if (total > 1) {
 		lv_obj_clear_flag(job_bar, LV_OBJ_FLAG_HIDDEN);
 		lv_bar_set_value(job_bar, (int)(done * 1000 / total), LV_ANIM_OFF);
-		snprintf(line, sizeof line, "%s of %s\n%s", amount(done), amount(total), kv(out, "message"));
+		const char *e = strcmp(st, "running") ? "" : eta(done, total);
+		snprintf(line, sizeof line, "%s of %s\n%s%s%s", amount(done), amount(total), kv(out, "message"), *e ? "\n" : "", e);
 	} else {	/* a phase without a measure: no bar that looks stuck */
 		lv_obj_add_flag(job_bar, LV_OBJ_FLAG_HIDDEN);
 		snprintf(line, sizeof line, "%s", kv(out, "message"));
@@ -527,7 +593,7 @@ static void job_screen(void)
 {
 	set_title("Working");
 	lv_obj_add_flag(back_btn, LV_OBJ_FLAG_HIDDEN);		/* it runs whether anyone watches or not */
-	job_over = 0; job_poll = 0; job_stopping = 0; job_risk[0] = 0;
+	job_over = 0; job_poll = 0; job_stopping = 0; job_risk[0] = 0; eta_n = 0;
 	job_what = text(content, "Starting...");
 	lv_obj_set_style_text_font(job_what, &lv_font_montserrat_18, 0);
 	job_bar = lv_bar_create(content); lv_obj_set_size(job_bar, lv_pct(100), 18); lv_bar_set_range(job_bar, 0, 1000);
@@ -541,7 +607,7 @@ static void job_screen(void)
 static void job_started(int rc, char *out)
 {
 	modal_close();
-	if (rc) { job_next = NULL; job_home = 0; job_undo = NULL; message("Could not start", out); return; }
+	if (rc) { job_next = NULL; job_home = 0; job_undo = NULL; job_pop = 0; usb_used = 0; message("Could not start", out); return; }
 	go(job_screen);
 }
 
@@ -562,25 +628,119 @@ static void wifi_done(int rc, char *out)
 	else if (rc) {
 		snprintf(body, sizeof body, "%s%s%s", why, *why ? "\n" : "", !strcmp(kv(st, "mode"), "ap") ? "The board is in access point mode." : "");
 		remark("Connection failed", body);
-	} else { depth = 1; show(); }
+	} else if (!strcmp(kv(st, "mode"), "off")) { while (depth > 2) depth--; show(); }	/* the Wi-Fi screen says it is off */
+	else { depth = 1; show(); }
 	free(st);
 }
+/* a fixed address for the network being joined (no DHCP server there); ip_on says it is wanted */
+static char ip_addr[20], ip_mask[20] = "255.255.255.0", ip_gw[20], ip_dns[20] = "8.8.8.8", join_pw[80]; static int ip_on;
 static void wifi_join(const char *pw)
 {
 	char what[160];
 	snprintf(what, sizeof what, "Connecting to \"%s\"...\nThis can take up to a minute.", chosen);
 	busy(what);
-	if (pw && *pw) start(wifi_done, NULL, "nocry-wifi", "join", chosen, pw, NULL);
+	if (ip_on) start(wifi_done, NULL, "nocry-wifi", "join", chosen, pw ? pw : "", "static", ip_addr, ip_mask, ip_gw, ip_dns, NULL);
+	else if (pw && *pw) start(wifi_done, NULL, "nocry-wifi", "join", chosen, pw, NULL);
 	else start(wifi_done, NULL, "nocry-wifi", "join", chosen, NULL);
 }
+
+/* A screen of a few labelled one-line fields over a keyboard: the field touched last is the
+   one the keyboard types into. */
+static lv_obj_t *form_kb, *form_f[4], *form_cells; static int form_n;
+static void form_pick(lv_obj_t *ta)
+{
+	int i;
+	for (i = 0; i < form_n; i++) if (form_f[i] == ta) lv_obj_add_state(form_f[i], LV_STATE_FOCUSED); else lv_obj_clear_state(form_f[i], LV_STATE_FOCUSED);
+	lv_keyboard_set_textarea(form_kb, ta);
+}
+static void form_touch(lv_event_t *e) { form_pick(lv_event_get_target(e)); }
+static void form_begin(void)
+{
+	form_n = 0;
+	lv_obj_set_style_pad_all(content, 4, 0); lv_obj_set_style_pad_row(content, 4, 0);
+	form_cells = row(content);
+	lv_obj_set_style_pad_column(form_cells, 6, 0); lv_obj_set_style_pad_row(form_cells, 4, 0);
+}
+static lv_obj_t *form_field(const char *label, const char *value, const char *hint, int max, int per_row)
+{
+	lv_obj_t *cell = lv_obj_create(form_cells), *l, *ta;
+	lv_obj_remove_style_all(cell);
+	lv_obj_set_size(cell, W < 400 ? W - 8 : (W - 8 - 6 * (per_row - 1)) / per_row, 38);
+	lv_obj_set_flex_flow(cell, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(cell, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_style_pad_column(cell, 4, 0);
+	l = dim(lv_label_create(cell)); lv_label_set_text(l, label); lv_obj_set_width(l, 76);
+	ta = lv_textarea_create(cell);
+	lv_textarea_set_one_line(ta, true); lv_textarea_set_max_length(ta, max);
+	lv_textarea_set_text(ta, value); if (hint) lv_textarea_set_placeholder_text(ta, hint);
+	lv_obj_set_flex_grow(ta, 1); lv_obj_set_height(ta, 36); lv_obj_set_style_pad_ver(ta, 6, 0);
+	lv_obj_add_event_cb(ta, form_touch, LV_EVENT_PRESSED, NULL);
+	if (form_n < 4) form_f[form_n++] = ta;
+	return ta;
+}
+static void keyboard_upright(lv_obj_t *kb);
+/* digits and the dot only, for addresses */
+static void keyboard_digits(lv_obj_t *kb)
+{
+	static const char *map[] = { "1","2","3","4","5","6","\n", "7","8","9","0",".",LV_SYMBOL_BACKSPACE,"\n", LV_SYMBOL_OK,"" };
+	static const lv_btnmatrix_ctrl_t ctrl[] = { 1,1,1,1,1,1, 1,1,1,1,1, LV_KEYBOARD_CTRL_BTN_FLAGS | 1, LV_KEYBOARD_CTRL_BTN_FLAGS | 1 };
+	lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_NUMBER, map, ctrl);
+	lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
+}
+static void form_end(int digits, int rows, lv_event_cb_t key)
+{
+	int used = 8 + rows * 42, h = H - BAR - used;
+	form_kb = lv_keyboard_create(content);
+	lv_obj_set_size(form_kb, lv_pct(100), h > 300 ? 300 : h);
+	if (digits) keyboard_digits(form_kb); else if (W < 400) keyboard_upright(form_kb);
+	lv_obj_add_event_cb(form_kb, key, LV_EVENT_READY, NULL);
+	lv_obj_add_event_cb(form_kb, key, LV_EVENT_CANCEL, NULL);
+	form_pick(form_f[0]);
+}
+
+/* the fixed address: asked for from the password screen, or for an open network before joining */
+static void ip_key(lv_event_t *e)
+{
+	if (lv_event_get_code(e) == LV_EVENT_CANCEL) { back(); return; }
+	snprintf(ip_addr, sizeof ip_addr, "%s", lv_textarea_get_text(form_f[0])); snprintf(ip_mask, sizeof ip_mask, "%s", lv_textarea_get_text(form_f[1]));
+	snprintf(ip_gw, sizeof ip_gw, "%s", lv_textarea_get_text(form_f[2])); snprintf(ip_dns, sizeof ip_dns, "%s", lv_textarea_get_text(form_f[3]));
+	if (!ip_addr[0] || !ip_mask[0]) { remark("Address missing", "Enter the IP address and the subnet mask. Gateway and DNS may stay empty."); return; }
+	ip_on = 1;
+	wifi_join(join_pw);
+}
+static void ip_screen(void)
+{
+	set_title(W < 400 ? "Static IP" : "Static IP settings");
+	form_begin();
+	form_field("IP address", ip_addr, "192.168.1.50", 15, 2);
+	form_field("Subnet", ip_mask, NULL, 15, 2);
+	form_field("Gateway", ip_gw, "optional", 15, 2);
+	form_field("DNS", ip_dns, "optional", 15, 2);
+	form_end(1, W < 400 ? 4 : 2, ip_key);
+}
 static int manual;		/* the SSID was typed, not picked from the scan */
+/* is what is typed a password that can be used?  (an SSID typed by hand may be an open network: none then) */
+static int pw_ok(void)
+{
+	size_t n = strlen(lv_textarea_get_text(pw_area));
+	if ((manual && !n) || n >= 8) return 1;
+	remark("Password too short", manual ? "WPA passwords are 8 to 63 characters. Leave it empty for an open network." : "WPA passwords are 8 to 63 characters.");
+	return 0;
+}
 static void pw_key(lv_event_t *e)
 {
 	if (lv_event_get_code(e) == LV_EVENT_CANCEL) { back(); return; }
-	/* an SSID typed by hand may be an open network: no password then */
-	if (manual && !*lv_textarea_get_text(pw_area)) { wifi_join(NULL); return; }
-	if (strlen(lv_textarea_get_text(pw_area)) < 8) { remark("Password too short", manual ? "WPA passwords are 8 to 63 characters. Leave it empty for an open network." : "WPA passwords are 8 to 63 characters."); return; }
-	{ char pw[80]; snprintf(pw, sizeof pw, "%s", lv_textarea_get_text(pw_area)); wifi_join(pw); }
+	if (!pw_ok()) return;
+	snprintf(join_pw, sizeof join_pw, "%s", lv_textarea_get_text(pw_area));
+	ip_on = 0;
+	wifi_join(join_pw);
+}
+static void pw_ip_cb(lv_event_t *e)
+{
+	(void)e;
+	if (!pw_ok()) return;
+	snprintf(join_pw, sizeof join_pw, "%s", lv_textarea_get_text(pw_area));
+	go(ip_screen);
 }
 /* An upright screen is 272 wide: ten keys in a row is the most a finger can hit, and they are
    made tall.  Everything that can be in a password is on the letters and the two "1#" pages. */
@@ -609,12 +769,17 @@ static void password_screen(void)
 	lv_obj_t *kb; char t[100];
 	set_title(W < 400 ? "Password" : (snprintf(t, sizeof t, "Password for %s", chosen), t));
 	lv_obj_set_style_pad_all(content, 4, 0);
-	pw_area = lv_textarea_create(content);
+	{	/* the password, and beside it the way to a fixed address (a network without DHCP) */
+		lv_obj_t *r = row(content), *b;
+		lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(r, 4, 0);
+		pw_area = lv_textarea_create(r);
+		lv_obj_set_flex_grow(pw_area, 1);
+		b = grey(button(r, "Static IP", pw_ip_cb, NULL)); lv_obj_set_height(b, 40); lv_obj_set_style_pad_hor(b, 8, 0);
+	}
 	lv_textarea_set_one_line(pw_area, true); lv_textarea_set_max_length(pw_area, 63);
-	if (manual) snprintf(t, sizeof t, "password (empty: open network)");
+	if (manual) snprintf(t, sizeof t, W < 400 ? "password (empty: open)" : "password (empty: open network)");
 	else snprintf(t, sizeof t, "password for %s", chosen);
 	lv_textarea_set_placeholder_text(pw_area, t);
-	lv_obj_set_width(pw_area, lv_pct(100));
 	kb = lv_keyboard_create(content);
 	lv_obj_set_size(kb, lv_pct(100), H - BAR - 52 > 300 ? 300 : H - BAR - 52);
 	if (W < 400) keyboard_upright(kb);
@@ -649,12 +814,23 @@ static void ssid_screen(void)
 	lv_obj_add_event_cb(kb, ssid_key, LV_EVENT_CANCEL, NULL);
 }
 static void ssid_cb(lv_event_t *e) { (void)e; go(ssid_screen); }
+static void open_join_cb(lv_event_t *e) { (void)e; modal_close(); ip_on = 0; join_pw[0] = 0; wifi_join(NULL); }
+static void open_ip_cb(lv_event_t *e) { (void)e; modal_close(); join_pw[0] = 0; go(ip_screen); }
 static void net_cb(lv_event_t *e)
 {
 	int i = (int)(intptr_t)lv_event_get_user_data(e);
 	manual = 0;
 	snprintf(chosen, sizeof chosen, "%s", nets[i]);
-	if (net_lock[i]) go(password_screen); else wifi_join(NULL);
+	if (net_lock[i]) { go(password_screen); return; }
+	{	/* an open network: join it, or set a fixed address first */
+		lv_obj_t *box = modal_box(), *h; char t[120];
+		snprintf(t, sizeof t, "Connect to \"%s\"?", chosen);
+		h = text(box, t); lv_obj_set_style_text_font(h, &lv_font_montserrat_18, 0);
+		text(box, "Open network: no password.");
+		wide(button(box, "Connect", open_join_cb, NULL));
+		wide(grey(button(box, "Static IP...", open_ip_cb, NULL)));
+		wide(grey(button(box, "Cancel", modal_close_cb, NULL)));
+	}
 }
 static void scan_done(int rc, char *out)
 {
@@ -686,8 +862,79 @@ static void scan_screen(void)
 	start(scan_done, NULL, "nocry-wifi", "scan", NULL);
 }
 static void scan_cb(lv_event_t *e) { (void)e; go(scan_screen); }
-static void ap_yes(void) { busy("Starting the access point..."); start(wifi_done, NULL, "nocry-wifi", "ap", NULL); }
-static void ap_cb(lv_event_t *e) { (void)e; ask("Switch to access point mode?", "The board disconnects from the current network and starts its own access point, \"nocry\".", "Switch", 0, ap_yes); }
+/* the board's own network: its name and password can be changed; an empty password makes it open */
+static void ap_start(int rc, char *out) { (void)rc; (void)out; start(wifi_done, NULL, "nocry-wifi", "ap", NULL); }
+static void ap_key(lv_event_t *e)
+{
+	const char *n = lv_textarea_get_text(form_f[0]), *p = lv_textarea_get_text(form_f[1]); size_t l = strlen(p);
+	if (lv_event_get_code(e) == LV_EVENT_CANCEL) { back(); return; }
+	if (!*n) { remark("SSID missing", "Enter a name for the access point."); return; }
+	if (l && (l < 8 || strchr(p, '"'))) { remark("Password not usable", "WPA2 passwords are 8 to 63 characters, without a double quote. Leave it empty for an open access point."); return; }
+	snprintf(ap_ssid, sizeof ap_ssid, "%s", n); snprintf(ap_pass, sizeof ap_pass, "%s", p); ap_own = 1;
+	busy("Starting the access point...");
+	settings_store(ap_start);		/* kept, then started with them */
+}
+static void ap_screen(void)
+{
+	set_title(W < 400 ? "Access point" : "Access point settings");
+	form_begin();
+	form_field("SSID", ap_own ? ap_ssid : "nocry", NULL, 32, 2);
+	form_field("Password", ap_own ? ap_pass : "nocry111", "empty: open", 63, 2);
+	form_end(0, W < 400 ? 2 : 1, ap_key);
+}
+static void ap_cb(lv_event_t *e) { (void)e; go(ap_screen); }
+static void off_yes(void) { busy("Turning Wi-Fi off..."); start(wifi_done, NULL, "nocry-wifi", "off", NULL); }
+static void disconnect_cb(lv_event_t *e)
+{
+	char *st = run_file("nocry-wifi.state"), h[120];
+	(void)e;
+	snprintf(h, sizeof h, "Disconnect from \"%s\"?", kv(st, "ssid"));
+	ask(h, "Wi-Fi stays off until a network is chosen, the access point is started, or the board restarts. The web interface and nocry over the network stop responding.", "Disconnect", 0, off_yes);
+	free(st);
+}
+static void ap_off_cb(lv_event_t *e)
+{
+	(void)e;
+	ask("Turn the access point off?", "Wi-Fi stays off until a network is chosen, the access point is started, or the board restarts. The web interface and nocry over the network stop responding.", "Turn off", 0, off_yes);
+}
+
+/* The board's own network as a QR code a phone's camera joins it from. */
+static void qr_text(char *out, size_t n, const char *ssid, const char *pass)
+{
+	const char *src[2] = { ssid, pass }; size_t o; int k;
+	o = snprintf(out, n, "WIFI:T:%s;S:", *pass ? "WPA" : "nopass");
+	for (k = 0; k < 2; k++) {
+		const char *c;
+		if (k) { if (!*pass) break; o += snprintf(out + o, n - o, ";P:"); }
+		for (c = src[k]; *c && o + 4 < n; c++) { if (strchr("\\;,:\"", *c)) out[o++] = '\\'; out[o++] = *c; }
+		out[o] = 0;
+	}
+	snprintf(out + o, n - o, ";;");
+}
+static lv_obj_t *qr_make(lv_obj_t *parent, int size)
+{
+	char *st = run_file("nocry-wifi.state"), data[260]; lv_obj_t *q;
+	qr_text(data, sizeof data, kv(st, "ssid"), kv(st, "password"));
+	q = lv_qrcode_create(parent, size, lv_color_hex(0x000000), lv_color_hex(0xffffff));
+	lv_qrcode_update(q, data, strlen(data));
+	lv_obj_set_style_border_color(q, lv_color_hex(0xffffff), 0); lv_obj_set_style_border_width(q, size > 100 ? 8 : 2, 0);
+	free(st);
+	return q;
+}
+static void qr_screen(void)
+{
+	char *st = run_file("nocry-wifi.state"), s[300]; int size = W < 400 ? W - 56 : H - BAR - 32; lv_obj_t *t;
+	set_title(W < 400 ? "Wi-Fi QR code" : "Join with a phone");
+	lv_obj_set_flex_flow(content, W < 400 ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_style_pad_column(content, 14, 0);
+	qr_make(content, size);
+	snprintf(s, sizeof s, "Scan with the phone's camera to join.\n\nSSID: %s\n%s%s\n\nThen open\nhttp://%s", kv(st, "ssid"), *kv(st, "password") ? "Password: " : "Open network", kv(st, "password"), kv(st, "address"));
+	t = text(content, s);
+	if (W >= 400) { lv_obj_set_width(t, LV_SIZE_CONTENT); lv_obj_set_flex_grow(t, 1); }
+	free(st);
+}
+static void qr_cb(lv_event_t *e) { (void)e; go(qr_screen); }
 static void save_done(int rc, char *out) { modal_close(); message(rc ? "Not saved" : "Saved", rc ? out : "Written to the firmware's wpa_supplicant.conf on userdata. Networks saved there before are replaced."); }
 static void save_yes(void) { busy("Saving..."); start(save_done, NULL, "nocry-rescue-do", "wifi-save", NULL); }
 static void save_cb(lv_event_t *e) { (void)e; ask("Save credentials to firmware?", "Writes this network to the firmware's wpa_supplicant.conf on userdata, replacing the networks saved there.", "Save", 0, save_yes); }
@@ -705,14 +952,57 @@ static void wifi_screen(void)
 	set_title("Wi-Fi");
 	snprintf(wifi_shown, sizeof wifi_shown, "%s", mode);
 	screen_timer = lv_timer_create(wifi_tick, 1000, NULL);
-	if (!strcmp(mode, "client")) snprintf(s, sizeof s, "Connected to \"%s\".\nWeb interface: http://%s", kv(st, "ssid"), kv(st, "address"));
-	else if (!strcmp(mode, "ap")) snprintf(s, sizeof s, "Access point mode\nSSID: %s\nPassword: %s\nWeb interface: http://%s", kv(st, "ssid"), kv(st, "password"), kv(st, "address"));
+	if (!strcmp(mode, "client")) snprintf(s, sizeof s, "Connected to \"%s\"%s.\nWeb interface: http://%s", kv(st, "ssid"), !strcmp(kv(st, "addressing"), "static") ? " (static IP)" : "", kv(st, "address"));
+	else if (!strcmp(mode, "ap")) snprintf(s, sizeof s, "Access point mode\nSSID: %s\n%s%s\nWeb interface: http://%s", kv(st, "ssid"), *kv(st, "password") ? "Password: " : "Open network", kv(st, "password"), kv(st, "address"));
 	else if (!strcmp(mode, "joining")) snprintf(s, sizeof s, "Connecting to \"%s\"...", kv(st, "ssid"));
+	else if (!strcmp(mode, "off")) snprintf(s, sizeof s, "Wi-Fi is off.");
 	else snprintf(s, sizeof s, "Not connected.");
+	if (!strcmp(mode, "ap")) {
+		/* The status, the buttons, and the QR code a phone joins from, as large as there is room:
+		   wide, the buttons go down the left and the code fills the right; upright, the code fills
+		   what is left under the buttons.  Touching it opens the screen that explains it. */
+		int wide_ = W >= 400, q = wide_ ? H - BAR - 16 : H - BAR - 16 - 54 - 3 * 48 - 6, i; lv_obj_t *left, *b, *bs[3];
+		if (q > W - 16) q = W - 16;
+		lv_obj_set_style_pad_row(content, 6, 0);
+		if (wide_) {
+			lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
+			lv_obj_set_style_pad_column(content, 8, 0);
+			left = lv_obj_create(content); lv_obj_remove_style_all(left);
+			lv_obj_set_size(left, W - 16 - 8 - q, q);
+			lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(left, 6, 0);
+		} else {
+			left = content;
+			lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+		}
+		snprintf(s, sizeof s, "Access point: %s\n%s%s\nhttp://%s", kv(st, "ssid"), *kv(st, "password") ? "Password: " : "Open network", kv(st, "password"), kv(st, "address"));
+		text(left, s);
+		bs[0] = button(left, LV_SYMBOL_WIFI "  Connect to a network", scan_cb, NULL);
+		bs[1] = grey(button(left, "Access point settings...", ap_cb, NULL));
+		bs[2] = grey(button(left, "Turn access point off", ap_off_cb, NULL));
+		for (i = 0; i < 3; i++) { lv_obj_set_width(bs[i], lv_pct(100)); lv_obj_set_height(bs[i], 42); }
+		b = lv_btn_create(content); lv_obj_set_size(b, q, q); lv_obj_set_style_pad_all(b, 0, 0);
+		lv_obj_set_style_bg_color(b, lv_color_hex(0xffffff), 0); lv_obj_set_style_shadow_width(b, 0, 0);
+		lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+		b = qr_make(b, q - 4); lv_obj_center(b); lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
+		lv_obj_add_event_cb(lv_obj_get_parent(b), qr_cb, LV_EVENT_CLICKED, NULL);
+		free(st);
+		return;
+	}
 	text(content, s);
-	wide(button(content, LV_SYMBOL_WIFI "  Connect to a network", scan_cb, NULL));
-	if (strcmp(mode, "ap")) wide(grey(button(content, "Switch to access point mode", ap_cb, NULL)));
-	if (!strcmp(mode, "client")) wide(grey(button(content, "Save credentials to firmware", save_cb, NULL)));
+	{	/* the buttons: one under the other when upright, two by two when wide */
+		lv_obj_t *r = row(content), *bs[4]; int n = 0, i; char d[80];
+		bs[n++] = button(r, LV_SYMBOL_WIFI "  Connect to a network", scan_cb, NULL);
+		if (!strcmp(mode, "client")) {
+			snprintf(d, sizeof d, "Disconnect from %.40s", kv(st, "ssid"));
+			bs[n++] = grey(button(r, d, disconnect_cb, NULL));
+			bs[n++] = grey(button(r, "Access point mode...", ap_cb, NULL));
+			bs[n++] = grey(button(r, "Save credentials to firmware", save_cb, NULL));
+		} else if (!strcmp(mode, "ap")) {
+			bs[n++] = grey(button(r, "Access point settings...", ap_cb, NULL));
+			bs[n++] = grey(button(r, "Turn access point off", ap_off_cb, NULL));
+		} else bs[n++] = grey(button(r, "Access point mode...", ap_cb, NULL));
+		for (i = 0; i < n; i++) { wide(bs[i]); lv_obj_set_width(bs[i], W < 400 ? W - 16 : (W - 24) / 2); }
+	}
 	free(st);
 }
 
@@ -777,7 +1067,7 @@ static void install_cb(lv_event_t *e)
 		: "Slot A will be overwritten and set active. userdata is preserved; see the notes for rootfs_data.", "Install", 1, install_yes);
 }
 static void discard_done(int rc, char *out) { (void)rc; (void)out; modal_close(); home(); }
-static void discard_cb(lv_event_t *e) { (void)e; busy("One moment..."); start(discard_done, NULL, "nocry-rescue-do", "fw-discard", NULL); }
+static void discard_cb(lv_event_t *e) { (void)e; usb_used = 0; busy("One moment..."); start(discard_done, NULL, "nocry-rescue-do", "fw-discard", NULL); }
 static void report_done(int rc, char *out)
 {
 	char s[400], *line, *save = NULL, *copy; lv_obj_t *r; const char *slot, *on;
@@ -825,28 +1115,32 @@ static void report_screen(void)
 	busy("One moment...");
 	start(report_done, NULL, "nocry-rescue-do", "fw-report", NULL);
 }
+static char usb_fw[220];	/* a firmware file on the flash drive, chosen instead of one from the catalog; "" otherwise */
 static void fetch(const char *mode)
 {
 	job_next = report_screen; job_home = 0;
 	job_undo = "fw-discard";	/* a download that failed or was cancelled is not kept */
 	busy("Starting...");
-	start(job_started, NULL, "nocry-rescue-do", "fw-fetch", fws[fw_pick].key, fws[fw_pick].version, mode, NULL);
+	if (usb_fw[0]) { usb_used = 1; start(job_started, NULL, "nocry-rescue-do", "fw-check-usb", usb_fw, mode, NULL); }
+	else start(job_started, NULL, "nocry-rescue-do", "fw-fetch", fws[fw_pick].key, fws[fw_pick].version, mode, NULL);
 }
 static void keep_cb(lv_event_t *e) { (void)e; fetch("keep"); }
 static void other_cb(lv_event_t *e) { (void)e; fetch("slot"); }
 static void where_screen(void)
 {
-	char s[200]; struct fw *f = &fws[fw_pick];
+	char s[300]; struct fw *f = &fws[fw_pick];
 	set_title("Target slot");
-	snprintf(s, sizeof s, "%s %s\nDownload: %s", f->name, f->version, amount(f->bytes));
+	if (usb_fw[0]) { const char *b = strrchr(usb_fw, '/'); snprintf(s, sizeof s, "%s\nFrom the flash drive", b ? b + 1 : usb_fw); }
+	else snprintf(s, sizeof s, "%s %s\nDownload: %s", f->name, f->version, amount(f->bytes));
 	text(content, s);
 	wide(button(content, "Install to slot A, set active", keep_cb, NULL));
 	dim(text(content, "Slot A is overwritten and becomes the active slot. userdata is preserved."));
 	wide(grey(button(content, "Install to inactive slot", other_cb, NULL)));
 	dim(text(content, "The active slot is not changed. Set the new slot active afterwards."));
-	dim(text(content, "The image is downloaded and verified first. Nothing is written until you confirm."));
+	dim(text(content, usb_fw[0] ? "The file is verified first. Nothing is written until you confirm." : "The image is downloaded and verified first. Nothing is written until you confirm."));
 }
-static void fw_cb(lv_event_t *e) { fw_pick = (int)(intptr_t)lv_event_get_user_data(e); go(where_screen); }
+static void fw_cb(lv_event_t *e) { fw_pick = (int)(intptr_t)lv_event_get_user_data(e); usb_fw[0] = 0; go(where_screen); }
+#define FROM_DRIVE "To install from a flash drive: insert it, then Home > USB drive."
 static void fw_list_done(int rc, char *out);
 static void refresh_cb(lv_event_t *e)
 {
@@ -861,9 +1155,11 @@ static void fw_list_done(int rc, char *out)
 	if (rc || !*out) {
 		text(content, rc && *out ? out : "No firmware is listed for this board's model. Refreshing the catalog needs internet access over Wi-Fi.");
 		wide(button(content, LV_SYMBOL_REFRESH "  Fetch catalog", refresh_cb, NULL));
+		dim(text(content, FROM_DRIVE));
 		return;
 	}
 	list = scroll_list();
+	lv_obj_clear_flag(entry(list, LV_SYMBOL_USB "  Flash drive instead?", "Insert it, then Home > USB drive", NULL, NULL), LV_OBJ_FLAG_CLICKABLE);
 	for (line = strtok_r(out, "\n", &save); line && fw_count < 40; line = strtok_r(NULL, "\n", &save)) {
 		struct fw *f = &fws[fw_count]; char *c[6], l1[100], l2[100]; int n = 0;
 		for (c[n++] = line; n < 6 && (line = strchr(line, '\t')); c[n++] = line) *line++ = 0;
@@ -886,9 +1182,241 @@ static void pending_done(int rc, char *out)
 }
 static void install_screen(void)
 {
-	set_title("Install firmware");
+	set_title(W < 400 ? "From internet" : "Install from internet");	/* the upright bar is short */
 	busy("One moment...");
 	start(pending_done, NULL, "nocry-rescue-do", "fw-report", NULL);
+}
+
+/* ---- USB flash drive ------------------------------------------------------------------- */
+/* nocry-usb mounts a drive when one appears and says so in a file: no command needed to look */
+static int usb_mounted(void) { char *st = run_file("nocry-usb.state"); int m = !strcmp(kv(st, "mounted"), "yes"); free(st); return m; }
+static void eject_done(int rc, char *out)
+{
+	modal_close();
+	if (rc) message("Not ejected", out); else message("Flash drive ejected", "It can be removed now.");
+}
+static void eject_now(void) { busy("Ejecting..."); start(eject_done, NULL, "nocry-rescue-do", "usb-eject", NULL); }
+static void eject_cb(lv_event_t *e) { (void)e; eject_now(); }
+static void eject_yes_cb(lv_event_t *e) { (void)e; modal_close(); eject_now(); }
+static void eject_never_cb(lv_event_t *e) { (void)e; modal_close(); eject_ask = 0; settings_store(NULL); }
+/* after the drive was used: eject it?  "Don't ask again" is kept with the other settings. */
+static void eject_prompt(void)
+{
+	lv_obj_t *box, *h;
+	if (!eject_ask || !usb_mounted()) return;
+	box = modal_box(); h = text(box, "Eject the flash drive?");
+	lv_obj_set_style_text_font(h, &lv_font_montserrat_18, 0);
+	text(box, "Everything is written out and the drive is unmounted, so it can be removed.");
+	wide(button(box, "Eject", eject_yes_cb, NULL));
+	wide(grey(button(box, "Not now", modal_close_cb, NULL)));
+	wide(grey(button(box, "Don't ask again", eject_never_cb, NULL)));
+}
+
+/* back up: the whole storage or one partition */
+static struct target { char name[40]; long long bytes; } targets[40]; static int target_count, target_pick;
+static void backup_yes(void)
+{
+	usb_used = 1; job_next = NULL; job_home = 0; job_undo = NULL; job_pop = 1;	/* afterwards: the drive's screen */
+	busy("Starting...");
+	start(job_started, NULL, "nocry-rescue-do", "usb-backup", targets[target_pick].name, NULL);
+}
+static void target_cb(lv_event_t *e)
+{
+	char head[80], body[300]; struct target *t;
+	target_pick = (int)(intptr_t)lv_event_get_user_data(e); t = &targets[target_pick];
+	if (!strcmp(t->name, "full")) snprintf(head, sizeof head, "Back up the entire eMMC?");
+	else snprintf(head, sizeof head, "Back up %s?", t->name);
+	snprintf(body, sizeof body, "Writes an image (%s) with its SHA-256 to the folder nocry-backups on the flash drive, then reads it back and verifies it. Nothing on the board is changed.", amount(t->bytes));
+	ask(head, body, "Back up", 0, backup_yes);
+}
+static void targets_done(int rc, char *out)
+{
+	char *line, *save = NULL, l2[80]; lv_obj_t *list;
+	modal_close(); target_count = 0;
+	if (rc || !*out) { text(content, *out ? out : "The board's storage could not be read."); return; }
+	list = scroll_list();
+	for (line = strtok_r(out, "\n", &save); line && target_count < 40; line = strtok_r(NULL, "\n", &save)) {
+		struct target *t = &targets[target_count]; char *tab = strchr(line, '\t');
+		if (!tab) continue;
+		*tab = 0; snprintf(t->name, sizeof t->name, "%s", line); t->bytes = atoll(tab + 1);
+		if (!strcmp(t->name, "full")) { snprintf(l2, sizeof l2, "%s   everything: boot loader, both slots, data", amount(t->bytes)); entry(list, "Entire eMMC", l2, target_cb, (void *)(intptr_t)target_count); }
+		else { snprintf(l2, sizeof l2, "%s   partition", amount(t->bytes)); entry(list, t->name, l2, target_cb, (void *)(intptr_t)target_count); }
+		target_count++;
+	}
+}
+static void backup_screen(void)
+{
+	set_title("Back up to drive");
+	busy("Reading...");
+	start(targets_done, NULL, "nocry-rescue-do", "usb-targets", NULL);
+}
+
+/* restore: the images on the drive that fit this board */
+static struct image { char kind[8], part[40], path[220]; long long bytes; int sum; } images[40]; static int image_count, image_pick;
+static void restore_yes(void)
+{
+	usb_used = 1; job_next = NULL; job_home = 0; job_undo = NULL; job_pop = 1;
+	busy("Starting...");
+	start(job_started, NULL, "nocry-rescue-do", "usb-restore", images[image_pick].path, NULL);
+}
+static void image_info(int rc, char *out)
+{
+	char head[80], body[500]; struct image *m = &images[image_pick]; const char *b = strrchr(m->path, '/');
+	const char *nosum = strcmp(kv(out, "checksum"), "yes") ? " There is no checksum file beside it: the image cannot be verified before it is written." : "";
+	modal_close();
+	b = b ? b + 1 : m->path;
+	if (rc) { message("Cannot restore this file", out); return; }
+	if (!strcmp(kv(out, "kind"), "full")) {
+		if (strcmp(kv(out, "identity"), "same")) { message("Backup of another board", "The identity record in this image differs from this board's. Restoring it would replace the serial number. Use nocry on a computer for that."); return; }
+		snprintf(head, sizeof head, "Restore the entire eMMC?");
+		snprintf(body, sizeof body, "Overwrites the whole storage with %s: boot loader, both slots, settings and files. Only what differs is written; all of it is verified. Intact copies of the rescue image are kept.%s", b, nosum);
+	} else {
+		snprintf(head, sizeof head, "Restore %s?", kv(out, "part"));
+		snprintf(body, sizeof body, "Overwrites the partition %s with %s. Only what differs is written; all of it is verified.%s", kv(out, "part"), b, nosum);
+	}
+	ask(head, body, "Restore", 1, restore_yes);
+}
+static void image_cb(lv_event_t *e)
+{
+	image_pick = (int)(intptr_t)lv_event_get_user_data(e);
+	busy("Reading...");
+	start(image_info, NULL, "nocry-rescue-do", "usb-info", images[image_pick].path, NULL);
+}
+static void images_done(int rc, char *out)
+{
+	char *line, *save = NULL, l2[120]; lv_obj_t *list;
+	modal_close(); image_count = 0;
+	if (rc) { text(content, out); return; }
+	if (!*out) { text(content, "No backup of this board on the drive."); dim(text(content, "Listed are .img files (or .img.001 sets) up to three folders deep whose size is that of the eMMC, or of the partition their name ends in.")); return; }
+	list = scroll_list();
+	for (line = strtok_r(out, "\n", &save); line && image_count < 40; line = strtok_r(NULL, "\n", &save)) {
+		struct image *m = &images[image_count]; char *c[5]; const char *b; int n = 0;
+		for (c[n++] = line; n < 5 && (line = strchr(line, '\t')); c[n++] = line) *line++ = 0;
+		if (n < 5) continue;
+		snprintf(m->kind, sizeof m->kind, "%s", c[0]); snprintf(m->part, sizeof m->part, "%s", c[1]); m->bytes = atoll(c[2]); m->sum = !strcmp(c[3], "yes");
+		snprintf(m->path, sizeof m->path, "%s", c[4]);
+		b = strrchr(m->path, '/'); b = b ? b + 1 : m->path;
+		if (!strcmp(m->kind, "full")) snprintf(l2, sizeof l2, "Entire eMMC   %s%s", amount(m->bytes), m->sum ? "" : "   no checksum");
+		else snprintf(l2, sizeof l2, "Partition %s   %s%s", m->part, amount(m->bytes), m->sum ? "" : "   no checksum");
+		entry(list, b, l2, image_cb, (void *)(intptr_t)image_count);
+		image_count++;
+	}
+}
+static void restore_screen(void)
+{
+	set_title("Restore from drive");
+	busy("Searching the drive...");
+	start(images_done, NULL, "nocry-rescue-do", "usb-list", "backups", NULL);
+}
+
+/* install a firmware file that is on the drive */
+static char usb_fws[40][220]; static int usb_fw_count;
+static void usb_fw_cb(lv_event_t *e) { snprintf(usb_fw, sizeof usb_fw, "%s", usb_fws[(int)(intptr_t)lv_event_get_user_data(e)]); go(where_screen); }
+static void usb_fws_done(int rc, char *out)
+{
+	char *line, *save = NULL, l2[260]; lv_obj_t *list;
+	modal_close(); usb_fw_count = 0;
+	if (rc) { text(content, out); return; }
+	if (!*out) { text(content, "No firmware file on the drive."); dim(text(content, "Listed are Creality update files (.img) and factory packages (.ingenic) up to three folders deep.")); return; }
+	list = scroll_list();
+	for (line = strtok_r(out, "\n", &save); line && usb_fw_count < 40; line = strtok_r(NULL, "\n", &save)) {
+		char *tab = strchr(line, '\t'), *b, *dir;
+		if (!tab) continue;
+		*tab = 0; snprintf(usb_fws[usb_fw_count], sizeof usb_fws[0], "%s", tab + 1);
+		b = strrchr(tab + 1, '/'); dir = b ? tab + 1 : NULL; if (b) *b++ = 0; else b = tab + 1;
+		if (dir) snprintf(l2, sizeof l2, "%s   in %s", amount(atoll(line)), dir); else snprintf(l2, sizeof l2, "%s", amount(atoll(line)));
+		entry(list, b, l2, usb_fw_cb, (void *)(intptr_t)usb_fw_count);
+		usb_fw_count++;
+	}
+}
+static void usb_fw_screen(void)
+{
+	set_title("Firmware on drive");
+	busy("Searching the drive...");
+	start(usb_fws_done, NULL, "nocry-rescue-do", "usb-list", "fw", NULL);
+}
+
+/* format: erase the drive that is plugged in, mounted or not, and put one file system on it */
+static const char *format_fs;
+static void format_done(int rc, char *out)
+{
+	modal_close();
+	if (rc) { message("Format failed", out); return; }
+	back();
+	message("Drive formatted", "The new file system is mounted in a moment.");
+}
+static void format_yes(void) { busy("Formatting..."); start(format_done, NULL, "nocry-rescue-do", "usb-format", format_fs, NULL); }
+static void format_cb(lv_event_t *e)
+{
+	char *st = run_file("nocry-usb.state"), body[400];
+	format_fs = lv_event_get_user_data(e);
+	snprintf(body, sizeof body, "ALL DATA on this drive is destroyed: every partition and every file on %s%s%s. This cannot be undone.\n\nIt gets one %s partition.",
+		kv(st, "disk_model"), *kv(st, "disk_model") ? ", " : "", amount(atoll(kv(st, "disk_bytes"))), !strcmp(format_fs, "exfat") ? "exFAT" : "FAT32");
+	ask("Erase the flash drive?", body, "Erase and format", 1, format_yes);
+	free(st);
+}
+static void format_screen(void)
+{
+	char *st = run_file("nocry-usb.state"), s[300];
+	set_title("Format drive");
+	if (!*kv(st, "disk")) { text(content, "No flash drive."); free(st); return; }
+	snprintf(s, sizeof s, "%s%s%s", kv(st, "disk_model"), *kv(st, "disk_model") ? "   " : "", amount(atoll(kv(st, "disk_bytes"))));
+	lv_obj_set_style_text_font(text(content, s), &lv_font_montserrat_18, 0);
+	lv_obj_set_style_text_color(text(content, "Formatting erases everything on the drive."), lv_palette_lighten(LV_PALETTE_RED, 1), 0);
+	wide(red(button(content, "Format as exFAT", format_cb, (void *)"exfat")));
+	dim(text(content, "Files of any size. Windows, macOS, Linux."));
+	wide(red(button(content, "Format as FAT32", format_cb, (void *)"fat32")));
+	dim(text(content, "Read by everything, printers included. No file over 4 GiB (backups are split)."));
+	free(st);
+}
+
+static char usb_shown[400];
+static void go_cb(lv_event_t *e);
+static void usb_draw(void)
+{
+	char *st = run_file("nocry-usb.state"), s[300]; lv_obj_t *b;
+	lv_obj_clean(content);
+	snprintf(usb_shown, sizeof usb_shown, "%s", st);
+	if (strcmp(kv(st, "mounted"), "yes")) {
+		if (*kv(st, "disk")) {		/* a drive is there, but nothing of it is mounted */
+			snprintf(s, sizeof s, "%s%s%s\n%s", kv(st, "disk_model"), *kv(st, "disk_model") ? "   " : "", amount(atoll(kv(st, "disk_bytes"))),
+				!strcmp(kv(st, "ejected"), "yes") ? "Ejected. The flash drive can be removed." : "No file system on it that can be mounted (FAT32, exFAT, NTFS).");
+			text(content, s);
+			wide(red(button(content, "Format drive...", go_cb, (void *)format_screen)));
+		} else {
+			text(content, "No flash drive.");
+			dim(text(content, "Supported: FAT32, exFAT, NTFS. The USB-A sockets are off while a computer is connected to the USB-C socket."));
+		}
+		free(st); return;
+	}
+	snprintf(s, sizeof s, "%s%s%s\n%s, %s free%s", kv(st, "label"), *kv(st, "label") ? "   " : "", kv(st, "fs"), amount(atoll(kv(st, "size"))), amount(atoll(kv(st, "free"))),
+		!strcmp(kv(st, "readonly"), "yes") ? "\nMounted read-only: backups cannot be written." : "");
+	text(content, s);
+	{	/* four buttons: one under the other when upright, two by two when wide */
+		lv_obj_t *r = row(content), *bs[5]; int i;
+		bs[0] = b = button(r, "Back up to drive", go_cb, (void *)backup_screen);
+		if (!strcmp(kv(st, "readonly"), "yes")) lv_obj_add_state(b, LV_STATE_DISABLED);
+		bs[1] = button(r, "Restore from drive", go_cb, (void *)restore_screen);
+		bs[2] = button(r, "Install firmware", go_cb, (void *)usb_fw_screen);
+		bs[3] = grey(button(r, LV_SYMBOL_EJECT "  Eject", eject_cb, NULL));
+		bs[4] = grey(button(r, "Format drive...", go_cb, (void *)format_screen));
+		for (i = 0; i < 5; i++) lv_obj_set_width(bs[i], W < 400 ? W - 16 : (W - 24) / 2);
+	}
+	free(st);
+}
+static void usb_tick(lv_timer_t *t)
+{
+	char *st = run_file("nocry-usb.state");
+	(void)t;
+	/* the free space moves while nothing else does: only what the screen says differently redraws it */
+	if (!modal && (strcmp(kv(st, "mounted"), kv(usb_shown, "mounted")) || strcmp(kv(st, "ejected"), kv(usb_shown, "ejected")) || strcmp(kv(st, "device"), kv(usb_shown, "device")) || strcmp(kv(st, "disk"), kv(usb_shown, "disk")))) usb_draw();
+	free(st);
+}
+static void usb_screen(void)
+{
+	set_title("USB drive");
+	usb_draw();
+	screen_timer = lv_timer_create(usb_tick, 1000, NULL);
 }
 
 /* ---- repair ---------------------------------------------------------------------------- */
@@ -902,7 +1430,7 @@ static void mods_cb(lv_event_t *e)
 static void all_cb(lv_event_t *e)
 {
 	(void)e; repair_arg[0] = "reset"; repair_arg[1] = "all";
-	ask("Factory reset?", "Erases rootfs_data and userdata: all settings and files. The rescue image is stored on userdata and is erased too; reinstall it from a computer afterwards.", "Erase all", 1, repair_yes);
+	ask("Factory reset?", "Erases rootfs_data and userdata: all settings and files.", "Erase all", 1, repair_yes);
 }
 static void fsck_data_cb(lv_event_t *e) { (void)e; repair_arg[0] = "check"; repair_arg[1] = "data"; ask("Check userdata?", "Runs e2fsck on the userdata partition and repairs errors.", "Run fsck", 0, repair_yes); }
 static void fsck_set_cb(lv_event_t *e) { (void)e; repair_arg[0] = "check"; repair_arg[1] = "settings"; ask("Check rootfs_data?", "Runs e2fsck on the system overlay partition and repairs errors.", "Run fsck", 0, repair_yes); }
@@ -923,6 +1451,91 @@ static void repair_screen(void)
 	wide(grey(button(content, "eMMC health", health_cb, NULL)));
 	wide(red(button(content, "Wipe system overlay", mods_cb, NULL)));
 	wide(red(button(content, "Factory reset", all_cb, NULL)));
+}
+
+/* ---- advanced: repair, and reaching the board over the network --------------------------- */
+static void remote_draw(void);
+static void remote_applied(int rc, char *out) { (void)rc; (void)out; modal_close(); remote_draw(); }
+static void remote_stored(int rc, char *out) { (void)rc; (void)out; start(remote_applied, NULL, "nocry-remote", "apply", NULL); }
+static void remote_apply(void) { busy("One moment..."); settings_store(remote_stored); }	/* kept, then started or stopped */
+static void lan_on(void) { remote_lan = 1; remote_apply(); }
+static void adb_on(void) { remote_adb = 1; remote_apply(); }
+static void ssh_on(void) { remote_ssh = 1; remote_apply(); }
+static void lan_cb(lv_event_t *e)
+{
+	(void)e;
+	if (remote_lan) { remote_lan = 0; remote_apply(); }
+	else ask("Turn on nocry over the network?", "nocry on a computer can then work on this board over the network (port 5560): back up, restore, install. It needs the pairing code shown on this screen.", "Turn on", 0, lan_on);
+}
+static void adb_cb(lv_event_t *e)
+{
+	(void)e;
+	if (remote_adb) { remote_adb = 0; remote_apply(); }
+	else ask("Turn on ADB over the network?", "ADB here has no password and no pairing: anyone who can reach this board on the network gets a root shell (port 5555). Only on a network you trust.", "Turn on", 1, adb_on);
+}
+static void ssh_cb(lv_event_t *e)
+{
+	char body[300];
+	(void)e;
+	if (remote_ssh) { remote_ssh = 0; remote_apply(); return; }
+	snprintf(body, sizeof body, "SSH on port 22, user root, password %s. Anyone on the network who knows the password gets a root shell. Change the password first if this network is not yours alone.", ssh_pass[0] ? ssh_pass : "Creality2023");
+	ask("Turn on SSH?", body, "Turn on", 0, ssh_on);
+}
+static void sshpw_key(lv_event_t *e)
+{
+	const char *p = lv_textarea_get_text(form_f[0]);
+	if (lv_event_get_code(e) == LV_EVENT_CANCEL) { back(); return; }
+	if (strlen(p) < 6 || strchr(p, ' ')) { remark("Password not usable", "At least 6 characters, no spaces."); return; }
+	snprintf(ssh_pass, sizeof ssh_pass, "%s", p);
+	depth--;				/* back to the remote access screen, which is drawn when it is applied */
+	show();
+	remote_apply();
+}
+static void sshpw_screen(void)
+{
+	set_title("SSH password");
+	form_begin();
+	form_field("Password", ssh_pass[0] ? ssh_pass : "Creality2023", NULL, 63, 1);
+	form_end(0, 1, sshpw_key);
+}
+static void go_cb(lv_event_t *e);
+static void remote_item(const char *name, const char *detail, int on, lv_event_cb_t cb)
+{
+	lv_obj_t *r = row(content), *col = lv_obj_create(r), *l, *b;
+	lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_remove_style_all(col); lv_obj_set_height(col, LV_SIZE_CONTENT); lv_obj_set_flex_grow(col, 1);
+	lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+	l = lv_label_create(col); lv_label_set_text(l, name);
+	l = dim(lv_label_create(col)); lv_obj_set_width(l, lv_pct(100)); lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP); lv_label_set_text(l, detail);
+	b = button(r, on ? "On" : "Off", cb, NULL);
+	lv_obj_set_width(b, 64); lv_obj_set_height(b, 40);
+	if (!on) grey(b); else lv_obj_set_style_bg_color(b, lv_palette_darken(LV_PALETTE_GREEN, 2), 0);
+}
+static void remote_draw(void)
+{
+	char *st = run_file("nocry-wifi.state"), s[200]; const char *a = kv(st, "address");
+	lv_obj_clean(content);
+	lv_obj_set_style_pad_row(content, 6, 0);
+	snprintf(s, sizeof s, *a ? "This board: %s" : "This board is not on a network.", a);
+	dim(text(content, s));
+	remote_item("nocry over the network", "the nocry program on a computer; port 5560, pairing code", remote_lan, lan_cb);
+	snprintf(s, sizeof s, "adb connect %s; port 5555, no password", *a ? a : "<address>");
+	remote_item("ADB over the network", s, remote_adb, adb_cb);
+	snprintf(s, sizeof s, "ssh root@%s; password %s", *a ? a : "<address>", ssh_pass[0] ? ssh_pass : "Creality2023");
+	remote_item("SSH", s, remote_ssh, ssh_cb);
+	wide(grey(button(content, "SSH password...", go_cb, (void *)sshpw_screen)));
+	dim(text(content, "All off unless turned on here; what is on stays on after a restart. The web interface is always available with the pairing code."));
+	free(st);
+}
+static void remote_screen(void) { set_title("Remote access"); remote_draw(); }
+static void repair_screen(void);
+static void advanced_screen(void)
+{
+	set_title("Advanced");
+	wide(button(content, LV_SYMBOL_SETTINGS "  Repair", go_cb, (void *)repair_screen));
+	dim(text(content, "Check file systems, eMMC health, wipe the system overlay, factory reset."));
+	wide(button(content, LV_SYMBOL_WIFI "  Remote access", go_cb, (void *)remote_screen));
+	dim(text(content, "nocry over the network, ADB over the network, SSH. All off unless turned on."));
 }
 
 /* ---- about ----------------------------------------------------------------------------- */
@@ -973,22 +1586,16 @@ static lv_point_t cal_at[3];
 static int cal_step, cal_wait_up; static long cal_sx, cal_sy, cal_n; static int cal_rx[3], cal_ry[3];
 static lv_obj_t *cal_cross, *cal_text;
 
-static void cal_store(void)
-{
-	char p[128], d[160]; FILE *f;
-	snprintf(p, sizeof p, "%s/nocry-touch.cal", RUN);
-	f = fopen(p, "w"); if (!f) return;
-	fprintf(f, "%dx%d %.9g %.9g %.9g %.9g %.9g %.9g\n", W, H, cal[0], cal[1], cal[2], cal[3], cal[4], cal[5]); fclose(f);
-	snprintf(d, sizeof d, "nocry-rescue/touch.cal");
-	start(NULL, p, "nocry-rescue-do", "put", d, NULL);	/* kept if the rescue system is stored on the board */
-}
+static void cal_store(void) { settings_store(NULL); }
 static int cal_solve(void)
 {
 	double x0 = cal_rx[0], y0 = cal_ry[0], x1 = cal_rx[1], y1 = cal_ry[1], x2 = cal_rx[2], y2 = cal_ry[2];
 	double det = (x0 - x2) * (y1 - y2) - (x1 - x2) * (y0 - y2); int i;
 	if (det > -200000 && det < 200000) return -1;	/* the three touches were nearly in one place or one line */
 	for (i = 0; i < 2; i++) {
-		double s0 = i ? cal_at[0].y : cal_at[0].x, s1 = i ? cal_at[1].y : cal_at[1].x, s2 = i ? cal_at[2].y : cal_at[2].x;
+		double s[3]; int k, fx, fy;
+		for (k = 0; k < 3; k++) { to_panel(cal_at[k].x, cal_at[k].y, &fx, &fy); s[k] = i ? fy : fx; }
+		double s0 = s[0], s1 = s[1], s2 = s[2];
 		cal[i * 3] = ((s0 - s2) * (y1 - y2) - (s1 - s2) * (y0 - y2)) / det;
 		cal[i * 3 + 1] = ((x0 - x2) * (s1 - s2) - (x1 - x2) * (s0 - s2)) / det;
 		cal[i * 3 + 2] = s2 - cal[i * 3] * x2 - cal[i * 3 + 1] * y2;
@@ -1044,15 +1651,16 @@ void calibrate_screen(void)
 }
 
 /* ---- home ------------------------------------------------------------------------------ */
-static lv_obj_t *home_net;
+static lv_obj_t *home_net, *home_eject;
 static void home_tick(lv_timer_t *t)
 {
 	char *st = run_file("nocry-wifi.state"), s[200]; const char *mode = kv(st, "mode");
 	(void)t;
 	const char *gap = W < 400 ? "\n" : "      ";
 	if (!strcmp(mode, "client")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  %s%shttp://%s", kv(st, "ssid"), gap, kv(st, "address"));
-	else if (!strcmp(mode, "ap")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  AP \"%s\", password %s%shttp://%s", kv(st, "ssid"), kv(st, "password"), gap, kv(st, "address"));
+	else if (!strcmp(mode, "ap")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  AP \"%s\", %s%s%shttp://%s", kv(st, "ssid"), *kv(st, "password") ? "password " : "open", kv(st, "password"), gap, kv(st, "address"));
 	else if (!strcmp(mode, "joining")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  connecting to %s...", kv(st, "ssid"));
+	else if (!strcmp(mode, "off")) snprintf(s, sizeof s, LV_SYMBOL_WIFI "  off");
 	else snprintf(s, sizeof s, LV_SYMBOL_WIFI "  not connected");
 	if (W < 400) {		/* the bar has no room for the pairing code here */
 		char *c = run_file("nocry-pair-code"); size_t l = strlen(s);
@@ -1062,6 +1670,8 @@ static void home_tick(lv_timer_t *t)
 	}
 	if (strcmp(lv_label_get_text(home_net), s)) lv_label_set_text(home_net, s);
 	free(st);
+	/* Eject is there to be seen, and greyed out while no drive is mounted */
+	if (usb_mounted()) lv_obj_clear_state(home_eject, LV_STATE_DISABLED); else lv_obj_add_state(home_eject, LV_STATE_DISABLED);
 }
 static void home_job(int rc, char *out)
 {
@@ -1071,16 +1681,17 @@ static void restart_done(int rc, char *out) { if (rc) { modal_close(); message("
 static void restart_yes(void) { busy("Rebooting..."); start(restart_done, NULL, "nocry-rescue-do", "restart", NULL); }
 static void restart_cb(lv_event_t *e) { (void)e; ask("Reboot?", "Leaves rescue and boots the active slot.", "Reboot", 0, restart_yes); }
 static void go_cb(lv_event_t *e) { go((screen_fn)lv_event_get_user_data(e)); }
-static void tile(lv_obj_t *grid, const char *icon, const char *label, lv_event_cb_t cb, void *arg)
+static lv_obj_t *tile(lv_obj_t *grid, const char *icon, const char *label, lv_event_cb_t cb, void *arg)
 {
 	lv_obj_t *b = lv_btn_create(grid), *i = lv_label_create(b), *l = lv_label_create(b);
-	lv_obj_set_size(b, W < 400 ? (W - 20) / 2 : (W - 26) / 3, W < 400 ? 104 : 74);
+	lv_obj_set_size(b, W < 400 ? (W - 20) / 2 : (W - 32) / 4, W < 400 ? 84 : 74);	/* eight: two by four, or four by two */
 	lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_label_set_text(i, icon); lv_obj_set_style_text_font(i, &lv_font_montserrat_28, 0);
 	lv_label_set_text(l, label);
 	lv_obj_set_style_bg_color(b, lv_color_hex(0x2c3440), 0);
 	lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, arg);
+	return b;
 }
 static void home_screen(void)
 {
@@ -1091,18 +1702,67 @@ static void home_screen(void)
 	lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	tile(grid, LV_SYMBOL_WIFI, "Wi-Fi", go_cb, (void *)wifi_screen);
 	tile(grid, LV_SYMBOL_SHUFFLE, "Slots", go_cb, (void *)slots_screen);
-	tile(grid, LV_SYMBOL_DOWNLOAD, "Install firmware", go_cb, (void *)install_screen);
-	tile(grid, LV_SYMBOL_SETTINGS, "Repair", go_cb, (void *)repair_screen);
+	tile(grid, LV_SYMBOL_DOWNLOAD, W < 400 ? "Install firmware" : "Install", go_cb, (void *)install_screen);
+	tile(grid, LV_SYMBOL_USB, "USB drive", go_cb, (void *)usb_screen);
+	tile(grid, LV_SYMBOL_SETTINGS, "Advanced", go_cb, (void *)advanced_screen);
 	tile(grid, LV_SYMBOL_LIST, "System info", go_cb, (void *)about_screen);
+	home_eject = tile(grid, LV_SYMBOL_EJECT, "Eject drive", eject_cb, NULL);
 	tile(grid, LV_SYMBOL_POWER, "Reboot", restart_cb, NULL);
 	home_net = dim(text(content, ""));
 	lv_obj_set_style_pad_left(home_net, 4, 0);
+	if (W < 400) lv_obj_set_width(home_net, W - 72);	/* the turn button is beside it */
 	home_tick(NULL);
 	screen_timer = lv_timer_create(home_tick, 1000, NULL);
 	start(home_job, NULL, "nocry-rescue-do", "job", NULL);
 }
 
 /* ---- start ----------------------------------------------------------------------------- */
+static const char *self, *fbdev = "/dev/fb0", *i2cdev = "/dev/i2c-4";
+/* Turning: the new turn is kept, and the program starts again with it.  Everything it shows
+   is read from the board again, and a running job is found again by the home screen. */
+static void rot_done(int rc, char *out)
+{
+	char t[8];
+	(void)rc; (void)out;
+	snprintf(t, sizeof t, "%d", turn);
+	if (sim) { modal_close(); return; }
+	if (fb) memset(fb, 0, (size_t)fb_stride * PH);
+	execlp(self, self, "--fb", fbdev, "--i2c", i2cdev, "--turn", t, (char *)NULL);
+	_exit(3);		/* the start-up script starts it again */
+}
+/* The picture on the turn button, after the usual "rotate right" sign: three quarters of a
+   circle, and at its upper right end a solid arrow head, centred on the line, pointing the way
+   each press turns the interface (a quarter turn clockwise: one press from wide to the usual
+   upright).  Drawn here: the symbol
+   fonts have only the two-arrow "refresh" circle. */
+#define ICON 28
+static void turn_icon(lv_obj_t *parent)
+{
+	static lv_color_t buf[LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(ICON, ICON)];
+	const double R = 8.5, C = ICON / 2.0, END = 30 * M_PI / 180;	/* the head sits at 30 degrees (upper right) */
+	double ex = C + R * cos(END), ey = C - R * sin(END);		/* where the line ends: the middle of the head's base */
+	double tx = sin(END), ty = cos(END);				/* the way the line is going there (on the screen): clockwise */
+	double nx = cos(END), ny = -sin(END);				/* across the line */
+	lv_obj_t *cv = lv_canvas_create(parent); lv_draw_arc_dsc_t arc; lv_draw_rect_dsc_t fill; lv_point_t head[3];
+	lv_canvas_set_buffer(cv, buf, ICON, ICON, LV_IMG_CF_TRUE_COLOR_ALPHA);
+	lv_canvas_fill_bg(cv, lv_color_hex(0xffffff), LV_OPA_TRANSP);
+	lv_obj_center(cv); lv_obj_clear_flag(cv, LV_OBJ_FLAG_CLICKABLE);
+	lv_draw_arc_dsc_init(&arc); arc.color = lv_color_hex(0xffffff); arc.width = 3; arc.rounded = 1;
+	/* angles here run clockwise from three o'clock: from the lower right round by the left and the top to the head's base */
+	lv_canvas_draw_arc(cv, (lv_coord_t)C, (lv_coord_t)C, (lv_coord_t)(R + 1.5), 60, 328, &arc);
+	lv_draw_rect_dsc_init(&fill); fill.bg_color = lv_color_hex(0xffffff); fill.bg_opa = LV_OPA_COVER;
+	head[0].x = (lv_coord_t)(ex + 7 * tx + 0.5); head[0].y = (lv_coord_t)(ey + 7 * ty + 0.5);	/* the tip */
+	head[1].x = (lv_coord_t)(ex + 5.5 * nx - tx + 0.5); head[1].y = (lv_coord_t)(ey + 5.5 * ny - ty + 0.5);
+	head[2].x = (lv_coord_t)(ex - 5.5 * nx - tx + 0.5); head[2].y = (lv_coord_t)(ey - 5.5 * ny - ty + 0.5);
+	lv_canvas_draw_polygon(cv, head, 3, &fill);
+}
+static void rot_cb(lv_event_t *e)
+{
+	(void)e;
+	turn = (turn + 270) % 360;		/* a quarter turn clockwise */
+	busy("Rotating...");
+	settings_store(rot_done);
+}
 static void frame_build(void)
 {
 	lv_obj_t *scr = lv_scr_act(), *bar = lv_obj_create(scr);
@@ -1123,16 +1783,39 @@ static void frame_build(void)
 	content = lv_obj_create(scr);
 	lv_obj_remove_style_all(content);
 	lv_obj_set_size(content, W, H - BAR); lv_obj_set_pos(content, 0, BAR);
+	/* the turn button: one corner of the glass, top right when wide, bottom right when upright */
+	rot_btn = lv_btn_create(scr);
+	if (W > H) { lv_obj_set_size(rot_btn, 52, BAR); lv_obj_set_pos(rot_btn, W - 52, 0); lv_obj_set_style_radius(rot_btn, 0, 0); lv_obj_align(code_lbl, LV_ALIGN_RIGHT_MID, -60, 0); }
+	else { lv_obj_set_size(rot_btn, 52, 48); lv_obj_set_pos(rot_btn, W - 56, H - 52); }
+	lv_obj_set_style_bg_color(rot_btn, lv_color_hex(0x38424e), 0); lv_obj_set_style_shadow_width(rot_btn, 0, 0);
+	turn_icon(rot_btn);
+	lv_obj_add_event_cb(rot_btn, rot_cb, LV_EVENT_CLICKED, NULL);
 	lv_obj_set_style_pad_all(content, 8, 0); lv_obj_set_style_pad_row(content, 8, 0);
 	lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_scroll_dir(content, LV_DIR_VER);
 }
-static void cal_load(void)
+/* the kept settings: the calibration (made for this panel, or it is of no use), the turn,
+   whether to ask about ejecting.  Returns the kept turn, or -1. */
+static int settings_load(void)
 {
-	char *s = run_file("nocry-touch.cal");
-	int w, h;	/* made for this way up, or it is of no use */
-	if (sscanf(s, "%dx%d %lf %lf %lf %lf %lf %lf", &w, &h, &cal[0], &cal[1], &cal[2], &cal[3], &cal[4], &cal[5]) == 8 && w == W && h == H) cal_ok = 1;
+	char *s = run_file("nocry-touch.cal"), *p; double c[6];
+	int w, h, t = -1;
+	if (sscanf(s, "fb %dx%d %lf %lf %lf %lf %lf %lf", &w, &h, &cal[0], &cal[1], &cal[2], &cal[3], &cal[4], &cal[5]) == 8 && w == PW && h == PH) cal_ok = 1;
+	else if (sscanf(s, "%dx%d %lf %lf %lf %lf %lf %lf", &w, &h, &c[0], &c[1], &c[2], &c[3], &c[4], &c[5]) == 8 && w == PH && h == PW) {
+		/* as kept before the interface could be turned: made for the upright interface (turn 90) */
+		cal[0] = c[3]; cal[1] = c[4]; cal[2] = c[5]; cal[3] = -c[0]; cal[4] = -c[1]; cal[5] = PH - 1 - c[2];
+		cal_ok = 1;
+	}
+	if ((p = strstr(s, "\nturn "))) t = atoi(p + 6);
+	if (strstr(s, "\neject never")) eject_ask = 0;
+	remote_lan = strstr(s, "\nremote_lan on") != NULL; remote_adb = strstr(s, "\nremote_adb on") != NULL; remote_ssh = strstr(s, "\nremote_ssh on") != NULL;
+	if ((p = strstr(s, "\nssh_pass "))) snprintf(ssh_pass, sizeof ssh_pass, "%.*s", (int)strcspn(p + 10, "\n"), p + 10);
+	if ((p = strstr(s, "\nap_ssid ")) && p[9] != '\n' && p[9]) {
+		snprintf(ap_ssid, sizeof ap_ssid, "%.*s", (int)strcspn(p + 9, "\n"), p + 9); ap_own = 1;
+		if ((p = strstr(s, "\nap_pass "))) snprintf(ap_pass, sizeof ap_pass, "%.*s", (int)strcspn(p + 9, "\n"), p + 9);
+	}
 	free(s);
+	return t;
 }
 
 static void shot(const char *path)
@@ -1148,7 +1831,7 @@ static void sim_run(int ms) { for (; ms > 0; ms -= 5) { sim_ms += 5; lv_timer_ha
 int main(int argc, char **argv)
 {
 	static lv_disp_draw_buf_t db; static lv_disp_drv_t dd; static lv_indev_drv_t id;
-	const char *fbdev = "/dev/fb0", *i2cdev = "/dev/i2c-4", *script = NULL; int i, want_turn = -1;
+	const char *script = NULL; int i, want_turn = -1, kept;
 
 	for (i = 1; i + 1 < argc; i += 2) {
 		if (!strcmp(argv[i], "--fb")) fbdev = argv[i + 1];
@@ -1157,15 +1840,19 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--turn")) want_turn = atoi(argv[i + 1]);
 		else break;
 	}
-	if (i < argc) { fprintf(stderr, "usage: nocry-ui [--fb DEV] [--i2c DEV] [--turn 0|90|270] | nocry-ui --sim SCRIPT\n"); return 2; }
+	if (i < argc) { fprintf(stderr, "usage: nocry-ui [--fb DEV] [--i2c DEV] [--turn 0|90|180|270] | nocry-ui --sim SCRIPT\n"); return 2; }
+	self = argv[0];
 	if (getenv("NOCRY_RUN")) RUN = getenv("NOCRY_RUN");
 	signal(SIGPIPE, SIG_IGN);
 	if (!sim) {
-		if (screen_open(fbdev, want_turn)) return 1;
-		i2c = open(i2cdev, O_RDWR);
+		if (screen_open(fbdev)) return 1;
+		i2c = open(i2cdev, O_RDWR | O_CLOEXEC);
 		if (i2c < 0 || ioctl(i2c, I2C_SLAVE, 0x48) < 0) { perror(i2cdev); i2c = -1; }
-		cal_load();
-	} else { cal_ok = 1; if (want_turn) { W = 272; H = 480; } }
+	}
+	kept = settings_load();
+	if (sim) cal_ok = 1;
+	turn = want_turn == 0 || want_turn == 90 || want_turn == 180 || want_turn == 270 ? want_turn : kept == 90 || kept == 180 || kept == 270 ? kept : 0;
+	if (turn == 90 || turn == 270) { W = PH; H = PW; } else { W = PW; H = PH; }
 	touch_log = getenv("NOCRY_UI_LOG") != NULL;
 
 	lv_init();

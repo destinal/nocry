@@ -490,10 +490,10 @@ index 000000000..571f91aa1
 +&mscaler1 { status = "disabled"; };
 diff --git a/module_drivers/dts/x2000/nocry_nebula_rescue.dts b/module_drivers/dts/x2000/nocry_nebula_rescue.dts
 new file mode 100644
-index 000000000..0427ed883
+index 000000000..be2e27b4b
 --- /dev/null
 +++ b/module_drivers/dts/x2000/nocry_nebula_rescue.dts
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,160 @@
 +/*
 + * nocry-rescue: the nocry recovery device tree for Creality "Nebula" boards plus what a
 + * touchscreen recovery needs: display, backlight, touch bus, Wi-Fi.
@@ -638,4 +638,19 @@ index 000000000..0427ed883
 +		interrupt-names = "host-wake";
 +		brcm,board-type = "AP6212";
 +	};
++};
++
++/*
++ * USB: one controller for the USB-C socket (the board is the device: adb, nocry over USB)
++ * and, through the board's switch, the A sockets (the board is the host: a flash drive).
++ * Pins as Creality's firmware and NebulaOS use them: PD17 is low while a computer supplies
++ * 5 V on the USB-C socket, PC9 switches the 5 V of the A sockets (PC10, the second enable,
++ * is driven by nocry-usb). nocry-usb chooses the role at run time (sw_switch_hsotg).
++ */
++&otg {
++	dr_mode = "otg";
++};
++&otg_phy {
++	ingenic,vbus-dete-gpio = <&gpd 17 GPIO_ACTIVE_LOW INGENIC_GPIO_NOBIAS>;
++	ingenic,drvvbus-gpio = <&gpc 9 GPIO_ACTIVE_HIGH INGENIC_GPIO_NOBIAS>;
 +};

@@ -5,8 +5,8 @@
  * usage: nocry-banner [--fb DEV] [--raw FILE WIDTH HEIGHT] LINE...
  *   A line starting with "#" is drawn double size; "" leaves a gap.
  *   --raw writes a 32-bit picture to a file instead (for testing on a PC).
- *   The 480x272 panel of the Nebula Pad family is written upright (272 wide), turned the same
- *   way as the boot logo and the touch interface.
+ *   $NOCRY_TURN (0, 90, 180 or 270) turns the text the way the touch interface is turned;
+ *   without it the screen is used as it is.
  */
 #include <fcntl.h>
 #include <stdint.h>
@@ -19,13 +19,15 @@
 #include <linux/fb.h>
 #include "font.h"
 
-static uint8_t *px; static int W, H, BPP, STRIDE, TURN;	/* W, H: as the text sees the screen */
+static uint8_t *px; static int W, H, BPP, STRIDE, TURN;	/* W, H: as the text sees the screen; TURN: degrees */
 
 static void put(int x, int y, uint32_t rgb)
 {
 	uint8_t *p;
 	if (x < 0 || y < 0 || x >= W || y >= H) return;
-	if (TURN) { int t = x; x = y; y = W - 1 - t; }
+	if (TURN == 90) { int t = x; x = y; y = W - 1 - t; }
+	else if (TURN == 180) { x = W - 1 - x; y = H - 1 - y; }
+	else if (TURN == 270) { int t = x; x = H - 1 - y; y = t; }
 	p = px + y * STRIDE + x * BPP;
 	if (BPP == 4) { p[0] = rgb; p[1] = rgb >> 8; p[2] = rgb >> 16; p[3] = 0xff; }
 	else { uint16_t v = ((rgb >> 19) & 31) << 11 | ((rgb >> 10) & 63) << 5 | ((rgb >> 3) & 31); p[0] = v; p[1] = v >> 8; }
@@ -58,7 +60,9 @@ int main(int argc, char **argv)
 		fd = open(fb, O_RDWR);
 		if (fd < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &v) || ioctl(fd, FBIOGET_FSCREENINFO, &f)) { perror(fb); return 1; }
 		W = v.xres; H = v.yres; BPP = v.bits_per_pixel / 8;
-		if (W == 480 && H == 272) { TURN = 1; W = 272; H = 480; } STRIDE = f.line_length; size = (size_t)STRIDE * v.yres_virtual;
+		TURN = getenv("NOCRY_TURN") ? atoi(getenv("NOCRY_TURN")) : 0;
+		if (TURN == 90 || TURN == 270) { int t = W; W = H; H = t; } else if (TURN != 180) TURN = 0;
+		STRIDE = f.line_length; size = (size_t)STRIDE * v.yres_virtual;
 		if (BPP != 4 && BPP != 2) { fprintf(stderr, "nocry-banner: %d bits per pixel not supported\n", v.bits_per_pixel); return 1; }
 		px = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 		if (px == MAP_FAILED) { perror("mmap"); return 1; }

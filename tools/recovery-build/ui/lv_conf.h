@@ -45,7 +45,8 @@ uint32_t nocry_ui_ms(void);
 #define LV_USE_TABVIEW 0
 #define LV_USE_TILEVIEW 0
 #define LV_USE_WIN 0
-#define LV_USE_CANVAS 0
+#define LV_USE_CANVAS 1			/* the QR code is drawn on one */
+#define LV_USE_QRCODE 1
 #define LV_USE_ARC 1			/* the spinner is one */
 #define LV_USE_TABLE 0
 #define LV_USE_ROLLER 0

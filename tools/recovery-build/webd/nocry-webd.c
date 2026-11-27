@@ -430,7 +430,6 @@ static void page_repair(struct buf *b)
 			 "<form method=post action=/check><input type=hidden name=which value=settings><button class=q>Check rootfs_data (fsck)</button></form></div>"
 			 "<div class=c><h2>Factory reset</h2>"
 			 "<p>Erases rootfs_data and userdata: all settings and files. The firmware in both slots and the serial number are preserved. "
-			 "A rescue image stored on userdata is erased too; reinstall it from a computer afterwards. "
 			 "Back up first: <a href=/files>Files</a>.</p>"
 			 "<form method=post action=/reset><input type=hidden name=kind value=all><button class=d>Factory reset</button></form></div>");
 	}
@@ -880,7 +879,6 @@ static void serve(int s)
 		if (!yes[0]) {
 			page_confirm(&b, all ? "Factory reset?" : "Wipe system overlay?",
 				     all ? "Erases rootfs_data and userdata: all settings and files (Wi-Fi settings, print history, uploaded files, calibration, the printer configuration). "
-					   "A rescue image stored on userdata is erased too; reinstall it from a computer afterwards. "
 					   "This cannot be undone. The firmware in both slots and the serial number are preserved."
 					 : "Erases rootfs_data: all changes to the root file system (installed mods and helper scripts, changed system files). "
 					   "This cannot be undone. userdata (files, print history, printer configuration) is preserved.",

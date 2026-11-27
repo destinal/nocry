@@ -13,10 +13,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # the board's own repair actions, in the recovery and in the rescue system alike: nocry on a
 # computer reaches them through the service (nocry-do), the rescue pages run them directly
 chmod 755 "$T/usr/sbin/nocry-rescue-do"
-# where a file's blocks are, for the loader's note about the rescue system; the touch pressure
-"$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-extent" "$HERE/tools/nocry-extent.c"
+# storing and checking the copies of the rescue system the loader starts; the touch pressure
+rm -f "$T/usr/sbin/nocry-extent"      # its predecessor, left in an older build tree
+"$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-rescue-copy" "$HERE/tools/nocry-rescue-copy.c"
 "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-touch" "$HERE/tools/nocry-touch.c"
-"$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-extent" "$T/usr/sbin/nocry-touch"
+"$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-rescue-copy" "$T/usr/sbin/nocry-touch"
 
 # nocry-rescue only (its system has the Wi-Fi tools): the network service and the status screen
 if [ -e "$T/usr/sbin/wpa_supplicant" ]; then
@@ -24,6 +25,15 @@ if [ -e "$T/usr/sbin/wpa_supplicant" ]; then
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-banner" "$HERE/screen/nocry-banner.c"
   "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-webd" "$HERE/webd/nocry-webd.c"
   "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-netd" "$T/usr/sbin/nocry-banner" "$T/usr/sbin/nocry-webd"
+  # USB flash drives: mounting them (nocry-usb), and images of the storage to and from one
+  chmod 755 "$T/usr/sbin/nocry-usb" "$T/usr/sbin/nocry-remote"
+  # remote access is the owner's to turn on (nocry-remote): SSH does not start by itself, and
+  # the relay that opens adb to the network runs only then
+  rm -f "$T/etc/init.d/S50dropbear"
+  "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -o "$T/usr/sbin/nocry-relay" "$HERE/tools/nocry-relay.c"
+  "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-relay"
+  "$HOST_DIR/bin/mipsel-linux-gcc" -O2 -Wall -Wno-deprecated-declarations -o "$T/usr/sbin/nocry-image" "$HERE/tools/nocry-image.c" -lcrypto
+  "$HOST_DIR/bin/mipsel-linux-strip" "$T/usr/sbin/nocry-image"
   # the touch interface, on LVGL (MIT; fetched by build.sh). The library's objects are kept
   # between builds: they only change with the library or its settings.
   if [ -d /w/lvgl/src ]; then

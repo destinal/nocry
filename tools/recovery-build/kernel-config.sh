@@ -38,4 +38,8 @@ if [ "${2:-}" = rescue ]; then
   # Wi-Fi: BCM43438 over SDIO, built in (the firmware comes from the initramfs)
   $C -e CFG80211 -e BRCMFMAC -e BRCMFMAC_SDIO -e PWRSEQ_SIMPLE -e REGULATOR_FIXED_VOLTAGE -d CFG80211_REQUIRE_SIGNED_REGDB
   $C -e PACKET -e INET -e IPV6
+  # one controller, two uses: device for a computer on the USB-C socket, host for a flash
+  # drive in an A socket (nocry-usb decides); the file systems such drives carry
+  $C -d USB_DWC2_PERIPHERAL -d USB_DWC2_HOST -e USB_DWC2_DUAL_ROLE -e USB_STORAGE -e SCSI -e BLK_DEV_SD
+  $C -e EXFAT_FS --set-str EXFAT_DEFAULT_IOCHARSET utf8 -e NTFS3_FS -e FAT_DEFAULT_UTF8 -e NLS_UTF8 -e MSDOS_PARTITION -e DEBUG_FS
 fi

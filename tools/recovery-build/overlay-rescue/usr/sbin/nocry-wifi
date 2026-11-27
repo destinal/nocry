@@ -3,11 +3,18 @@
 #
 #   nocry-wifi auto                 at start: join the network the installed firmware saved,
 #                                   else open the board's own network
-#   nocry-wifi ap                   open the board's own network "nocry"
+#   nocry-wifi ap                   open the board's own network: "nocry" with the password
+#                                   "nocry111", or the name and password the owner set on the
+#                                   touch screen (kept with its settings; no password = open)
 #   nocry-wifi join SSID [PASSWORD] join a network; back to the own network if that fails
+#   nocry-wifi join SSID PASSWORD static ADDRESS MASK [GATEWAY [DNS]]
+#                                   the same with a fixed address instead of asking the network
+#                                   for one (PASSWORD "" for an open network; "" skips a field)
+#   nocry-wifi off                  leave the network and keep the radio off (until a network is
+#                                   chosen, the own network is opened, or the board restarts)
 #   nocry-wifi rejoin               join the last network again
 #   nocry-wifi scan                 networks in range, strongest first: "signal<TAB>lock<TAB>name"
-#   nocry-wifi status               mode=ap|client|none, ssid=, address=, source=
+#   nocry-wifi status               mode=ap|client|off|none, ssid=, address=, source=, addressing=dhcp|static
 #   nocry-wifi saved                where a saved network was found, and its names
 #
 # The board has one radio: it is either its own access point or a client, never both. The own
@@ -33,10 +40,22 @@ log() {
     echo "$(cut -d' ' -f1 /proc/uptime) $*" >> $RUN/nocry-wifi.log
 }
 
-HINT=
+HINT=; ADDRESSING=
 state() {   # state MODE SSID ADDRESS SOURCE
     pw=; [ "$1" = ap ] && pw=$AP_PASS      # the own network's password is public and shown on the screen
-    printf 'mode=%s\nssid=%s\naddress=%s\nsource=%s\nhint=%s\npassword=%s\n' "$1" "$2" "$3" "$4" "$HINT" "$pw" > $STATE.new && mv $STATE.new $STATE
+    printf 'mode=%s\nssid=%s\naddress=%s\nsource=%s\nhint=%s\npassword=%s\naddressing=%s\n' "$1" "$2" "$3" "$4" "$HINT" "$pw" "$ADDRESSING" > $STATE.new && mv $STATE.new $STATE
+}
+
+# A fixed address for the network being joined, for networks without a DHCP server: kept in
+# $RUN/nocry-sta.static (address, mask, gateway, DNS: one line each) beside the network itself.
+STATIC=$RUN/nocry-sta.static
+quad() {    # is $1 four numbers 0-255 with dots?
+    echo "$1" | awk -F. 'NF != 4 { exit 1 } { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i > 255) exit 1 }'
+}
+prefix() {  # 255.255.255.0 -> 24; nothing for a mask with holes
+    echo "$1" | awk -F. '{ n = 0; done = 0
+        for (i = 1; i <= 4; i++) { v = $i; for (b = 128; b >= 1; b /= 2) { if (v >= b) { if (done) exit 1; n++; v -= b } else done = 1 } }
+        print n }'
 }
 
 part() {    # device of the partition named $1
@@ -88,7 +107,20 @@ do_scan() {
     cat $RUN/nocry-scan 2>/dev/null
 }
 
+# the owner's own name and password for the board's network, if set (nocry-ui keeps them in
+# its settings: "ap_ssid NAME" and "ap_pass PASSWORD" lines; an empty password = an open network)
+ap_settings() {
+    f=$RUN/nocry-touch.cal
+    n=$(sed -n 's/^ap_ssid //p' $f 2>/dev/null | head -1)
+    [ -n "$n" ] || return 0
+    AP_SSID=$n
+    p=$(sed -n 's/^ap_pass //p' $f 2>/dev/null | head -1)
+    case "$p" in *'"'*) return 0 ;; esac
+    if [ ${#p} -eq 0 ] || { [ ${#p} -ge 8 ] && [ ${#p} -le 63 ]; }; then AP_PASS=$p; fi
+}
+
 start_ap() {
+    ap_settings
     radio_down
     set_mac
     [ -e /sys/class/net/$IF ] || { state none "" "" ""; return 1; }
@@ -96,13 +128,10 @@ start_ap() {
     cat > $RUN/nocry-ap.conf <<CONF
 ctrl_interface=$CTRL
 network={
-    ssid="$AP_SSID"
+    ssid=$(hex "$AP_SSID")
     mode=2
     frequency=2437
-    key_mgmt=WPA-PSK
-    proto=RSN
-    pairwise=CCMP
-    psk="$AP_PASS"
+$(if [ -n "$AP_PASS" ]; then printf '    key_mgmt=WPA-PSK\n    proto=RSN\n    pairwise=CCMP\n    psk="%s"\n' "$AP_PASS"; else echo "    key_mgmt=NONE"; fi)
 }
 CONF
     wpa_supplicant -B -i $IF -D nl80211 -c $RUN/nocry-ap.conf >/dev/null 2>&1
@@ -140,8 +169,18 @@ join_conf() {
         return 1
     fi
     ssid=$(wpa_cli -p $CTRL -i $IF status 2>/dev/null | sed -n 's/^ssid=//p')
-    udhcpc -i $IF -n -q -t 8 -T 2 >/dev/null 2>&1 || { log "joined $ssid but got no address from it"; return 1; }
-    udhcpc -i $IF -b -S >/dev/null 2>&1     # keep the lease alive
+    if [ -s $STATIC ]; then
+        { read -r s_addr; read -r s_mask; read -r s_gw; read -r s_dns; } < $STATIC
+        ip addr flush dev $IF 2>/dev/null
+        ip addr add "$s_addr/$(prefix "$s_mask")" dev $IF 2>/dev/null || { log "joined $ssid but could not set the address $s_addr"; return 1; }
+        if [ -n "$s_gw" ]; then ip route replace default via "$s_gw" dev $IF 2>/dev/null || log "the gateway $s_gw is not in the address's network; no route beyond it"; fi
+        [ -n "$s_dns" ] && echo "nameserver $s_dns" > /etc/resolv.conf
+        ADDRESSING=static
+    else
+        udhcpc -i $IF -n -q -t 8 -T 2 >/dev/null 2>&1 || { log "joined $ssid but got no address from it (no DHCP server? a fixed address can be set)"; return 1; }
+        udhcpc -i $IF -b -S >/dev/null 2>&1     # keep the lease alive
+        ADDRESSING=dhcp
+    fi
     addr=$(ip -4 addr show dev $IF | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
     [ -n "$addr" ] || return 1
     state client "${ssid:-$2}" "$addr" "$3"
@@ -186,6 +225,7 @@ case "$1" in
     i=0; while [ ! -e /sys/class/net/$IF ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
     [ -e /sys/class/net/$IF ] || { state none "" "" ""; log "no Wi-Fi found"; exit 1; }
     set_mac; do_scan >/dev/null
+    rm -f $STATIC
     if saved_conf > $RUN/nocry-sta.conf 2>/dev/null; then
         n=$(names $RUN/nocry-sta.conf)
         log "the installed firmware has a saved network ($n); joining it"
@@ -194,9 +234,22 @@ case "$1" in
     rm -f $RUN/nocry-sta.conf
     start_ap fallback ;;
   ap)
-    locked; rm -f $RUN/nocry-sta.conf; start_ap chosen ;;
+    locked; rm -f $RUN/nocry-sta.conf $STATIC; start_ap chosen ;;
+  off)
+    locked; rm -f $RUN/nocry-sta.conf $STATIC
+    was=$(sed -n 's/^ssid=//p' $STATE 2>/dev/null)
+    radio_down; killall -q mdnsd 2>/dev/null
+    state off "" "" chosen
+    log "Wi-Fi off (was: $was)" ;;
   join)
-    [ -n "$2" ] || { echo "usage: nocry-wifi join SSID [PASSWORD]" >&2; exit 2; }
+    [ -n "$2" ] || { echo "usage: nocry-wifi join SSID [PASSWORD [static ADDRESS MASK [GATEWAY [DNS]]]]" >&2; exit 2; }
+    if [ -n "$4" ]; then
+        [ "$4" = static ] || { echo "usage: nocry-wifi join SSID PASSWORD static ADDRESS MASK [GATEWAY [DNS]]" >&2; exit 2; }
+        quad "$5" || { echo "the IP address must be four numbers from 0 to 255, like 192.168.1.50" >&2; exit 2; }
+        quad "$6" && [ -n "$(prefix "$6")" ] || { echo "the subnet mask is not valid (for example 255.255.255.0)" >&2; exit 2; }
+        [ -z "$7" ] || quad "$7" || { echo "the gateway must be four numbers from 0 to 255, or empty" >&2; exit 2; }
+        [ -z "$8" ] || quad "$8" || { echo "the DNS server must be four numbers from 0 to 255, or empty" >&2; exit 2; }
+    fi
     n=${#3}
     if [ $n -ne 0 ] && { [ $n -lt 8 ] || [ $n -gt 63 ]; }; then echo "a Wi-Fi password has 8 to 63 characters" >&2; exit 2; fi
     case "$3" in *'"'*) echo "a password with a double quote is not supported here" >&2; exit 2 ;; esac
@@ -216,8 +269,9 @@ case "$1" in
         echo "}"
     } > $RUN/nocry-sta.conf
     chmod 600 $RUN/nocry-sta.conf
+    if [ -n "$4" ]; then printf '%s\n%s\n%s\n%s\n' "$5" "$6" "$7" "$8" > $STATIC; else rm -f $STATIC; fi
     if join_conf $RUN/nocry-sta.conf "$2" chosen; then exit 0; fi
-    rm -f $RUN/nocry-sta.conf
+    rm -f $RUN/nocry-sta.conf $STATIC
     start_ap "failed:$2"
     exit 1 ;;
   rejoin)     # the network chosen or found last, again (after the radio was restarted)

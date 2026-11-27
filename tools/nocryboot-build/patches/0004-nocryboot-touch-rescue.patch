@@ -1,13 +1,14 @@
 nocryboot: hold the screen at power-on to start the rescue system
 
 The Nebula Pad build reads the touch chip once at start (NS2009, I2C bit-banged on PC25/PC26).
-If the screen is pressed it loads the rescue system, a Linux kernel kept as a file on the data
-partition, from the sector runs noted in the third sector of "ota", checks it against the sum
-noted there, and starts it with nocry.rescue=touch. Anything missing or wrong and the board
-starts as always. Version 0.2.
+If the screen is pressed it looks for the rescue system, a Linux kernel as a uImage, in the
+last 32 MiB of each root file system partition (the slot that would start first, then the
+other), checks the header and the contents against the CRCs in the header, and starts it with
+nocry.rescue=touch. Anything missing or wrong and the board starts as always. Version 0.3
+(0.2 took the place of the image from a note in "ota" and read a file on the data partition).
 ---
 diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
-index 6e6d88620..686321199 100644
+index 6e6d88620..df09ac63a 100644
 --- a/common/spl/spl_jzsdhci.c
 +++ b/common/spl/spl_jzsdhci.c
 @@ -2065,6 +2065,7 @@ void spl_mmc_mcu_rtos_boot(void)
@@ -18,74 +19,68 @@ index 6e6d88620..686321199 100644
  extern const char nocryboot_ident[];
  
  /*
-@@ -2216,6 +2217,76 @@ static int nocryboot_slot_state(int slot_b)
+@@ -2216,6 +2217,70 @@ static int nocryboot_slot_state(int slot_b)
   *     nocryboot:incomplete=B    parts missing, left it
   *     nocryboot:unconfirmed=B   never reported success, but nothing else to start
   */
 +#ifdef CONFIG_NOCRYBOOT_TOUCH
 +/*
-+ * The rescue system: a Linux kernel with its files built in, kept as a file on the data
-+ * partition.  The SPL cannot read a file system, so whoever puts the file there notes in
-+ * the third sector of "ota" where its blocks are:
-+ *
-+ *     nocryboot:rescue:<sum> <sector>+<count> <sector>+<count> ...
-+ *
-+ * all in hexadecimal: the runs of 512-byte sectors that make up the file, in order, and the
-+ * sum of all its 32-bit words.  The file is a uImage named "nocry-rescue...", a Linux kernel
-+ * that needs no unpacking by the loader.  If the note is missing, or what the runs hold is
-+ * not that file any more (moved, deleted, overwritten: the sum is wrong), this returns and
-+ * the board starts as always.  Otherwise it does not return.
++ * The rescue system: a Linux kernel with its files built in.  It is kept where nothing else
++ * writes: in the last 32 MiB of each of the two root file system partitions, far behind the
++ * end of any system image, so that an update of the firmware, a factory reset and a damaged
++ * data partition all leave it alone.  Each copy is a plain uImage named "nocry-rescue...",
++ * a kernel that needs no unpacking by the loader.  A copy is started only if the checksums
++ * of its header and of its contents are right; the copy in the slot that would start is
++ * tried first, then the other.  If neither is good this returns and the board starts as
++ * always.
 + */
 +#define NB_SCRATCH	0x8f000000	/* far above anything loaded */
++#define NB_RESCUE_ROOM	(32 << 11)	/* sectors */
 +
-+static u32 nb_hex(char **p)	/* the next number of the note; 0 at its end */
++static u32 nb_crc(const u32 *table, const u8 *p, u32 len)
 +{
-+	u32 v = 0;
-+	int d, any = 0;
-+	char c;
++	u32 c = ~0;
 +
-+	for (;; (*p)++) {
-+		c = **p;
-+		d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-+		if (d < 0) {
-+			if (any || c < ' ')
-+				return v;
-+			continue;
-+		}
-+		v = v << 4 | d;
-+		any = 1;
-+	}
++	while (len--)
++		c = table[(c ^ *p++) & 0xff] ^ (c >> 8);
++	return ~c;
 +}
 +
-+static void nocryboot_rescue(unsigned int ota)
++static void nocryboot_rescue_at(const char *name)
 +{
-+	char *note = (char *)NB_SCRATCH, *p = note + 17;
-+	struct image_header *ih = (struct image_header *)(NB_SCRATCH + 512);
-+	u32 want, sector, count, sum = 0, *first, *dst, *w;
++	struct image_header *ih = (struct image_header *)NB_SCRATCH;
++	u32 *table = (u32 *)(NB_SCRATCH + 512), *dst;
++	unsigned int sector, size, count, n;
++	u32 len, c, hcrc;
++	int i, k;
 +
-+	if (mmc_block_read(ota + 2, 1, (u32 *)note) < 0 || strncmp(note, "nocryboot:rescue:", 17))
++	if (spl_get_built_in_gpt_partition(name, &sector, &size) || size < NB_RESCUE_ROOM)
 +		return;
-+	note[511] = 0;
-+	want = nb_hex(&p);
-+	sector = nb_hex(&p);
-+	count = nb_hex(&p);
-+	if (!sector || mmc_block_read(sector, 1, (u32 *)ih) < 0 ||
-+	    image_get_magic(ih) != IH_MAGIC || image_get_os(ih) != IH_OS_LINUX ||
-+	    image_get_comp(ih) != IH_COMP_NONE || strncmp((char *)ih->ih_name, "nocry-rescue", 12))
++	sector += size - NB_RESCUE_ROOM;
++	if (mmc_block_read(sector, 1, (u32 *)ih) < 0 ||
++	    image_get_magic(ih) != IH_MAGIC || strncmp((char *)ih->ih_name, "nocry-rescue", 12))
 +		return;
-+	first = dst = (u32 *)(image_get_load(ih) - sizeof(*ih));
-+	spl_image.entry_point = image_get_ep(ih);
-+	while (sector && count) {
-+		if (count > 0xffff || dst + count * 128 > (u32 *)0x88000000 ||
-+		    mmc_block_read(sector, count, dst) < 0)
-+			return;
-+		dst += count * 128;
-+		sector = nb_hex(&p);
-+		count = nb_hex(&p);
++	for (i = 0; i < 256; i++) {
++		for (c = i, k = 0; k < 8; k++)
++			c = c & 1 ? c >> 1 ^ 0xedb88320 : c >> 1;
++		table[i] = c;
 +	}
-+	for (w = first; w < dst; w++)
-+		sum += *w;
-+	if (sum != want)
++	hcrc = image_get_hcrc(ih);
++	ih->ih_hcrc = 0;
++	len = image_get_size(ih);
++	dst = (u32 *)(image_get_load(ih) - sizeof(*ih));
++	count = (len + sizeof(*ih) + 511) / 512;
++	if (nb_crc(table, (u8 *)ih, sizeof(*ih)) != hcrc || count > NB_RESCUE_ROOM ||
++	    (u32)dst < 0x80100000 || (u32)dst > 0x86000000)
++		return;
++	spl_image.entry_point = image_get_ep(ih);
++	c = image_get_dcrc(ih);
++	for (ih = (struct image_header *)dst; count; count -= n, sector += n, dst += n * 128) {
++		n = count > 0x8000 ? 0x8000 : count;
++		if (mmc_block_read(sector, n, dst) < 0)
++			return;
++	}
++	if (nb_crc(table, (u8 *)(ih + 1), len) != c)
 +		return;
 +	puts("nocryboot: screen held; rescue\n");
 +	jump_to_image_linux("nocry.rescue=touch");
@@ -95,21 +90,21 @@ index 6e6d88620..686321199 100644
  static char *nocryboot_load(void)
  {
  	char *buf = (char *)CONFIG_SYS_TEXT_BASE;
-@@ -2230,6 +2301,14 @@ static char *nocryboot_load(void)
- 	/* test build: checks that the boot ROM honours the request */
- 	nocryboot_usb_boot_mode("door test");
- #endif
+@@ -2234,6 +2299,14 @@ static char *nocryboot_load(void)
+ 	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, (u32 *)buf) &&
+ 	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
+ 		slot = 1;
 +#ifdef CONFIG_NOCRYBOOT_TOUCH
 +	/* the screen held at power-on asks for the rescue system */
 +	if (nocryboot_touch_held()) {
-+		spl_get_built_in_gpt_partition(CONFIG_SPL_OTA_NAME, &ota, NULL);
-+		nocryboot_rescue(ota);
++		nocryboot_rescue_at(slot ? "rootfs2" : "rootfs");
++		nocryboot_rescue_at(slot ? "rootfs" : "rootfs2");
 +		puts("nocryboot: screen held, but no rescue system\n");
 +	}
 +#endif
  
- 	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, (u32 *)buf) &&
- 	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
+ 	spl_get_built_in_gpt_partition(CONFIG_SPL_OTA_NAME, &ota, NULL);
+ 	memset(buf, 0, 512);
 diff --git a/common/spl/spl_nocryboot.c b/common/spl/spl_nocryboot.c
 index bc17057ed..9f0476129 100644
 --- a/common/spl/spl_nocryboot.c
@@ -180,7 +175,7 @@ index bc17057ed..9f0476129 100644
   * Someone at the serial console asking for the door: at least three ESC
   * characters, and nothing else, received since the console came up.
 diff --git a/include/configs/nocryboot.h b/include/configs/nocryboot.h
-index 3eda3a42f..8fab27be8 100644
+index 3eda3a42f..aa20666ee 100644
 --- a/include/configs/nocryboot.h
 +++ b/include/configs/nocryboot.h
 @@ -21,7 +21,7 @@
@@ -188,7 +183,7 @@ index 3eda3a42f..8fab27be8 100644
  #define NOCRYBOOT_VERSION	"0.1-doortest"	/* never installed: it only opens the door */
  #else
 -#define NOCRYBOOT_VERSION	"0.1"
-+#define NOCRYBOOT_VERSION	"0.2"
++#define NOCRYBOOT_VERSION	"0.3"
  #endif
  
  #define CONFIG_ROOTFS_SQUASHFS

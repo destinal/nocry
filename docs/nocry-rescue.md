@@ -1,5 +1,7 @@
 # nocry-rescue: design
 
+*A short introduction is in [`tools/recovery-build/README.md`](../tools/recovery-build/README.md); this file is the design notes and the bring-up log.*
+
 Status: design, 2026-11-27. Nothing is built yet. Decisions marked **decided** were made with the project owner.
 
 ## Goal
@@ -16,28 +18,21 @@ It needs nocryboot as the board's loader. USB boot mode stays the last resort be
 
 | Topic | Decision |
 |---|---|
-| Where it lives | **decided:** one file in `userdata`, not a partition. No repartitioning. |
-| How the loader finds it | a pointer (start sector, length, checksum) in a spare sector of `ota`; the loader reads raw sectors and checks them before starting anything |
-| Losing it | **decided, accepted for now:** a factory reset erases `userdata` and with it the file. A reset done by nocry or by rescue puts it back; after a reset from Creality's menu it is gone until nocry reinstalls it. A dedicated partition would survive; possible later. |
-| Starting it | finger on the screen at power-on (the nocryboot loader reads the touch chip), then a 3-second hold with a count, drawn by the rescue system itself; automatically when no slot can be started; on request (a one-shot note in `ota`) |
+| Where it lives | **decided (changed 2026-11-27):** two copies, in the last 32 MiB of `rootfs` and of `rootfs2`, behind the system images. No repartitioning. Before: one file in `userdata`. |
+| How the loader finds it | at those two fixed places; it checks the header and the contents against the CRCs in the uImage header before starting anything (`docs/nocryboot.md`) |
+| Losing it | firmware updates, factory resets (Creality's and nocry's) and a formatted data partition leave the copies alone. A restore of a full backup, erasing the storage, or Ingenic's Cloner removes them; nocry stores them again. |
+| Starting it | finger on the screen at power-on (the nocryboot loader reads the touch chip), nothing more to hold (a 3-second count was dropped again); automatically when no slot can be started; on request (a one-shot note in `ota`) |
 | USB keyboard as trigger | not possible: the loader has no USB stack and about 1.6 KB of room |
 | First version | **decided:** Nebula Pad first. Network setup, slot choice, factory reset, start normally, control from nocry over the LAN. |
 | Firmware install from the touchscreen | **decided:** second step (needs nocry's install engine built for the board) |
 | LAN access | proposed: pairing code shown on the touchscreen, typed into nocry on the PC; discovery by mDNS |
 | Interface | **built:** `nocry-ui`, its own small program (GPL-2.0-or-later) on LVGL 8.3 (MIT), drawing into the frame buffer and reading the touch chip itself; every action is a `nocry-rescue-do` / `nocry-wifi` command, the same ones the web pages use |
 
-## Why a file and a pointer
+## Where there is room
 
-Rescue with a touch interface, Wi-Fi and its firmware is estimated at 20 to 40 MiB. The first partitions have no such room: `ota` and `sn_mac` are 1 MiB each, the `rtos` partitions 4 MiB each (nocry's boot logo program is 32 KB, so they are nearly empty, but that is still under 8 MiB together), and each `kernel` partition has about 4 MiB to spare.
+Rescue with a touch interface, Wi-Fi and its firmware is 17 MiB. The first partitions have no such room: `ota` and `sn_mac` are 1 MiB each, the `rtos` partitions 4 MiB each, and each `kernel` partition has about 4 MiB to spare.
 
-`userdata` has gigabytes, but it is an ext4 file system and nocryboot's first stage cannot read one. It does not have to:
-
-1. nocry (from the recovery system) writes the rescue image as a single unfragmented file, `nocry-rescue.img`, and sets it immutable, so the firmware does not move or delete it.
-2. nocry asks the file system for the file's physical place (FIEMAP), refuses anything but one extent, and writes into sector 2 of `ota`:
-   `nocryboot:rescue=<start sector>:<sectors>:<crc32>`
-3. nocryboot, when rescue is wanted, loads those sectors like a kernel image (it is a uImage), checks the checksum, and starts it. A failed check means "no rescue": it goes on to the normal start or to USB boot mode.
-
-The loader never writes there and never trusts the pointer without the checksum, so a stale pointer after a factory reset is harmless.
+The two root file system partitions are 500 MiB each and a system image takes 105 to 158 MiB of one, so over 340 MiB at the end of each is never written by the firmware or its updater. The last 32 MiB of each hold a copy of the rescue image, as raw sectors: the loader needs no file system and no pointer. The first design kept one file in `userdata` with a pointer in `ota`; it went with every factory reset.
 
 ## Starting it
 
@@ -91,18 +86,40 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 
 ### As built (`tools/recovery-build/ui/nocry-ui.c`)
 
-- Home: six tiles (Wi-Fi, Firmware slots, Install firmware, Repair, About this board, Start the printer), the network and address underneath, the pairing code top right on every screen.
-- Wi-Fi: scan, choose, type the password on an on-screen keyboard, join; back to the board's own network; save the network for the installed firmware.
+- Home: eight tiles (Wi-Fi, Slots, Install firmware, USB drive, Advanced, System info, Eject drive, Reboot; Advanced holds Repair and Remote access), the network and address underneath, the pairing code top right on every screen. Eject drive is greyed out while no flash drive is mounted.
+- Wi-Fi: scan, choose, type the password on an on-screen keyboard, join; a fixed address instead of DHCP ("Static IP": address, subnet mask 255.255.255.0 and DNS 8.8.8.8 filled in, gateway and DNS optional); disconnect from the network and stay off it; the board's own access point with a name and password of the owner's choosing (kept; an empty password makes it open; "nocry" / "nocry111" otherwise), a QR code a phone joins it from, and a way to turn it off; save the network for the installed firmware. Wi-Fi turned off lasts until a network is chosen, the access point is started, or the board restarts.
 - Slots: what is in A and B, which one starts, switch, copy one over the other.
+- Long work with a measurable size shows the speed and the time left for the step that is running, from the last twenty seconds.
 - Install firmware: the list for this board (refreshed from the internet on request), into the starting slot or the other one; downloaded and checked first, then a summary to confirm.
 - Repair: check either file system, storage health, remove system modifications, factory reset.
 - Long work shows a progress bar and a Stop button that says what stopping leaves behind. Anything that erases asks first.
-- Touch calibration: three crosses, once; kept next to the rescue image on the data partition. Holding a finger anywhere for ten seconds starts it again, so a wrong calibration cannot lock anyone out.
-- Which way up: on the 480x272 panel of the Nebula Pad and the printers built on it the interface is upright (272 wide, 480 high), turned the same way as the boot logo; the keyboard there has ten tall keys per row. A wide layout exists for panels meant to be wide (the K1 family, once its panel and touch chip are supported). `--turn 0|90|270` overrides.
+- USB drive (below): back up and restore the storage or single partitions, install a firmware file from the drive, eject.
+- Touch calibration: three crosses, once; kept in the last 4 KiB of the room that holds the rescue image, with the turn and the eject setting, so it survives what the image survives. It is worked out for the panel, not for one way up. Holding a finger anywhere for ten seconds starts it again, so a wrong calibration cannot lock anyone out.
+- Which way up: the panel is used as it is, wide (480x272 on the Nebula Pad), which is how most NebulaOS owners have theirs. A button with the usual rotate-right arrow turns the interface a quarter turn clockwise each time (one press from wide to the usual upright) (wide, upright, and both the other way round); it sits in one corner of the glass, top right when wide and bottom right when upright. The turn is kept, and the count at start and the text screens follow it. The upright keyboard has ten tall keys per row. `--turn 0|90|180|270` overrides.
 - The pressure reading of the touch chip depends on where the finger is, not only on how hard it presses: towards one edge it stays low (a back button in a corner did not react with a bar of 500). The interface takes 150 as pressed and 80 as let go; untouched reads 0.
 - `nocry-ui --sim SCRIPT` runs it on a PC without screen or touch chip (taps from a script, pictures to files, commands from `$PATH`): how the screens were checked before they ran on a board.
 
 Not on the screen yet: uploading a firmware file (web pages only), boot loader and boot logo changes, files and logs.
+
+### Remote access (Advanced > Remote access; `nocry-remote`; written 2026-11-27, not yet run on a board)
+
+Three ways in over the network, all off unless the owner turns them on at the touch screen; what is on is kept with the settings and applied at the next start.
+
+- **nocry over the network** (`nocry-netd`, port 5560, pairing code). It used to start by itself; since 2026-11-27 it does not. The web pages are not part of this: they are always there, behind the pairing code, which `nocry-remote` makes when `nocry-netd` is not running.
+- **ADB over the network** (port 5555). The adbd in the image (Android 4.2) has no authentication and cannot be told at run time where to listen, so it is patched (`br-patches/android-tools`) to listen on 127.0.0.1:5554 beside USB, and `nocry-relay` opens port 5555 to the network only while this is on. The screen says plainly that whoever reaches the port is root.
+- **SSH** (dropbear, port 22, user root). The password is `Creality2023` unless the owner sets another one on the screen; root has a password only while SSH is on (the serial console asks for none otherwise). Host keys are made at the first connection and live in memory, so they change with every start.
+
+The plain recovery image (started over USB, no screen) has no Wi-Fi and none of this.
+
+### USB flash drives (`nocry-usb`, `nocry-image`; written 2026-11-27; mounting and a backup ran on a Nebula Pad powered through its accelerometer socket, the rest not yet)
+
+- **One controller, two uses.** The board has one USB controller. A computer on the USB-C socket supplies 5 V there, which the board sees on PD17; then the board is the USB device (adb, nocry over USB). Without it the board is the host: `nocry-usb` switches the role (`sw_switch_hsotg` of Ingenic's PHY driver) and the 5 V of the A sockets on (PC9, PC10). Pins and polarity are those of NebulaOS's device tree and of Creality's `usb_host_5v_enable.sh`. On a Nebula Pad powered through its USB-C socket the A sockets are dead (seen in NebulaOS too), so a flash drive needs the board powered through its ribbon cable, as it is on a printer. What `nocry-usb` decides is logged in `/run/nocry-usb.log`, which the log download includes.
+- **Mounting.** The largest partition of the drive (or the drive itself) that mounts as FAT, exFAT, NTFS (Linux's ntfs3) or ext, at `/run/nocry-usb`; read-write if the file system allows it (an NTFS volume Windows did not shut down cleanly mounts read-only, and backups are refused with that reason).
+- **Backup.** The whole eMMC or one partition, as a raw image with a `.sha256` beside it in `nocry-backups/` on the drive: the format of `nocry backup` on a computer. FAT32 holds no file of 4 GiB, so there an image is written in pieces (`.img.001`, `.img.002`, ...); the checksum is that of the pieces in a row (`cat` joins them). The file is read back from the drive and compared with the checksum before it counts. Names carry the model and the date (if the board is on a network that tells it) or a number, never the serial number.
+- **Restore.** Listed are images up to three folders deep whose size is that of the eMMC, or of the partition their name ends in (`...-rootfs2.img`). The image is checked against its checksum first; then only megabytes that differ are written, and everything is read back. A whole-storage image whose identity record differs from the board's is refused (that is a job for nocry on a computer), and so is restoring `sn_mac` alone. A good copy of the rescue image on the board is left as it is.
+- **Install.** Creality update files (`.img`) and factory packages (`.ingenic`) on the drive are listed and go through the same check, summary and install as a download; the file is read from the drive where it is.
+- **Format.** Whenever a drive is plugged in, mounted or not (no file system, or one that is not known): after a warning that names the drive and its size, a new partition table with one partition, as exFAT or FAT32, labelled NOCRY. Only ever a USB disk.
+- **Eject.** Writes everything out and unmounts. After a backup, a restore or an install from the drive the interface asks: Eject, Not now, or Don't ask again (kept). The drive is not mounted again until it has been pulled.
 
 ## Order of work
 

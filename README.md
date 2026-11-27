@@ -44,7 +44,8 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 - **Secure erase**: a factory reset that also destroys the old settings and files, using the storage chip's secure erase where it has one (it does on the Nebula Pad), then checks that every byte is zero. About 3 minutes.
 - **Board log**: read the recovery system's kernel log from the window or with `nocry boot-log`.
 - **Rebuild a blank board** from an update file or the list: the bootloader and partition table that update files lack are fetched once from Creality's factory package and checksum-verified.
-- **nocryboot**, an open replacement for the board's boot loader (Advanced, "Boot loader…", or `nocry loader`): built from public source, it does what Creality's does and adds a way out of trouble. If a firmware slot is damaged it starts the other one; if neither can be started it puts the board in USB boot mode by itself, so no BOOT button is needed to repair it. Creality's loader is kept on the board and can be put back. Tested on a Nebula Pad and a K1 mainboard. See `docs/nocryboot.md`.
+- **nocryboot**, an open replacement for the board's boot loader (Advanced, "Boot loader…", or `nocry loader`): built from public source, it does what Creality's does and adds a way out of trouble. If a firmware slot is damaged it starts the other one; if neither can be started it puts the board in USB boot mode by itself, so no BOOT button is needed to repair it. Creality's loader is kept on the board and can be put back. Tested on a Nebula Pad and a K1 mainboard. See [`tools/nocryboot-build`](tools/nocryboot-build/README.md).
+- **nocry-rescue**, recovery without a computer (Nebula Pad, with nocryboot): hold a finger on the screen while switching the board on and a small rescue system starts from the board's own storage, with a touch interface. It joins Wi-Fi or opens its own access point (with a QR code for a phone), installs firmware from the internet or from a USB flash drive, backs up and restores the storage to a flash drive, switches and copies slots, repairs file systems and resets, and can be reached by web pages, and by nocry over the network, adb or SSH once those are turned on at the screen. It is stored where firmware updates and factory resets do not reach (`nocry rescue --install`). See [`tools/recovery-build`](tools/recovery-build/README.md).
 - **Firmware on trial** (`nocry slots --set b --try 3`, needs nocryboot): the chosen slot gets a number of starts to come up; if it never does, the board returns to the other slot by itself.
 - **nocry boot logo**: the picture of the first seconds after power-on comes from nocry's own open program instead of Creality's (default when installing firmware on the Nebula Pad family; untick it to keep the Creality logo, or switch later under Advanced, "Boot logo…"). Creality's is kept on the board.
 - **Advanced**: back up, restore or erase a single partition; edit the serial number, MAC address and model; erase the entire storage.
@@ -61,11 +62,11 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 | `gui` | Qt 6 Widgets front end |
 | `tools/burner-build` | reproducible Docker build of the SPL and U-Boot stages (fastboot, USB disk) |
 | `rtos` | nocry-rtos, the open boot logo image (bare metal, no FreeRTOS) |
-| `tools/nocryboot-build` | reproducible build of nocryboot's first stage (SPL) for the eMMC |
+| `tools/nocryboot-build` | nocryboot, the open boot loader for the eMMC: [what it is and how it works](tools/nocryboot-build/README.md), reproducible build |
 | `tools/nocryboot-analysis`, `tools/rtos-analysis` | emulator harnesses that compare Creality's loader and boot logo image with ours, register access by register access |
 | `tools/rtos-build`, `rtos` | the boot logo program (source and build) |
 | `tools/get-images.sh`, `tools/build-images.sh` | download the board images above, or build all of them in one go |
-| `tools/recovery-build` | reproducible build of the recovery Linux (kernel patch, Buildroot config, `nocry-fbd`) |
+| `tools/recovery-build` | the recovery Linux and nocry-rescue (touch interface, Wi-Fi, web pages, flash drives): [what they are and how they fit together](tools/recovery-build/README.md), reproducible build |
 | `tools/splhdr` | generator for the SPL parameter header (DDR settings) |
 | `docs` | findings and design notes: USB boot protocol, `sn_mac`, `.ingenic` packages, restore logic, fastboot/recovery design, GUI plan, NebulaOS |
 

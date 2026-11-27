@@ -1,0 +1,63 @@
+#!/bin/sh
+# nocry-remote: the ways into the rescue system over the network that the owner can turn on
+# (touch screen: Advanced > Remote access). All are off unless turned on; what is on is kept
+# with the touch interface's settings and applied again at the next start.
+#
+#   nocry-remote apply     make what runs match the settings
+#   nocry-remote status    lan=on|off, adb=on|off, ssh=on|off (what is running now)
+#
+# The settings (lines in /run/nocry-touch.cal, written by nocry-ui):
+#   remote_lan on      nocry on a computer over the network (nocry-netd, port 5560; needs
+#                      the pairing code on the screen)
+#   remote_adb on      adb over the network, port 5555. This adbd asks for nothing: whoever
+#                      reaches the port is root on the board.
+#   remote_ssh on      SSH (dropbear, port 22), user root
+#   ssh_pass PASSWORD  root's password for it (Creality2023 if none is set)
+#
+# The web pages are not part of this: they are always there, behind the pairing code.
+
+RUN=${NOCRY_RUN:-/run}
+SET=$RUN/nocry-touch.cal
+CODE=$RUN/nocry-pair-code
+on() { grep -q "^remote_$1 on\$" $SET 2>/dev/null; }
+running() { pidof "$1" >/dev/null 2>&1; }
+
+apply() {
+    # nocry over the network. The pairing code is nocry-netd's while it runs; without it the
+    # web pages still need one.
+    if on lan; then
+        running nocry-netd || { nocry-netd --code-file $CODE 2>/dev/console & }
+    else
+        running nocry-netd && killall nocry-netd 2>/dev/null
+        [ -s $CODE ] || { tr -dc 0-9 < /dev/urandom | head -c 6 > $CODE.new && mv $CODE.new $CODE; }
+    fi
+    # adb: adbd listens on 127.0.0.1:5554 only; the relay opens it on 5555
+    if on adb; then
+        running nocry-relay || { nocry-relay 5555 5554 >/dev/null 2>&1 & }
+    else
+        running nocry-relay && killall nocry-relay 2>/dev/null
+    fi
+    # SSH. root has no password otherwise (the serial console asks for none); it gets one only
+    # while SSH is on. Host keys are made at the first connection and live in memory.
+    if on ssh; then
+        pw=$(sed -n 's/^ssh_pass //p' $SET 2>/dev/null | head -1); [ -n "$pw" ] || pw=Creality2023
+        h=$(mkpasswd -m sha512 "$pw" 2>/dev/null) || h=$(mkpasswd "$pw")
+        sed -i "s|^root:[^:]*:|root:$h:|" /etc/shadow
+        mkdir -p /var/run/dropbear /etc/dropbear 2>/dev/null       # /etc/dropbear points into /var/run
+        running dropbear || dropbear -R -p 22
+    else
+        running dropbear && killall dropbear 2>/dev/null
+        sed -i 's|^root:[^:]*:|root::|' /etc/shadow
+    fi
+    return 0
+}
+
+case "$1" in
+  apply) apply ;;
+  status)
+    for s in "lan nocry-netd" "adb nocry-relay" "ssh dropbear"; do
+        set -- $s
+        if running "$2"; then echo "$1=on"; else echo "$1=off"; fi
+    done ;;
+  *) echo "usage: nocry-remote apply|status" >&2; exit 2 ;;
+esac
