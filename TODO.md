@@ -29,7 +29,7 @@ Last updated: 2026-11-27.
 
 ## nocry-rescue (touchscreen recovery on the printer; design in `docs/nocry-rescue.md`)
 
-- [ ] **Step 1: hardware bring-up from RAM on the Nebula Pad** — picture, touch (NS2009), Wi-Fi (BCM43438) in the recovery kernel.
+- [ ] **Step 1: hardware bring-up from RAM on the Nebula Pad.** Done: screen, backlight, touch chip answers, Wi-Fi chip detected. Left: Wi-Fi firmware and tools in a rescue initramfs (join a network, try access-point mode); read real touches and calibrate.
 - [ ] Step 2: interface skeleton, `nocry-fbd` over TCP with pairing, mDNS, nocry over the LAN.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.

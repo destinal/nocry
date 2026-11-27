@@ -64,4 +64,20 @@ run "set -e; mkdir -p kout
   mkimage -A mips -O linux -T kernel -C gzip -a 0x80010000 -e \$entry -n nocry-recovery -d vmlinux.bin.gz nocry-recovery.uImage >/dev/null" \
   || { tail -30 "$WORK/kernel-build.log"; exit 1; }
 cp "$WORK/kout/nocry-recovery.uImage" "$OUT/"
+
+# --- RESCUE=1: also the nocry-rescue kernel (docs/nocry-rescue.md), same initramfs for now
+if [ "${RESCUE:-0}" = 1 ]; then
+  run "set -e; mkdir -p kout-rescue
+    make -s -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue k1_defconfig
+    KSRC=/w/linux KOUT=/w/kout-rescue sh /nocry/kernel-config.sh /br/output/images/rootfs.cpio rescue
+    make -s -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue olddefconfig
+    make -C linux ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- O=/w/kout-rescue -j\$(nproc) vmlinux > /w/kernel-rescue-build.log 2>&1
+    cd kout-rescue
+    mipsel-linux-gnu-objcopy -O binary -R .comment -R .note -R .reginfo vmlinux vmlinux.bin
+    gzip -9nf vmlinux.bin
+    entry=0x\$(mipsel-linux-gnu-nm vmlinux | awk '\$3==\"kernel_entry\"{print substr(\$1,9)}')
+    mkimage -A mips -O linux -T kernel -C gzip -a 0x80010000 -e \$entry -n nocry-rescue -d vmlinux.bin.gz nocry-rescue.uImage >/dev/null" \
+    || { grep -n 'error\|Error' "$WORK/kernel-rescue-build.log" | head -30; tail -15 "$WORK/kernel-rescue-build.log"; exit 1; }
+  cp "$WORK/kout-rescue/nocry-rescue.uImage" "$OUT/"
+fi
 cd "$OUT" && ls -l nocry-recovery.uImage && sha256sum nocry-recovery.uImage

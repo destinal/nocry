@@ -98,6 +98,15 @@ Second step: install firmware from Creality's list or a USB stick on the printer
 5. K1 family (after its screens are verified with the boot picture program).
 6. Firmware install on the printer.
 
+## Bring-up log
+
+2026-11-27, Nebula Pad, rescue kernel loaded from RAM over USB (`nocry recovery --image nocry-rescue.uImage`):
+
+- **Screen: works.** Colour bars written to `/dev/fb0` (480x272, 32 bit) show correctly. The kernel's text console on the framebuffer hangs the driver's probe, so it is off. The frame buffer holds garbage until something draws: clear it first.
+- **Backlight: works** (PWM0, enable PC22).
+- **Touch controller: answers** at I2C address 0x48 on bus 4 (commands 0xC0/0xD0/0xE0 return X, Y, pressure). A bus scan shows nothing because the chip does not acknowledge empty probes.
+- **Wi-Fi chip: found** ("new high speed SDIO card", BCM43430/1) once PA1 is driven low (it is active low) and the 32 kHz clock pin PE23 is switched to its function. It asks for `brcm/brcmfmac43430-sdio.bin` (+ `.AP6212` board file), which the initramfs does not carry yet.
+
 ## Open points
 
 - Whether brcmfmac's access-point mode works with this chip's firmware in practice.

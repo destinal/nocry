@@ -1,6 +1,7 @@
 #!/bin/sh
 # Applied on top of k1_defconfig (k1-debian/linux master-k1) for the nocry recovery kernel.
-# usage: KSRC=<kernel src> KOUT=<build dir> kernel-config.sh <initramfs.cpio or "">
+# usage: KSRC=<kernel src> KOUT=<build dir> kernel-config.sh <initramfs.cpio or ""> [rescue]
+#   rescue: the nocry-rescue kernel: the same plus screen, backlight, touch bus and Wi-Fi
 set -e
 C="${KSRC:-.}/scripts/config --file ${KOUT:-.}/.config"
 $C -d DT_CREALITY_K1 -e DT_NOCRY_NEBULA
@@ -24,3 +25,16 @@ $C -d FB_INGENIC -d STAGE_CREALITY_LCD -d LOGO -d TRUE_COLOR_LOGO
 $C -d INGENIC_WDT -d WATCHDOG_HANDLE_BOOT_ENABLED --set-val PANIC_TIMEOUT 0
 # USB mass storage (nocry.ums=ro|rw): deeper pipeline than the default 2 x 16 KiB buffers
 $C --set-val USB_GADGET_STORAGE_NUM_BUFFERS 32
+
+if [ "${2:-}" = rescue ]; then
+  $C -d DT_NOCRY_NEBULA -e DT_NOCRY_NEBULA_RESCUE
+  # screen: Ingenic display controller + the Nebula panel. No kernel text console on it: with
+  # FRAMEBUFFER_CONSOLE this driver hangs in probe (seen on the Nebula; Creality's config has it off too)
+  $C -e FB_INGENIC -e FB_INGENIC_DISPLAYS_STAGE -e STAGE_NOCRY_NEBULA -d STAGE_CREALITY_LCD -d FRAMEBUFFER_CONSOLE
+  $C -e BACKLIGHT_CLASS_DEVICE -e BACKLIGHT_PWM -e PWM -e PWM_INGENIC_V2
+  # touch: the NS2009 is read from user space; a USB keyboard or mouse can stand in
+  $C -e I2C_CHARDEV -e INPUT_EVDEV
+  # Wi-Fi: BCM43438 over SDIO, built in (the firmware comes from the initramfs)
+  $C -e CFG80211 -e BRCMFMAC -e BRCMFMAC_SDIO -e PWRSEQ_SIMPLE -e REGULATOR_FIXED_VOLTAGE -d CFG80211_REQUIRE_SIGNED_REGDB
+  $C -e PACKET -e INET -e IPV6
+fi

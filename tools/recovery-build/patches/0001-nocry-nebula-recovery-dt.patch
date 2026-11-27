@@ -1,13 +1,16 @@
 diff --git a/arch/mips/xburst2/soc-x2000/Kconfig.DT b/arch/mips/xburst2/soc-x2000/Kconfig.DT
-index 5f1144644..be8939f4a 100644
+index 5f1144644..e5547f797 100644
 --- a/arch/mips/xburst2/soc-x2000/Kconfig.DT
 +++ b/arch/mips/xburst2/soc-x2000/Kconfig.DT
-@@ -11,6 +11,9 @@ config DT_HALLEY5_V30
+@@ -11,6 +11,12 @@ config DT_HALLEY5_V30
  config DT_CREALITY_K1
         bool "x2000 Creality K1"
  
 +config DT_NOCRY_NEBULA
 +       bool "x2000 Creality Nebula (nocry recovery)"
++
++config DT_NOCRY_NEBULA_RESCUE
++       bool "x2000 Creality Nebula (nocry rescue: with screen, touch and Wi-Fi)"
 +
  config DT_ZEBRA
         bool "x2000 zebra"
@@ -81,15 +84,305 @@ index 000000000..0841d3963
 +	return 0;
 +}
 +EARLYCON_DECLARE(nocrymem, memcon_setup);
+diff --git a/module_drivers/drivers/video/fbdev/ingenic/displays/Kconfig b/module_drivers/drivers/video/fbdev/ingenic/displays/Kconfig
+index f0256f26f..afed607e4 100644
+--- a/module_drivers/drivers/video/fbdev/ingenic/displays/Kconfig
++++ b/module_drivers/drivers/video/fbdev/ingenic/displays/Kconfig
+@@ -251,6 +251,12 @@ config STAGE_JD9365DA
+     help
+         lcd panel JD9365DA, for ingenicfb drivers
+ 
++config STAGE_NOCRY_NEBULA
++	tristate "lcd panel of the Creality Nebula Pad (nocry)"
++	depends on FB_INGENIC_DISPLAYS_STAGE
++	help
++		480x272 RGB565 panel of the Nebula Pad, for ingenicfb drivers.
++
+ config STAGE_CREALITY_LCD
+     tristate "Creality LCD Driver"
+ 	depends on FB_INGENIC_DISPLAYS_STAGE
+diff --git a/module_drivers/drivers/video/fbdev/ingenic/displays/Makefile b/module_drivers/drivers/video/fbdev/ingenic/displays/Makefile
+index cc3a5c7e1..5244b2f1b 100644
+--- a/module_drivers/drivers/video/fbdev/ingenic/displays/Makefile
++++ b/module_drivers/drivers/video/fbdev/ingenic/displays/Makefile
+@@ -21,6 +21,7 @@ obj-$(CONFIG_STAGE_GWMTF16499B) += panel-gwmtf16499b.o
+ obj-$(CONFIG_STAGE_KD050HDFIA020) += panel-kd050hdfia020.o
+ obj-$(CONFIG_STAGE_FW050) += panel-fw050.o
+ obj-$(CONFIG_STAGE_ST7282) += panel-st7282.o
++obj-$(CONFIG_STAGE_NOCRY_NEBULA) += panel-nocry-nebula.o
+ obj-$(CONFIG_STAGE_KD050WVFPA029) += panel-kd050wvfpa029.o
+ obj-$(CONFIG_STAGE_G104X1L04) += panel-G104X1L04.o
+ obj-$(CONFIG_STAGE_KD035HVFMD057) += panel-kd035hvfmd057.o
+diff --git a/module_drivers/drivers/video/fbdev/ingenic/displays/panel-nocry-nebula.c b/module_drivers/drivers/video/fbdev/ingenic/displays/panel-nocry-nebula.c
+new file mode 100644
+index 000000000..0fa444a78
+--- /dev/null
++++ b/module_drivers/drivers/video/fbdev/ingenic/displays/panel-nocry-nebula.c
+@@ -0,0 +1,254 @@
++/*
++ * panel-nocry-nebula.c: the 480x272 RGB565 panel of Creality's Nebula Pad (nocry).
++ *
++ * Timings as Creality's boot picture program sets them (docs/rtos-partition.md in nocry):
++ * sync 20, porches 20/20 both ways, pixel clock about 10.7 MHz, clock inverted.
++ * Based on panel-st7282.c.
++ *
++ * Copyright (C) 2016 Ingenic Semiconductor Inc.
++ *
++ * This program is free software, you can redistribute it and/or modify it
++ *
++ * under the terms of the GNU General Public License version 2 as published by
++ *
++ * the Free Software Foundation.
++ */
++
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/gpio/consumer.h>
++#include <linux/pwm_backlight.h>
++#include <linux/delay.h>
++#include <linux/lcd.h>
++
++#include "../include/ingenicfb.h"
++
++struct panel_dev {
++	/* ingenic frame buffer */
++	struct device *dev;
++	struct lcd_panel *panel;
++
++	/* common lcd framework */
++	struct lcd_device *lcd;
++	int power;
++
++	struct gpio_desc *vdd_en;	/* panel supply */
++	struct gpio_desc *rst;		/* panel reset */
++};
++
++static void panel_enable(struct lcd_panel *panel)
++{
++}
++
++static void panel_disable(struct lcd_panel *panel)
++{
++}
++
++static struct lcd_panel_ops panel_ops = {
++	.enable  = (void *)panel_enable,
++	.disable = (void *)panel_disable,
++};
++
++static struct fb_videomode panel_modes[] = {
++	[0] = {
++		.name                   = "480x272",
++		.refresh                = 60,
++		.xres                   = 480,
++		.yres                   = 272,
++		.pixclock               = KHZ2PICOS(10714),
++		.left_margin            = 20,
++		.right_margin           = 20,
++		.upper_margin           = 20,
++		.lower_margin           = 20,
++
++		.hsync_len              = 20,
++		.vsync_len              = 20,
++		.sync                   = 0,
++		.vmode                  = FB_VMODE_NONINTERLACED,
++		.flag                   = 0,
++	},
++};
++
++static struct tft_config st7282_cfg = {
++	.pix_clk_inv = 1,
++	.de_dl = 0,
++	.sync_dl = 0,
++	.color_even = TFT_LCD_COLOR_EVEN_RGB,
++	.color_odd = TFT_LCD_COLOR_ODD_RGB,
++	.mode = TFT_LCD_MODE_PARALLEL_565,
++};
++
++struct lcd_panel lcd_panel = {
++	.name = "nocry-nebula",
++	.num_modes = ARRAY_SIZE(panel_modes),
++	.modes = panel_modes,
++	.bpp = 16,
++	.width = 480,
++	.height = 272,
++
++	.lcd_type = LCD_TYPE_TFT,
++
++	.tft_config = &st7282_cfg,
++
++	.dither_enable = 1,
++	.dither.dither_red = 1,
++	.dither.dither_green = 1,
++	.dither.dither_blue = 1,
++
++	.ops = &panel_ops,
++};
++
++#define POWER_IS_ON(pwr)        ((pwr) <= FB_BLANK_NORMAL)
++static int panel_set_power(struct lcd_device *lcd, int power)
++{
++	struct panel_dev *panel = lcd_get_data(lcd);
++
++	if (POWER_IS_ON(power) && !POWER_IS_ON(panel->power)) {
++		gpiod_set_value_cansleep(panel->vdd_en, 1);
++		msleep(20);
++		gpiod_set_value_cansleep(panel->rst, 1);
++		msleep(10);
++		gpiod_set_value_cansleep(panel->rst, 0);
++		msleep(120);
++	}
++	if (!POWER_IS_ON(power) && POWER_IS_ON(panel->power)) {
++		gpiod_set_value_cansleep(panel->rst, 1);
++		gpiod_set_value_cansleep(panel->vdd_en, 0);
++	}
++
++	panel->power = power;
++	return 0;
++}
++
++static int panel_get_power(struct lcd_device *lcd)
++{
++	struct panel_dev *panel = lcd_get_data(lcd);
++
++	return panel->power;
++}
++
++/**
++* @ pannel_st7282_lcd_ops, register to kernel common backlight/lcd.c framworks.
++*/
++static struct lcd_ops panel_lcd_ops = {
++	.set_power = panel_set_power,
++	.get_power = panel_get_power,
++};
++
++static int of_panel_parse(struct device *dev)
++{
++	struct panel_dev *panel = dev_get_drvdata(dev);
++
++	/* both start in the "off" state: supply off, reset asserted */
++	panel->vdd_en = devm_gpiod_get_optional(dev, "ingenic,vdd-en", GPIOD_OUT_LOW);
++	if (IS_ERR(panel->vdd_en))
++		return dev_err_probe(dev, PTR_ERR(panel->vdd_en), "no supply pin\n");
++	panel->rst = devm_gpiod_get_optional(dev, "ingenic,rst", GPIOD_OUT_HIGH);
++	if (IS_ERR(panel->rst))
++		return dev_err_probe(dev, PTR_ERR(panel->rst), "no reset pin\n");
++	return 0;
++}
++/**
++* @panel_probe
++*
++*   1. Register to ingenicfb.
++*   2. Register to lcd.
++*   3. Register to backlight if possible.
++*
++* @pdev
++*
++* @Return -
++*/
++static int panel_probe(struct platform_device *pdev)
++{
++	int ret = 0;
++	struct panel_dev *panel;
++
++	panel = kzalloc(sizeof(struct panel_dev), GFP_KERNEL);
++	if (panel == NULL) {
++		dev_err(&pdev->dev, "Faile to alloc memory!");
++		return -ENOMEM;
++	}
++	panel->dev = &pdev->dev;
++	dev_set_drvdata(&pdev->dev, panel);
++
++	ret = of_panel_parse(&pdev->dev);
++	if (ret < 0) {
++		goto err_of_parse;
++	}
++
++	panel->lcd = lcd_device_register("panel_lcd", &pdev->dev, panel, &panel_lcd_ops);
++	if (IS_ERR_OR_NULL(panel->lcd)) {
++		dev_err(&pdev->dev, "Error register lcd!\n");
++		ret = -EINVAL;
++		goto err_of_parse;
++	}
++
++	/* TODO: should this power status sync from uboot */
++	panel->power = FB_BLANK_POWERDOWN;
++	panel_set_power(panel->lcd, FB_BLANK_UNBLANK);
++
++	ret = ingenicfb_register_panel(&lcd_panel);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "Failed to register lcd panel!\n");
++		goto err_lcd_register;
++	}
++	dev_info(&pdev->dev, "Nebula panel registered\n");
++	return 0;
++
++err_lcd_register:
++	lcd_device_unregister(panel->lcd);
++err_of_parse:
++	kfree(panel);
++	return ret;
++}
++
++static int panel_remove(struct platform_device *pdev)
++{
++	struct panel_dev *panel = dev_get_drvdata(&pdev->dev);
++
++	panel_set_power(panel->lcd, FB_BLANK_POWERDOWN);
++	return 0;
++}
++
++#ifdef CONFIG_PM
++static int panel_suspend(struct device *dev)
++{
++	struct panel_dev *panel = dev_get_drvdata(dev);
++
++	panel_set_power(panel->lcd, FB_BLANK_POWERDOWN);
++	return 0;
++}
++
++static int panel_resume(struct device *dev)
++{
++	struct panel_dev *panel = dev_get_drvdata(dev);
++
++	panel_set_power(panel->lcd, FB_BLANK_UNBLANK);
++	return 0;
++}
++
++static const struct dev_pm_ops panel_pm_ops = {
++	.suspend = panel_suspend,
++	.resume = panel_resume,
++};
++#endif
++static const struct of_device_id panel_of_match[] = {
++	{ .compatible = "nocry,nebula-lcd", },
++	{},
++};
++
++static struct platform_driver panel_driver = {
++	.probe      = panel_probe,
++	.remove     = panel_remove,
++	.driver     = {
++		.name   = "st7282",
++		.of_match_table = panel_of_match,
++#ifdef CONFIG_PM
++		.pm = &panel_pm_ops,
++#endif
++	},
++};
++
++module_platform_driver(panel_driver);
 diff --git a/module_drivers/dts/Makefile b/module_drivers/dts/Makefile
-index 036492a73..5cd1f77dd 100644
+index 036492a73..d95df3c2b 100644
 --- a/module_drivers/dts/Makefile
 +++ b/module_drivers/dts/Makefile
-@@ -7,6 +7,7 @@ dtb-$(CONFIG_DT_HALLEY5_V30)		+= x2000/halley5_v30.dtb
+@@ -7,6 +7,8 @@ dtb-$(CONFIG_DT_HALLEY5_V30)		+= x2000/halley5_v30.dtb
  dtb-$(CONFIG_DT_ZEBRA)			+= x2000/zebra.dtb
  dtb-$(CONFIG_DT_KALE_V10)		+= x2000/kale_v10.dtb
  dtb-$(CONFIG_DT_CREALITY_K1)		+= x2000/creality_k1.dtb
 +dtb-$(CONFIG_DT_NOCRY_NEBULA)		+= x2000/nocry_nebula.dtb
++dtb-$(CONFIG_DT_NOCRY_NEBULA_RESCUE)	+= x2000/nocry_nebula_rescue.dtb
  dtb-$(CONFIG_DT_HIPPO_V12)		+= x2500/hippo_v12.dtb
  
  
@@ -183,3 +476,144 @@ index 000000000..571f91aa1
 +&helix { status = "disabled"; };
 +&mscaler0 { status = "disabled"; };
 +&mscaler1 { status = "disabled"; };
+diff --git a/module_drivers/dts/x2000/nocry_nebula_rescue.dts b/module_drivers/dts/x2000/nocry_nebula_rescue.dts
+new file mode 100644
+index 000000000..f37a8e7ab
+--- /dev/null
++++ b/module_drivers/dts/x2000/nocry_nebula_rescue.dts
+@@ -0,0 +1,135 @@
++/*
++ * nocry-rescue: the nocry recovery device tree for Creality "Nebula" boards plus what a
++ * touchscreen recovery needs: display, backlight, touch bus, Wi-Fi.
++ * Pins are those the stock Nebula firmware passes to its drivers (module_driver/*.sh):
++ *   panel       480x272 RGB565 on PB0-15/PB24-27, power PC21 (active low), reset PB16
++ *   backlight   PWM0 on PC0, supply PC22
++ *   touch       NS2009 (resistive) on I2C4, PC25/PC26, read from user space through i2c-dev
++ *   Wi-Fi       BCM43438 (AP6212A) on MSC1 (SDIO, 4 bit), power PA1 (low = on), enable PD4
++ *               (low = off), wake-up line PE2, 32 kHz clock from PE23
++ */
++#include "nocry_nebula.dts"
++#include <dt-bindings/gpio/gpio.h>
++
++/ {
++	model = "nocry-rescue (Creality Nebula, Ingenic X2000E)";
++
++	reserved-memory {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		/* frame buffers of the display controller */
++		reserved_memory: reserved_mem@d000000 {
++			compatible = "shared-dma-pool";
++			no-map;
++			reg = <0x0d000000 0x01000000>;
++		};
++	};
++
++	display-dbi {
++		compatible = "simple-bus";
++		#interrupt-cells = <1>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges = <>;
++
++		panel_nebula {
++			compatible = "nocry,nebula-lcd";
++			status = "okay";
++			pinctrl-names = "default";
++			pinctrl-0 = <&tft_lcd_pb_rgb565>;
++			ingenic,vdd-en-gpios = <&gpc 21 GPIO_ACTIVE_LOW INGENIC_GPIO_NOBIAS>;
++			ingenic,rst-gpios = <&gpb 16 GPIO_ACTIVE_LOW INGENIC_GPIO_NOBIAS>;
++
++			port {
++				panel_nebula_ep: endpoint {
++					remote-endpoint = <&dpu_out_ep>;
++				};
++			};
++		};
++	};
++
++	backlight {
++		compatible = "pwm-backlight";
++		pinctrl-names = "default";
++		pinctrl-0 = <&pwm0_pc>;
++		pwms = <&pwm 0 20000>;		/* channel 0, 50 kHz as the stock firmware */
++		brightness-levels = <0 30 60 100 150 200 255>;
++		default-brightness-level = <5>;
++		enable-gpios = <&gpc 22 GPIO_ACTIVE_HIGH INGENIC_GPIO_NOBIAS>;
++	};
++
++	wifi_power: wifi-power {
++		compatible = "regulator-fixed";
++		regulator-name = "wifi_power";
++		gpio = <&gpa 1 GPIO_ACTIVE_LOW INGENIC_GPIO_NOBIAS>;	/* low = powered */
++		enable-active-low;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	wifi_pwrseq: wifi-pwrseq {
++		compatible = "mmc-pwrseq-simple";
++		reset-gpios = <&gpd 4 GPIO_ACTIVE_LOW INGENIC_GPIO_NOBIAS>;
++		post-power-on-delay-ms = <200>;
++		power-off-delay-ms = <5>;
++	};
++};
++
++&pwm { status = "okay"; };
++
++&dpu {
++	status = "okay";
++	ingenic,disable-rdma-fb = <1>;
++	ingenic,layer-exported  = <1 0 0 0>;
++	ingenic,layer-frames    = <2 2 2 2>;
++	ingenic,layer-framesize = <480 272>, <480 272>, <480 272>, <480 272>;
++	layer,color_mode        = <0 0 0 0>;
++	layer,src-size          = <480 272>, <480 272>, <480 272>, <480 272>;
++	layer,target-size       = <480 272>, <480 272>, <480 272>, <480 272>;
++	layer,target-pos        = <0 0>, <0 0>, <0 0>, <0 0>;
++	layer,enable            = <1 0 0 0>;
++	ingenic,logo-pan-layer  = <0>;
++	memory-region = <&reserved_memory>;
++	port {
++		dpu_out_ep: endpoint {
++			remote-endpoint = <&panel_nebula_ep>;
++		};
++	};
++};
++
++&i2c4 {
++	status = "okay";
++	pinctrl-names = "default";
++	pinctrl-0 = <&i2c4_pc>;
++	clock-frequency = <400000>;
++};
++
++&msc1 {
++	status = "okay";
++	pinctrl-names = "default", "enable", "disable";
++	/* the chip needs the SoC's 32 kHz clock (PE23) before it answers at all */
++	pinctrl-0 = <&msc1_4bit &rtc32k_enable>;
++	pinctrl-1 = <&rtc32k_enable>;
++	pinctrl-2 = <&rtc32k_disable>;
++
++	bus-width = <4>;
++	non-removable;
++	keep-power-in-suspend;
++	max-frequency = <50000000>;
++	voltage-ranges = <1800 3300>;
++	mmc-pwrseq = <&wifi_pwrseq>;
++
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	wifi@1 {
++		reg = <1>;
++		compatible = "brcm,bcm43430a1";
++		interrupt-parent = <&gpe>;
++		interrupts = <2 IRQ_TYPE_LEVEL_HIGH>;
++		interrupt-names = "host-wake";
++		brcm,board-type = "AP6212";
++	};
++};
