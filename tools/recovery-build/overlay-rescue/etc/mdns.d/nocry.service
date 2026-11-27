@@ -1,0 +1,5 @@
+# nocry on a PC finds the board by this (DNS-SD over mDNS)
+type _nocry._tcp
+name nocry-rescue
+port 5560
+txt service=nocry-netd

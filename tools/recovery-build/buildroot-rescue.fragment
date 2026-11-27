@@ -15,3 +15,5 @@ BR2_PACKAGE_IW=y
 BR2_PACKAGE_DNSMASQ=y
 BR2_PACKAGE_DNSMASQ_DHCP=y
 BR2_PACKAGE_MDNSD=y
+# rescue-only files: start-up script, mDNS service description
+BR2_ROOTFS_OVERLAY="$(NOCRY_RECOVERY)/overlay $(NOCRY_RECOVERY)/overlay-rescue"

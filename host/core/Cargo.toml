@@ -22,6 +22,11 @@ sevenz-rust2 = { version = "0.20", default-features = false, features = ["aes256
 md-5 = "0.10"
 ureq = "2"
 serde_json = "1"
+# control over the LAN (nocry-rescue): pairing (SPAKE2 over P-256) and the encrypted link
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "std"] }
+hmac = "0.12"
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
 
 # no system libusb on Windows/macOS: build it in
 [target.'cfg(not(target_os = "linux"))'.dependencies]

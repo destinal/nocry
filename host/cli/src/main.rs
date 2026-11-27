@@ -20,6 +20,13 @@ struct Cli {
     soc: String,
     #[arg(short, long, global = true)]
     verbose: bool,
+    /// Work with a board running nocry-rescue over the network instead of USB: its address
+    /// (name or IP, optionally :port). Needs --code
+    #[arg(long, global = true, requires = "code")]
+    net: Option<String>,
+    /// The pairing code shown on the board's screen (with --net)
+    #[arg(long, global = true)]
+    code: Option<String>,
     /// Directory with built images (spl-x2000e/, nocry_ums_x2000_v12/, nocry_ums_ro_x2000_v12/);
     /// default: $NOCRY_IMAGES, next to the binary, or the project's tools/burner-build/out
     #[arg(long, global = true)]
@@ -320,12 +327,17 @@ fn num(s: &str) -> Result<u64> {
 }
 
 fn cmd_fb(c: FbCmd) -> Result<()> {
-    let f = usb::running_recovery(SOCS)?
-        .into_iter()
-        .chain(usb::running_fastboot(SOCS)?)
-        .next()
-        .context("no board with a fastboot interface (run `nocry recovery` or `nocry fastboot`)")?;
-    let mut fb = fastboot::Fastboot::open(&f)?;
+    let mut fb = match network_board() {
+        Some((addr, code)) => fastboot::Fastboot::open_net(&addr, &code)?,
+        None => {
+            let f = usb::running_recovery(SOCS)?
+                .into_iter()
+                .chain(usb::running_fastboot(SOCS)?)
+                .next()
+                .context("no board with a fastboot interface (run `nocry recovery` or `nocry fastboot`)")?;
+            fastboot::Fastboot::open(&f)?
+        }
+    };
     let part_size = |fb: &mut fastboot::Fastboot, name: &str| -> Result<u64> {
         let v = fb.getvar(&format!("partition-size:{name}"))?;
         u64::from_str_radix(v.trim_start_matches("0x"), 16).context("bad partition-size")
@@ -469,6 +481,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let soc = soc_by_name(&cli.soc)?;
     let images = cli.images.clone();
+    if let (Some(addr), Some(code)) = (&cli.net, &cli.code) {
+        set_network_board(Some((addr.clone(), code.clone())));
+    }
     let device = cli.device.clone();
     let via = cli.via;
     match cli.cmd {

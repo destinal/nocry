@@ -296,7 +296,15 @@ impl Target {
 
     /// The recovery's fastboot service (no disk device on the host).
     pub fn open_fastboot(found: &crate::usb::Found, write: bool) -> Result<Target> {
-        let mut fb = crate::fastboot::Fastboot::open(found)?;
+        Self::from_fastboot(crate::fastboot::Fastboot::open(found)?, write, "fastboot")
+    }
+
+    /// A board running nocry-rescue, reached over the network with the pairing code on its screen.
+    pub fn open_net(addr: &str, code: &str, write: bool) -> Result<Target> {
+        Self::from_fastboot(crate::fastboot::Fastboot::open_net(addr, code)?, write, "net")
+    }
+
+    fn from_fastboot(mut fb: crate::fastboot::Fastboot, write: bool, kind: &str) -> Result<Target> {
         fb.info = Box::new(|_| {});
         let ext = fb.getvar("nocry-ext").unwrap_or_default();
         if !ext.contains("write") || !ext.contains("hash:xxh64") {
@@ -311,7 +319,7 @@ impl Target {
         Ok(Target {
             b: Backend::Fb(std::cell::RefCell::new(fb)),
             writable: write,
-            path: PathBuf::from(format!("fastboot:{sn}")),
+            path: PathBuf::from(format!("{kind}:{sn}")),
             size,
             is_dev: true,
         })

@@ -1,0 +1,57 @@
+#!/bin/sh
+# nocry-rescue, until the touch interface exists: bring up the board's own Wi-Fi network,
+# start the service nocry on a PC talks to, and show on the screen how to reach it.
+#   Wi-Fi network "nocry-rescue" (WPA2, password "nocry-rescue"), board at 192.168.77.1
+#   nocry --net 192.168.77.1 --code <the code on the screen> ...
+# The Wi-Fi password only gets a computer onto this network; driving the board needs the
+# pairing code, which changes at every start and after three wrong tries.
+
+SSID=nocry-rescue
+PASS=nocry-rescue
+ADDR=192.168.77.1
+CODE=/run/nocry-pair-code
+
+show() {
+    c=$(cat $CODE 2>/dev/null)
+    nocry-banner "#nocry-rescue" "" \
+        "Wi-Fi network   $SSID" "password        $PASS" "address         $ADDR" "" \
+        "pairing code" "#${c%???} ${c#???}"
+}
+
+start() {
+    mkdir -p /run /var/run/wpa_supplicant
+    nocry-banner "#nocry-rescue" "" "starting..."
+    nocry-netd --code-file $CODE 2>/dev/console &
+    # the access point
+    i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
+    if [ -e /sys/class/net/wlan0 ]; then
+        cat > /run/nocry-ap.conf <<CONF
+ctrl_interface=/var/run/wpa_supplicant
+network={
+    ssid="$SSID"
+    mode=2
+    frequency=2437
+    key_mgmt=WPA-PSK
+    proto=RSN
+    pairwise=CCMP
+    psk="$PASS"
+}
+CONF
+        wpa_supplicant -B -i wlan0 -D nl80211 -c /run/nocry-ap.conf >/dev/null 2>&1
+        ip addr add $ADDR/24 dev wlan0 2>/dev/null
+        ip link set wlan0 up
+        dnsmasq --interface=wlan0 --bind-interfaces --dhcp-range=192.168.77.10,192.168.77.50,12h \
+            --dhcp-leasefile=/run/nocry-leases --pid-file=/run/nocry-dnsmasq.pid
+        mdnsd 2>/dev/null
+    else
+        SSID="(no Wi-Fi found)"; PASS="-"; ADDR="-"
+    fi
+    # keep the screen in step with the pairing code
+    ( last=; while :; do c=$(cat $CODE 2>/dev/null); [ "$c" != "$last" ] && { last=$c; show; }; sleep 2; done ) &
+}
+
+case "$1" in
+  start) start ;;
+  stop) killall nocry-netd wpa_supplicant dnsmasq mdnsd 2>/dev/null ;;
+esac
+exit 0

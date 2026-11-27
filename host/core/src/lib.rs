@@ -16,6 +16,7 @@ pub mod fastboot;
 pub mod gpt;
 pub mod image;
 pub mod loader;
+pub mod net;
 pub mod ota;
 pub mod picture;
 pub mod restore;

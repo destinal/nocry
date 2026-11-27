@@ -41,10 +41,14 @@ impl Hash {
     }
 }
 
+/// How the commands travel: USB bulk transfers, or the encrypted network link to nocry-netd.
+enum Io {
+    Usb { h: DeviceHandle<GlobalContext>, ep_in: u8, ep_out: u8 },
+    Net(Box<crate::net::Link>),
+}
+
 pub struct Fastboot {
-    h: DeviceHandle<GlobalContext>,
-    ep_in: u8,
-    ep_out: u8,
+    io: Io,
     /// called for every INFO line
     pub info: Box<dyn FnMut(&str)>,
 }
@@ -77,26 +81,64 @@ impl Fastboot {
                     rusb::Error::Busy => anyhow!("another program is using the board. Close other nocry windows and stop running nocry, adb or fastboot commands, then try again"),
                     e => anyhow!("claiming the board's fastboot interface: {e}"),
                 })?;
-                return Ok(Fastboot { h, ep_in, ep_out, info: Box::new(|m| crate::say!("(bootloader) {m}")) });
+                return Ok(Fastboot { io: Io::Usb { h, ep_in, ep_out }, info: Box::new(|m| crate::say!("(bootloader) {m}")) });
             }
         }
         bail!("{} has no fastboot interface (ff/42/03)", f.id())
     }
 
+    /// A board running nocry-rescue, over the network: `addr` is "host" or "host:port",
+    /// `code` the pairing code on its screen.
+    pub fn open_net(addr: &str, code: &str) -> Result<Self> {
+        let link = crate::net::Link::connect(addr, code)?;
+        Ok(Fastboot { io: Io::Net(Box::new(link)), info: Box::new(|m| crate::say!("(board) {m}")) })
+    }
+
+    pub fn is_net(&self) -> bool {
+        matches!(self.io, Io::Net(_))
+    }
+
+    /// One command packet.
     fn send(&mut self, data: &[u8]) -> Result<()> {
-        let n = self.h.write_bulk(self.ep_out, data, TIMEOUT).context("fastboot write")?;
-        if n != data.len() {
-            bail!("short fastboot write ({n} of {})", data.len());
+        match &mut self.io {
+            Io::Usb { h, ep_out, .. } => {
+                let n = h.write_bulk(*ep_out, data, TIMEOUT).context("fastboot write")?;
+                if n != data.len() {
+                    bail!("short fastboot write ({n} of {})", data.len());
+                }
+                Ok(())
+            }
+            Io::Net(l) => l.send_packet(data),
         }
-        Ok(())
+    }
+
+    /// A piece of a data phase.
+    fn send_data(&mut self, data: &[u8]) -> Result<()> {
+        match &mut self.io {
+            Io::Net(l) => l.send(data),
+            Io::Usb { .. } => self.send(data),
+        }
+    }
+
+    fn recv_packet(&mut self, timeout: Duration) -> Result<Vec<u8>> {
+        match &mut self.io {
+            Io::Usb { h, ep_in, .. } => {
+                let mut buf = [0u8; 256];
+                let n = h.read_bulk(*ep_in, &mut buf, timeout).context("fastboot read")?;
+                Ok(buf[..n].to_vec())
+            }
+            Io::Net(l) => {
+                l.set_timeout(timeout.max(Duration::from_secs(20)));
+                l.recv_packet()
+            }
+        }
     }
 
     /// Reads responses until OKAY/FAIL/DATA; returns (kind, payload).
     fn response(&mut self, timeout: Duration) -> Result<(String, String)> {
         loop {
-            let mut buf = [0u8; 256];
-            let n = self.h.read_bulk(self.ep_in, &mut buf, timeout).context("fastboot read")?;
-            let s = String::from_utf8_lossy(&buf[..n]).to_string();
+            let buf = self.recv_packet(timeout)?;
+            let s = String::from_utf8_lossy(&buf).to_string();
             if s.len() < 4 {
                 bail!("short fastboot response {s:?}");
             }
@@ -138,7 +180,7 @@ impl Fastboot {
             bail!("download: device answered {kind}{rest}");
         }
         for c in data.chunks(CHUNK) {
-            self.send(c)?;
+            self.send_data(c)?;
         }
         let (kind, rest) = self.response(TIMEOUT)?;
         if kind != "OKAY" {
@@ -153,11 +195,19 @@ impl Fastboot {
         let mut got = 0;
         while got < total {
             let want = CHUNK.min(total - got);
-            let n = self.h.read_bulk(self.ep_in, &mut buf[..want], DATA_TIMEOUT).context("fastboot data read")?;
+            let n = match &mut self.io {
+                Io::Usb { h, ep_in, .. } => h.read_bulk(*ep_in, &mut buf[..want], DATA_TIMEOUT).context("fastboot data read")?,
+                Io::Net(l) => {
+                    // the stream carries exactly the announced bytes
+                    l.set_timeout(DATA_TIMEOUT);
+                    l.recv_exact(&mut buf[..want])?;
+                    want
+                }
+            };
             if n == 0 {
                 bail!("fastboot data read returned nothing at {got}/{total}");
             }
-            if n < want && buf[..n].starts_with(b"FAIL") {
+            if !self.is_net() && n < want && buf[..n].starts_with(b"FAIL") {
                 bail!("remote: {}", String::from_utf8_lossy(&buf[4..n]));
             }
             sink(&buf[..n])?;
@@ -196,7 +246,7 @@ impl Fastboot {
             bail!("nocry-write: device accepts {n} bytes, have {}", data.len());
         }
         for c in data.chunks(CHUNK) {
-            self.send(c)?;
+            self.send_data(c)?;
         }
         let (kind, rest) = self.response(DATA_TIMEOUT)?;
         if kind != "OKAY" {

@@ -418,6 +418,18 @@ pub fn start_recovery(
     usb::running_recovery(SOCS)?.into_iter().next().context("recovery vanished")
 }
 
+static NETWORK_BOARD: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+
+/// Work with a board running nocry-rescue over the network instead of USB: its address
+/// ("host" or "host:port") and the pairing code on its screen. `None` goes back to USB.
+pub fn set_network_board(board: Option<(String, String)>) {
+    *NETWORK_BOARD.lock().unwrap() = board;
+}
+
+pub fn network_board() -> Option<(String, String)> {
+    NETWORK_BOARD.lock().unwrap().clone()
+}
+
 /// Opens the eMMC for a command: an explicit --target; else the recovery's fastboot service
 /// (no disk device, on-board hashing); else a nocry USB disk (U-Boot fallback).
 #[allow(clippy::too_many_arguments)]
@@ -433,6 +445,10 @@ pub fn open_target(
 ) -> Result<restore::Target> {
     if let Some(p) = explicit {
         return restore::Target::open(p, write, allow_any);
+    }
+    if let Some((addr, code)) = network_board() {
+        say!("using the board at {addr} over the network");
+        return restore::Target::open_net(&addr, &code, write);
     }
     if via != Via::Uboot {
         let mut rec = usb::running_recovery(SOCS)?.into_iter().next();

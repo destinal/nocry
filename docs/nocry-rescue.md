@@ -116,6 +116,17 @@ Same day, with the system image that carries the firmware and tools:
 
 Build: `RESCUE=1 tools/recovery-build/build.sh` gives `nocry-rescue.uImage` (kernel + initramfs). With the Wi-Fi firmware, wpa_supplicant, iw, dnsmasq and mdnsd added it is 19.6 MiB, before any interface program and with all of linux-firmware's Broadcom files still in (only two are needed).
 
+## Control over the LAN: what exists (2026-11-27)
+
+- `tools/recovery-build/netd/nocry-netd.c` on the board: TCP port 5560, SPAKE2 pairing (RFC 9382, P-256) with a six-digit code, then ChaCha20-Poly1305 records, relayed to a `nocry-fbd --stdio` child. One client at a time; three wrong codes make a new code.
+- `host/core/src/net.rs` on the PC: the same exchange; `Fastboot` runs over it as it does over USB. `nocry --net <address> --code <code> <any command>`.
+- Both ends reproduce the RFC's test vector (`cargo test net::`, `nocry-netd --selftest`).
+- Tested on a PC, service and client against a disk image: slots, loader status, a 48 MiB read and a 5 MiB write byte-identical, a verified boot picture change, wrong codes refused.
+- Until the touch interface exists, `S45nocry-rescue` starts the board's own Wi-Fi network (`nocry-rescue`, WPA2, the password is the same word, board at 192.168.77.1) and `nocry-banner` shows network, address and pairing code on the screen. The Wi-Fi password only gets a computer onto the network; driving the board needs the code.
+- The image is 14.6 MiB with only this chip's Wi-Fi firmware.
+
+Missing: discovery in nocry (the board announces `_nocry._tcp`, nocry does not look yet), the network option in the window, and the first run of all this on a board.
+
 ## Open points
 
 - NS2009: kernel driver or user-space reader; calibration.

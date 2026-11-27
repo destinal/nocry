@@ -3,10 +3,6 @@
 Open work on nocry, newest state first. Checked items are removed after a while; the history is in git.
 Last updated: 2026-11-27.
 
-## In progress
-
-- [ ] **Release v0.1.0-alpha.4.** Version bumped; trial run of the release workflow building. Tag when it passes.
-
 ## Needs a board in USB boot mode (minutes each)
 
 - [ ] **K1 test board: update the loader with the installer.** It carries a hand-installed pre-0.1 nocryboot and no kept factory copy: `nocry loader --install --file backups/k1-first3M-before-nocryboot.bin --yes`.
@@ -30,7 +26,7 @@ Last updated: 2026-11-27.
 ## nocry-rescue (touchscreen recovery on the printer; design in `docs/nocry-rescue.md`)
 
 - [ ] **Step 1: hardware bring-up from RAM on the Nebula Pad.** Done: screen, backlight, touch chip answers, Wi-Fi chip detected. Wi-Fi firmware loads, scan works, access point works (a phone joined and was reachable). Left: joining an existing network; touch calibration.
-- [ ] Step 2: interface skeleton, `nocry-fbd` over TCP with pairing, mDNS, nocry over the LAN.
+- [ ] Step 2: interface skeleton, `nocry-fbd` over TCP with pairing, mDNS, nocry over the LAN. In progress: pairing (SPAKE2) and the encrypted link exist on both ends and match the RFC's test vector; `nocry-netd` on the board relays to `nocry-fbd`.
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.
@@ -50,6 +46,8 @@ Last updated: 2026-11-27.
 - [ ] Real USB IDs in place of the test ones.
 
 ## Done recently
+
+- [x] **Released v0.1.0-alpha.4** (2026-11-27): nocryboot, loader installer, firmware on trial, nocry boot picture, K1 family. The packages themselves have not been run on a board.
 
 - [x] nocryboot SPL: built from public source, matched against Creality's in the emulator, installed on both test boards (2026-11-26).
 - [x] Recovery door, whole-slot fallback, count of starts; all exercised on the K1 (2026-11-27).
