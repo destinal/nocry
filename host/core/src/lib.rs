@@ -15,6 +15,7 @@ pub mod events;
 pub mod fastboot;
 pub mod gpt;
 pub mod image;
+pub mod loader;
 pub mod ota;
 pub mod restore;
 pub mod rtos;

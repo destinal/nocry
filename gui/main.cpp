@@ -212,6 +212,8 @@ public:
         partEraseButton = new QPushButton(tr("Erase partition…"));
         identityButton = new QPushButton(tr("Edit serial number and MAC…"));
         eraseAllButton = new QPushButton(tr("Erase entire storage…"));
+        loaderButton = new QPushButton(tr("Boot loader…"));
+        loaderButton->setToolTip(tr("See which first-stage boot loader the board has; install the open nocryboot loader or go back to the factory one"));
         auto *prow = new QHBoxLayout;
         prow->addWidget(partBackupButton);
         prow->addWidget(partRestoreButton);
@@ -221,6 +223,7 @@ public:
         auto *irow = new QHBoxLayout;
         irow->addWidget(identityButton);
         irow->addWidget(eraseAllButton);
+        irow->addWidget(loaderButton);
         irow->addStretch(1);
         av->addLayout(irow);
         tabs->addTab(adv, tr("Advanced"));
@@ -230,6 +233,7 @@ public:
         connect(partEraseButton, &QPushButton::clicked, this, [this] { choosePartErase(); });
         connect(identityButton, &QPushButton::clicked, this, [this] { chooseIdentity(); });
         connect(eraseAllButton, &QPushButton::clicked, this, [this] { chooseEraseAll(); });
+        connect(loaderButton, &QPushButton::clicked, this, [this] { startLoader(0, {}); });
 
         // --- Activity log
         log = new QPlainTextEdit;
@@ -598,6 +602,137 @@ public:
         w->setFuture(QtConcurrent::run(job));
     }
 
+    // The board's first-stage boot loader. action 0: read it and offer what can be done;
+    // 1: install nocryboot; 2: put the factory loader back (file: where to take it from, or empty).
+    void startLoader(int action, const QString &file)
+    {
+        const QByteArray f = file.toUtf8(), sd = safetyDir();
+        if (action != 0) {
+            runAdvanced(action == 1 ? tr("Installing the nocryboot boot loader") : tr("Putting the factory boot loader back"),
+                [action, f, sd] { return takeJson(nocry_loader_json(action, f.isEmpty() ? nullptr : f.constData(), 1, sd.constData())); },
+                [](const QJsonObject &o) {
+                    return tr("The board now has: %1\n\nIt was written and read back correctly. Unplug the board and power it on normally.\n\n"
+                              "If the screen stays dark for more than a minute, put the board in USB boot mode with the BOOT button; "
+                              "nocry can always put the previous loader back from there.").arg(o.value("loader").toString());
+                });
+            return;
+        }
+        if (busy)
+            return;
+        setBusy(true);
+        log->appendPlainText(tr("Reading the boot loader…"));
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w] {
+            const QJsonObject o = w->result();
+            w->deleteLater();
+            setBusy(false);
+            lastResult = o;
+            if (!o.value("ok").toBool()) {
+                log->appendPlainText(tr("Boot loader: %1").arg(o.value("error").toString()));
+                if (!quiet)
+                    QMessageBox::critical(this, tr("Boot loader"), o.value("error").toString());
+            } else {
+                log->appendPlainText(tr("Boot loader on the board: %1").arg(o.value("loader").toString()));
+                if (!quiet) {
+                    const auto [act, file] = chooseLoader(o);
+                    if (act != 0) {
+                        startLoader(act, file);
+                        return;
+                    }
+                }
+            }
+            if (onIdle)
+                onIdle();
+        });
+        w->setFuture(QtConcurrent::run([] { return takeJson(nocry_loader_json(0, nullptr, 0, nullptr)); }));
+    }
+
+    // Shows what the board has and returns what to do: {0,""} nothing, {1,file} install, {2,file} factory.
+    std::pair<int, QString> chooseLoader(const QJsonObject &o)
+    {
+        const QString kind = o.value("kind").toString(), blocked = o.value("blocked").toString();
+        const bool kept = o.value("factory_kept").toBool(), upToDate = o.value("up_to_date").toBool();
+        QDialog d(this);
+        d.setWindowTitle(tr("Boot Loader"));
+        auto *v = new QVBoxLayout(&d);
+        auto *intro = new QLabel(tr("The boot loader is the first program the board runs from its storage. It starts the boot picture and then the firmware.\n\n"
+                                   "nocryboot is an open replacement for Creality's. Unlike the factory loader it does not hang when a firmware slot is damaged: "
+                                   "it starts the other slot, and if neither can be started it puts the board in USB boot mode by itself, so nocry can repair it "
+                                   "without the BOOT button. It can also try newly installed firmware for a few starts and go back if it never comes up."));
+        intro->setWordWrap(true);
+        v->addWidget(intro);
+        auto *f = new QFormLayout;
+        f->addRow(tr("On the board:"), new QLabel(o.value("loader").toString()));
+        f->addRow(tr("Factory loader kept on the board:"), new QLabel(kept ? tr("yes") : kind == "factory" ? tr("not needed (it is the one in use)") : tr("no")));
+        if (!o.value("available").toString().isEmpty())
+            f->addRow(tr("This nocry can install:"), new QLabel(o.value("available").toString()));
+        v->addLayout(f);
+        if (!blocked.isEmpty()) {
+            auto *l = new QLabel(tr("nocryboot cannot be installed on this board: %1.").arg(blocked));
+            l->setWordWrap(true);
+            v->addWidget(l);
+        }
+        std::pair<int, QString> choice{0, {}};
+        auto *row = new QHBoxLayout;
+        auto *inst = new QPushButton(kind == "nocryboot" ? tr("Update nocryboot…") : tr("Install nocryboot…"));
+        inst->setEnabled(blocked.isEmpty() && !upToDate);
+        auto *fac = new QPushButton(tr("Put the factory loader back…"));
+        fac->setEnabled(kind != "factory");
+        row->addWidget(inst);
+        row->addWidget(fac);
+        row->addStretch(1);
+        v->addLayout(row);
+        if (upToDate)
+            v->addWidget(new QLabel(tr("The board already has this nocryboot.")));
+        connect(inst, &QPushButton::clicked, &d, [&] {
+            QString file;
+            QString info = tr("The loader is replaced by: %1\n\n").arg(o.value("available").toString());
+            if (kind == "factory")
+                info += tr("The factory loader is kept on the board itself and on this computer, so it can be put back at any time.");
+            else if (kept)
+                info += tr("The factory loader kept on the board stays there.");
+            else
+                info += tr("This board has no copy of its factory loader. If you have a backup of this board made before nocryboot was installed, "
+                           "choose it in the next step and nocry keeps the factory loader from it on the board.");
+            info += tr("\n\nFirmware, settings, files and the identity are not touched. If the new loader should not start, the BOOT button and nocry bring the old one back.");
+            QMessageBox box(QMessageBox::Warning, tr("Boot loader"), tr("Install nocryboot on this board?"), QMessageBox::Cancel, &d);
+            box.setInformativeText(info);
+            auto *go = box.addButton(tr("Install"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() != go)
+                return;
+            if (kind != "factory" && !kept)
+                file = QFileDialog::getOpenFileName(&d, tr("Backup with the factory loader (Cancel to go on without)"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("Backups and loaders (*.img *.bin);;All files (*)"));
+            choice = {1, file};
+            d.accept();
+        });
+        connect(fac, &QPushButton::clicked, &d, [&] {
+            QString file;
+            if (!kept) {
+                QMessageBox::information(&d, tr("Boot loader"), tr("No copy of the factory loader is kept on this board. Choose a backup of this board made before nocryboot was installed; nocry takes the loader from it."));
+                file = QFileDialog::getOpenFileName(&d, tr("Backup with the factory loader"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("Backups and loaders (*.img *.bin);;All files (*)"));
+                if (file.isEmpty())
+                    return;
+            }
+            QMessageBox box(QMessageBox::Warning, tr("Boot loader"), tr("Put Creality's factory loader back?"), QMessageBox::Cancel, &d);
+            box.setInformativeText(tr("The board then behaves as it did from the factory: a damaged firmware slot leaves it dark, and only the BOOT button gets it into USB boot mode. "
+                                      "A firmware trial that is under way is ended.\n\nFirmware, settings, files and the identity are not touched."));
+            auto *go = box.addButton(tr("Put it back"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() != go)
+                return;
+            choice = {2, file};
+            d.accept();
+        });
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        v->addWidget(bb);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        d.exec();
+        return choice;
+    }
+
     QByteArray safetyDir() const { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8(); }
 
     void startPartBackup(const QString &name, const QString &path)
@@ -903,6 +1038,7 @@ private:
         partRestoreButton->setEnabled(sel);
         partEraseButton->setEnabled(sel);
         identityButton->setEnabled(ok && parts->rowCount() > 0);
+        loaderButton->setEnabled(ok && parts->rowCount() > 0);
         eraseAllButton->setEnabled(ok);
     }
 
@@ -1842,7 +1978,7 @@ private:
     // printer type / mainboard the user chose for the install in progress ("" = let nocry decide)
     QString pendingModel, pendingBoard;
     QWidget *udevBanner = nullptr;
-    QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton;
+    QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton, *loaderButton;
     QJsonObject shell;
     QPushButton *readButton, *backupButton, *installButton, *switchButton, *resetButton, *restoreButton, *cancelButton;
     QString modelId;
@@ -1976,6 +2112,19 @@ int main(int argc, char **argv)
             });
         });
         QTimer::singleShot(1200, [&w] { w.openInstallDialog(); });
+    }
+    // --selftest-loader shot.png: open the Boot Loader dialog (needs NOCRY_TEST_TARGET, an image file)
+    const int slo = args.indexOf("--selftest-loader");
+    if (slo > 0 && slo + 1 < args.size() && qEnvironmentVariableIsSet("NOCRY_TEST_TARGET")) {
+        const QString shot = args[slo + 1];
+        QTimer::singleShot(800, [&w] { w.startLoader(0, {}); });
+        QTimer::singleShot(4000, [shot] {
+            if (QWidget *m = QApplication::activeModalWidget()) {
+                m->grab().save(shot);
+                static_cast<QDialog *>(m)->reject();
+            }
+            QTimer::singleShot(200, [] { QApplication::quit(); });
+        });
     }
     // --selftest-install-list <MODEL-KEY> <version|latest> <keep:0|1> shot.png: download from the
     // list, then plan; writes only with NOCRY_TEST_TARGET

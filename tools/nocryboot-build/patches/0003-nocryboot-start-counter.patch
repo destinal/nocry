@@ -1,11 +1,13 @@
 diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
-index 04575576e..987c0ae87 100644
+index 04575576e..6e6d88620 100644
 --- a/common/spl/spl_jzsdhci.c
 +++ b/common/spl/spl_jzsdhci.c
-@@ -2066,6 +2066,71 @@ void spl_mmc_mcu_rtos_boot(void)
+@@ -2065,6 +2065,72 @@ void spl_mmc_mcu_rtos_boot(void)
+ #ifdef CONFIG_NOCRYBOOT
  extern void nocryboot_usb_boot_mode(const char *why);
  extern int nocryboot_console_asks(void);
- 
++extern const char nocryboot_ident[];
++
 +/*
 + * Write one sector.  The only thing nocryboot ever writes is its own notes in
 + * the first two sectors of the "ota" partition; anything else is refused.
@@ -70,11 +72,10 @@ index 04575576e..987c0ae87 100644
 +	if (!nocryboot_write_sector(sector, (u32 *)buf))
 +		printf("nocryboot: could not write a note\n");
 +}
-+
+ 
  #define NB_KERNEL	1
  #define NB_RTOS		2
- #define NB_ROOTFS	4
-@@ -2077,11 +2142,19 @@ static int nocryboot_read_head(const char *name, u32 *buf)
+@@ -2077,11 +2143,19 @@ static int nocryboot_read_head(const char *name, u32 *buf)
  	unsigned int sector;
  	u32 ret;
  
@@ -97,7 +98,7 @@ index 04575576e..987c0ae87 100644
  }
  
  /*
-@@ -2122,16 +2195,32 @@ static int nocryboot_slot_state(int slot_b)
+@@ -2122,17 +2196,34 @@ static int nocryboot_slot_state(int slot_b)
  /*
   * nocryboot's boot decision.  The factory loader takes the slot the "ota"
   * record names and hangs if its boot picture image is missing or damaged.
@@ -131,9 +132,11 @@ index 04575576e..987c0ae87 100644
 +	int slot = 0, tries = -1, ok;
 +	char left[2] = "0";
  
++	printf("%s\n", nocryboot_ident);
  	if (nocryboot_console_asks())
  		nocryboot_usb_boot_mode("asked at the console");
-@@ -2140,15 +2229,32 @@ static char *nocryboot_load(void)
+ #ifdef CONFIG_NOCRYBOOT_DOOR_TEST
+@@ -2140,15 +2231,32 @@ static char *nocryboot_load(void)
  	nocryboot_usb_boot_mode("door test");
  #endif
  
@@ -172,3 +175,46 @@ index 04575576e..987c0ae87 100644
  	}
  
  	spl_get_built_in_gpt_partition(slot ? CONFIG_SPL_RTOS_NAME2 : CONFIG_SPL_RTOS_NAME, &sector, NULL);
+diff --git a/common/spl/spl_nocryboot.c b/common/spl/spl_nocryboot.c
+index 48ae715da..bc17057ed 100644
+--- a/common/spl/spl_nocryboot.c
++++ b/common/spl/spl_nocryboot.c
+@@ -16,6 +16,8 @@
+ #define SLPC_SW_MAGIC		0x425753	/* "SWB": software boot select */
+ #define SLPC_SW_USB_BOOT	0x2
+ 
++const char nocryboot_ident[] = "nocryboot-loader " NOCRYBOOT_VERSION " " NOCRYBOOT_FAMILY;
++
+ void nocryboot_usb_boot_mode(const char *why)
+ {
+ 	int time = RTC_FREQ / WDT_DIV * RESET_DELAY_MS / 1000;
+diff --git a/include/configs/nocryboot.h b/include/configs/nocryboot.h
+index 36da34d23..3eda3a42f 100644
+--- a/include/configs/nocryboot.h
++++ b/include/configs/nocryboot.h
+@@ -16,6 +16,13 @@
+ #define __NOCRYBOOT_H__
+ 
+ #define CONFIG_NOCRYBOOT
++/* Shown on the console and read by nocry from the installed loader:
++ * "nocryboot-loader <version> <family>". */
++#ifdef CONFIG_NOCRYBOOT_DOOR_TEST
++#define NOCRYBOOT_VERSION	"0.1-doortest"	/* never installed: it only opens the door */
++#else
++#define NOCRYBOOT_VERSION	"0.1"
++#endif
+ 
+ #define CONFIG_ROOTFS_SQUASHFS
+ #define CONFIG_ROOTFS2_SQUASHFS
+@@ -29,9 +36,11 @@
+ /* Debug UART = Linux console: UART4 on the Nebula Pad, UART2 on K1 boards. */
+ #if defined(CONFIG_NOCRYBOOT_NEBULA)
+ #define CONFIG_SYS_UART_INDEX		4
++#define NOCRYBOOT_FAMILY		"nebula"
+ #define CONFIG_SYS_UART4_PA		/* on pins PA2/PA3 */
+ #elif defined(CONFIG_NOCRYBOOT_K1)
+ #define CONFIG_SYS_UART_INDEX		2
++#define NOCRYBOOT_FAMILY		"k1"
+ #else
+ #error "nocryboot: choose NOCRYBOOT_NEBULA or NOCRYBOOT_K1"
+ #endif

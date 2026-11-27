@@ -271,6 +271,44 @@ pub unsafe extern "C" fn nocry_copy_slot_json(from: *const c_char, safety_dir: *
     }))
 }
 
+/// The board's first-stage boot loader. `action`: 0 = report, 1 = install nocryboot,
+/// 2 = put the factory loader back. `file` (may be NULL): a factory loader or a backup
+/// image holding one. Without `execute` nothing is written.
+/// # Safety
+/// `file` and `safety_dir` must be NULL or valid NUL-terminated paths.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_loader_json(action: c_int, file: *const c_char, execute: c_int, safety_dir: *const c_char) -> *mut c_char {
+    let (file, safety) = (opt_path(file), opt_path(safety_dir));
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| {
+        let soc = &nocry_core::bootrom::SOCS[0];
+        let t = test_target();
+        match action {
+            1 => session::install_loader(soc, Via::Auto, None, safety.as_deref(), file.as_ref(), execute != 0, t.as_ref()),
+            2 => session::restore_factory_loader(soc, Via::Auto, None, file.as_ref(), execute != 0, t.as_ref()),
+            _ => session::loader_status(soc, Via::Auto, None, t.as_ref()),
+        }
+    });
+    out(match r {
+        Ok(Ok(x)) => {
+            use nocry_core::loader::Kind;
+            let kind = match x.on_board.kind {
+                Kind::Factory => "factory",
+                Kind::Nocryboot { .. } => "nocryboot",
+                Kind::Unknown => "unknown",
+            };
+            let avail = x.available.as_ref().map(|a| a.describe()).unwrap_or_default();
+            let same = x.available.as_ref() == Some(&x.on_board);
+            format!(
+                "{{\"ok\":true,\"kind\":\"{kind}\",\"loader\":\"{}\",\"factory_kept\":{},\"available\":\"{}\",\"up_to_date\":{same},\"blocked\":\"{}\",\"counts\":{},\"door\":{},\"changed\":{},\"executed\":{}}}",
+                esc(&x.on_board.describe()), x.factory_kept, esc(&avail), esc(x.blocked.as_deref().unwrap_or("")), x.on_board.counts, x.on_board.door, x.changed, execute != 0
+            )
+        }
+        Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
 /// # Safety
 /// `safety_dir` must be NULL or a valid NUL-terminated path.
 #[no_mangle]

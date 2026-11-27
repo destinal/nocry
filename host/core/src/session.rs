@@ -815,9 +815,7 @@ impl BootNote {
 /// The script nocry puts into the firmware's settings area so that a started system reports success.
 pub const CONFIRM_SCRIPT: &str = include_str!("../data/nocryboot-confirm.sh");
 pub const CONFIRM_SCRIPT_PATH: &str = "upper/etc/init.d/S98nocryboot";
-/// First-stage loader on the eMMC: 24 KiB at this byte offset.
-pub const SPL_OFFSET: u64 = 0x4400;
-pub const SPL_SIZE: usize = 24 * 1024;
+pub use crate::loader::{SPL_OFFSET, SPL_SIZE};
 
 
 fn read_slots(t: &restore::Target) -> Result<(crate::gpt::Gpt, Slots)> {
@@ -840,8 +838,7 @@ fn read_slots(t: &restore::Target) -> Result<(crate::gpt::Gpt, Slots)> {
         Ok(s)
     };
     let note = BootNote::parse(&t.read(ota.offset() + 512, 512)?);
-    let spl = t.read(SPL_OFFSET, SPL_SIZE)?;
-    let loader_counts = spl.windows(14).any(|w| w == b"nocryboot:try=");
+    let loader_counts = crate::loader::inspect(&t.read(SPL_OFFSET, SPL_SIZE)?).counts;
     let slots =
         Slots { active: active.into(), a: slot("rtos", "kernel", "rootfs")?, b: slot("rtos2", "kernel2", "rootfs2")?, note, loader_counts };
     Ok((g, slots))
@@ -949,6 +946,233 @@ pub fn start_trial(soc: &SocProfile, via: Via, slot: &str, tries: u8, target: Op
         if slot == "a" { "B" } else { "A" }
     );
     Ok(s)
+}
+
+/// What `loader_status` and the install/restore calls report.
+#[derive(Debug, Clone)]
+pub struct LoaderStatus {
+    /// the loader on the board now
+    pub on_board: crate::loader::Info,
+    /// board family, from the identity record or else from the loader
+    pub family: Option<crate::boards::FamilyId>,
+    /// a copy of the factory loader is kept on the board
+    pub factory_kept: bool,
+    /// the nocryboot build this nocry would install, if it has one for the family
+    pub available: Option<crate::loader::Info>,
+    /// why nocryboot cannot be installed on this board, if so
+    pub blocked: Option<String>,
+    /// something was (or with `execute` would be) written
+    pub changed: bool,
+}
+
+/// nocryboot's image for a board family: `<images>/nocryboot/nocryboot-<family>.bin`
+/// (in a source tree: tools/nocryboot-build/out).
+pub fn nocryboot_image(images: Option<&PathBuf>, family: crate::boards::FamilyId) -> Option<Vec<u8>> {
+    let name = match family {
+        crate::boards::FamilyId::Nebula => "nocryboot-nebula.bin",
+        crate::boards::FamilyId::K1 => "nocryboot-k1.bin",
+    };
+    let dir = images_dir(images).ok()?;
+    [dir.join("nocryboot").join(name), dir.join("../../nocryboot-build/out").join(name)]
+        .iter()
+        .find_map(|p| std::fs::read(p).ok())
+        .filter(|b| b.len() == crate::loader::SPL_SIZE)
+}
+
+fn loader_state(t: &restore::Target, images: Option<&PathBuf>) -> Result<(crate::gpt::Gpt, LoaderStatus, Option<Vec<u8>>, Option<Vec<u8>>)> {
+    use crate::loader as L;
+    let g = crate::gpt::Gpt::parse(&t.read(0, crate::gpt::GPT_AREA)?)
+        .context("this board has no valid partition table (blank board?); install firmware first")?;
+    let on_board = L::inspect(&t.read(L::SPL_OFFSET, L::SPL_SIZE)?);
+    let from_identity = g
+        .find("sn_mac")
+        .and_then(|p| t.read(p.offset(), 4096).ok())
+        .and_then(|a| crate::snmac::SnMac::parse(&a))
+        .and_then(|sm| crate::boards::family_of_mainboard(&sm.board()).map(|f| f.id));
+    let kept = L::saved_loader(&t.read(L::SAVED_MARK_OFFSET, 512)?, &t.read(L::SAVED_OFFSET, L::SPL_SIZE)?);
+    let family = from_identity.or(on_board.family);
+    let image = family.and_then(|f| nocryboot_image(images, f));
+    let available = image.as_deref().map(L::inspect);
+    let blocked = match (family, &on_board.kind) {
+        (None, _) => Some("nocry cannot tell which board family this is".to_string()),
+        (_, L::Kind::Unknown) => Some("the loader on this board is not one nocry knows; it is left alone".to_string()),
+        (Some(f), _) if from_identity.is_some() && on_board.family.is_some() && on_board.family != Some(f) => {
+            Some("the board's identity record and its loader name different board families".to_string())
+        }
+        (Some(f), _) => L::check_layout(&g, f).err().map(|e| e.to_string()).or_else(|| match &available {
+            None => Some("this copy of nocry has no nocryboot image for this board family".to_string()),
+            Some(a) if a.family != Some(f) || !matches!(a.kind, L::Kind::Nocryboot { .. }) => {
+                Some("the nocryboot image found is not for this board family".to_string())
+            }
+            Some(L::Info { kind: L::Kind::Nocryboot { version: Some(v) }, .. }) if v.contains("test") => {
+                Some("the nocryboot image found is a test build".to_string())
+            }
+            _ => None,
+        }),
+    };
+    let st = LoaderStatus { on_board, family, factory_kept: kept.is_some(), available, blocked, changed: false };
+    Ok((g, st, image, kept))
+}
+
+/// Which first-stage loader the board has, and whether nocryboot can be installed.
+pub fn loader_status(soc: &SocProfile, via: Via, images: Option<&PathBuf>, target: Option<&PathBuf>) -> Result<LoaderStatus> {
+    let t = open_target(soc, target, Want::PreferRw, false, false, images, None, via)?;
+    Ok(loader_state(&t, images)?.1)
+}
+
+/// A loader from a file: the 24 KiB loader itself, or a backup image of an eMMC that contains it.
+fn read_loader_file(p: &PathBuf) -> Result<Vec<u8>> {
+    use std::io::{Read as _, Seek as _};
+    let mut f = std::fs::File::open(p).with_context(|| format!("{}", p.display()))?;
+    let mut b = vec![0u8; crate::loader::SPL_SIZE];
+    if f.metadata()?.len() > crate::loader::SPL_OFFSET + crate::loader::SPL_SIZE as u64 {
+        f.seek(std::io::SeekFrom::Start(crate::loader::SPL_OFFSET))?;
+    }
+    f.read_exact(&mut b).with_context(|| format!("{} is too short to hold a loader", p.display()))?;
+    Ok(b)
+}
+
+fn save_loader_copy(dir: Option<&std::path::Path>, t: &restore::Target, what: &str, loader: &[u8]) -> Result<()> {
+    if let Some(dir) = dir {
+        std::fs::create_dir_all(dir)?;
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+        // "fastboot:<serial>" for a board, a file name for a disk image
+        let name = t.path.to_string_lossy();
+        let id: String = name.rsplit(['/', '\\', ':']).next().unwrap_or("").chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let f = dir.join(format!("{what}-loader-{id}-{ts}.bin"));
+        std::fs::write(&f, loader)?;
+        say!("copy of the {what} loader saved to {}", f.display());
+    }
+    Ok(())
+}
+
+/// Install nocryboot as the board's first-stage loader. A factory loader is first kept on the
+/// board (unused end of the boot area) and, with `safety_dir`, on this computer. Without
+/// `execute` nothing is written; the report says what would happen.
+pub fn install_loader(
+    soc: &SocProfile,
+    via: Via,
+    images: Option<&PathBuf>,
+    safety_dir: Option<&std::path::Path>,
+    keep_file: Option<&PathBuf>,
+    execute: bool,
+    target: Option<&PathBuf>,
+) -> Result<LoaderStatus> {
+    use crate::loader as L;
+    let t = open_target(soc, target, if execute { Want::Rw } else { Want::PreferRw }, execute, false, images, None, via)?;
+    let (_g, mut st, image, mut kept) = loader_state(&t, images)?;
+    if let Some(why) = &st.blocked {
+        bail!("nocryboot cannot be installed: {why}. Nothing was changed");
+    }
+    // A board whose factory loader was replaced before nocry kept copies: take it from a file.
+    if let (Some(p), None, false) = (keep_file, &kept, st.on_board.kind == L::Kind::Factory) {
+        let f = read_loader_file(p)?;
+        let fi = L::inspect(&f);
+        if fi.kind != L::Kind::Factory || fi.family != st.family {
+            bail!("{} does not hold the factory loader of this board family ({}). Nothing was changed", p.display(), fi.describe());
+        }
+        if t.read(L::SAVED_MARK_OFFSET, 512 + L::SPL_SIZE)?.iter().any(|&b| b != 0) {
+            bail!("the place in the boot area where nocry keeps the factory loader is not empty on this board. Nothing was changed");
+        }
+        say!("factory loader to keep on the board: {}", fi.describe());
+        st.changed = true;
+        if execute {
+            t.write_verified(L::SAVED_OFFSET, &f, "kept factory loader")?;
+            t.write_verified(L::SAVED_MARK_OFFSET, &L::saved_mark(&f), "kept factory loader")?;
+            st.factory_kept = true;
+            kept = Some(f);
+        }
+    }
+    let image = image.context("no nocryboot image")?;
+    let current = t.read(L::SPL_OFFSET, L::SPL_SIZE)?;
+    if current == image {
+        say!("this board already has {}", st.on_board.describe());
+        return Ok(st);
+    }
+    let keep = st.on_board.kind == L::Kind::Factory;
+    if keep && kept.is_none() {
+        // the place for the copy must be unused
+        let area = t.read(L::SAVED_MARK_OFFSET, 512 + L::SPL_SIZE)?;
+        if area.iter().any(|&b| b != 0) {
+            bail!("the place in the boot area where nocry keeps the factory loader is not empty on this board. Nothing was changed");
+        }
+    }
+    say!("loader now:  {}", st.on_board.describe());
+    say!("to install:  {}", st.available.as_ref().map(|a| a.describe()).unwrap_or_default());
+    st.changed = true;
+    if !execute {
+        return Ok(st);
+    }
+    if keep {
+        save_loader_copy(safety_dir, &t, "factory", &current)?;
+        if kept.as_deref() != Some(&current[..]) {
+            t.write_verified(L::SAVED_OFFSET, &current, "kept factory loader")?;
+            t.write_verified(L::SAVED_MARK_OFFSET, &L::saved_mark(&current), "kept factory loader")?;
+        }
+        st.factory_kept = true;
+        say!("factory loader kept on the board");
+    }
+    t.write_verified(L::SPL_OFFSET, &image, "boot loader")?;
+    if t.read(L::SPL_OFFSET, L::SPL_SIZE)? != image {
+        bail!("the loader does not read back as written; do not power the board off, and try again");
+    }
+    st.on_board = L::inspect(&image);
+    say!("installed: {}", st.on_board.describe());
+    Ok(st)
+}
+
+/// Put the factory loader back. It comes from the copy kept on the board, or from `file`
+/// (a 24 KiB loader, or a backup image of this board's eMMC that contains it).
+pub fn restore_factory_loader(
+    soc: &SocProfile,
+    via: Via,
+    images: Option<&PathBuf>,
+    file: Option<&PathBuf>,
+    execute: bool,
+    target: Option<&PathBuf>,
+) -> Result<LoaderStatus> {
+    use crate::loader as L;
+    let t = open_target(soc, target, if execute { Want::Rw } else { Want::PreferRw }, execute, false, images, None, via)?;
+    let (_g, mut st, _image, kept) = loader_state(&t, images)?;
+    if st.on_board.kind == L::Kind::Factory {
+        say!("this board already has the {}", st.on_board.describe());
+        return Ok(st);
+    }
+    let factory = match file {
+        Some(p) => read_loader_file(p)?,
+        None => kept.context(
+            "no copy of the factory loader is kept on this board. Give one with --file: a backup image of this \
+             board made before nocryboot was installed contains it",
+        )?,
+    };
+    let fi = L::inspect(&factory);
+    if fi.kind != L::Kind::Factory {
+        bail!("that is not a Creality factory loader ({}). Nothing was changed", fi.describe());
+    }
+    if st.family.is_some() && fi.family != st.family {
+        bail!("that factory loader is for a different board family ({}). Nothing was changed", fi.describe());
+    }
+    say!("loader now:  {}", st.on_board.describe());
+    say!("to install:  {}", fi.describe());
+    st.changed = true;
+    if !execute {
+        return Ok(st);
+    }
+    if st.on_board.kind != L::Kind::Unknown {
+        // the trial count means nothing to the factory loader; leave no half-finished trial behind
+        if let Some(ota) = _g.find("ota") {
+            if BootNote::parse(&t.read(ota.offset() + 512, 512)?).is_some() {
+                t.write_verified(ota.offset() + 512, &[0u8; 512], "ota")?;
+            }
+        }
+    }
+    t.write_verified(L::SPL_OFFSET, &factory, "boot loader")?;
+    if t.read(L::SPL_OFFSET, L::SPL_SIZE)? != factory {
+        bail!("the loader does not read back as written; do not power the board off, and try again");
+    }
+    st.on_board = fi;
+    say!("installed: {}", st.on_board.describe());
+    Ok(st)
 }
 
 #[derive(Debug, Clone, Default)]

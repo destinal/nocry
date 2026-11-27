@@ -105,6 +105,14 @@ char *nocry_install_slot_json(const char *os_path, int execute, const char *safe
  * {"ok":true,"bytes":N,"partitions":[{"name":"userdata","method":"secure-discard|discard|overwrite"}]} */
 char *nocry_secure_wipe_json(const char *safety_dir);
 
+/* The board's first-stage boot loader. action: 0 = report, 1 = install nocryboot (a factory loader is
+ * kept on the board first), 2 = put the factory loader back. file (may be NULL): a factory loader, or a
+ * backup image holding one. Nothing is written unless execute is non-zero.
+ * {"ok":true,"kind":"factory|nocryboot|unknown","loader":"text","factory_kept":bool,"available":"text",
+ *  "up_to_date":bool,"blocked":"why nocryboot cannot be installed, or empty","counts":bool,"door":bool,
+ *  "changed":bool,"executed":bool} */
+char *nocry_loader_json(int action, const char *file, int execute, const char *safety_dir);
+
 /* The board's log of its current (recovery) or previous start: {"ok":true,"kind":"recovery|previous","text":"..."} */
 char *nocry_boot_log_json(void);
 

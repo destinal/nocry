@@ -102,6 +102,24 @@ enum Cmd {
         #[arg(long = "try")]
         tries: Option<u8>,
     },
+    /// Show the board's first-stage boot loader. --install puts nocryboot there (the factory
+    /// loader is kept on the board); --factory puts the factory loader back. Dry run unless --yes
+    Loader {
+        #[arg(long, conflicts_with = "factory")]
+        install: bool,
+        #[arg(long)]
+        factory: bool,
+        /// The factory loader as a file (a 24 KiB loader, or a backup image of this board made
+        /// before nocryboot went on). With --factory: use it instead of the copy kept on the
+        /// board. With --install: keep it on the board, if the board has no copy yet
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Work on a disk image file instead of a board
+        #[arg(long)]
+        target: Option<PathBuf>,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Copy the firmware of one slot (a or b) into the other, verified. The active slot,
     /// settings and identity are not changed.
     CopySlot {
@@ -495,6 +513,29 @@ fn main() -> Result<()> {
             println!("loader: {}", if s.loader_counts { "nocryboot (counts starts)" } else { "does not count starts" });
             if let Some(n) = &s.note {
                 println!("note: {}", n.describe());
+            }
+        }
+        Cmd::Loader { install, factory, file, target, yes } => {
+            let st = if install {
+                let dir = catalog::default_data_dir().join("safety");
+                install_loader(soc, Via::Auto, images.as_ref(), Some(&dir), file.as_ref(), yes, target.as_ref())?
+            } else if factory {
+                restore_factory_loader(soc, Via::Auto, images.as_ref(), file.as_ref(), yes, target.as_ref())?
+            } else {
+                loader_status(soc, Via::Auto, images.as_ref(), target.as_ref())?
+            };
+            println!("loader: {}", st.on_board.describe());
+            println!("factory loader kept on the board: {}", if st.factory_kept { "yes" } else { "no" });
+            if !install && !factory {
+                match (&st.blocked, &st.available) {
+                    (Some(why), _) => println!("nocryboot cannot be installed: {why}"),
+                    (None, Some(a)) if st.on_board != *a => println!("can install: {}  (nocry loader --install --yes)", a.describe()),
+                    _ => {}
+                }
+            } else if st.changed && !yes {
+                println!("dry run: nothing was written. Add --yes to do it.");
+            } else if st.changed {
+                println!("done. Power the board off and on; if it stays dark, use the BOOT button and `nocry loader --factory --yes`.");
             }
         }
         Cmd::CopySlot { from, yes } => {

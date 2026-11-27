@@ -23,10 +23,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist-images
-          key: images-${{ hashFiles('tools/burner-build/**', 'tools/recovery-build/**', 'tools/splhdr/**') }}
+          key: images-${{ hashFiles('tools/burner-build/**', 'tools/recovery-build/**', 'tools/splhdr/**', 'tools/nocryboot-build/**') }}
       - name: Build SPL and U-Boot stages
         if: steps.cache.outputs.cache-hit != 'true'
         run: tools/burner-build/build.sh "$PWD/out-burner"
+      - name: Build nocryboot (first-stage loader for the eMMC)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: tools/nocryboot-build/build.sh "$PWD/out-nocryboot"
       - name: Build recovery Linux
         if: steps.cache.outputs.cache-hit != 'true'
         run: tools/recovery-build/build.sh "$RUNNER_TEMP/recovery-work" "$PWD/out-recovery" || { tail -60 "$RUNNER_TEMP"/recovery-work/*.log; exit 1; }
@@ -38,6 +41,8 @@ jobs:
           for t in nocry_fb_x2000_v12 nocry_ums_x2000_v12 nocry_ums_ro_x2000_v12; do
             mkdir -p dist-images/$t && cp out-burner/$t/u-boot.bin dist-images/$t/
           done
+          mkdir -p dist-images/nocryboot
+          cp out-nocryboot/nocryboot-nebula.bin out-nocryboot/nocryboot-k1.bin dist-images/nocryboot/
           cp out-recovery/nocry-recovery.uImage dist-images/
           (cd dist-images && find . -type f | sort | xargs sha256sum | tee SHA256SUMS)
       - uses: actions/upload-artifact@v4

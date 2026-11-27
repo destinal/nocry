@@ -82,9 +82,29 @@ nocry run-spl tools/nocryboot-build/out/nocryboot-nebula.bin      # board in USB
 
 `nocry run-spl` sends the loader to the boot ROM over USB and starts it from RAM. Nothing is written; the loader then boots whatever is installed. The factory loader can be started the same way (cut 24 KiB at byte 0x4400 from a backup), which is the control for this test.
 
-Installing it means writing the 24 KiB file at byte 0x4400 of the eMMC (inside the `xboot` area). For now that is done by hand from the recovery system (`nocry recovery`, then `nocry fb write mmc0 nocryboot-nebula.bin --offset 0x4400 --critical`); there is no installer yet, and no second copy of the SPL: a bad one leaves the board dark until it is rewritten from USB boot mode, which always works because the boot ROM does not depend on the eMMC.
+### Installing and going back
+
+```
+nocry loader                      # what the board has, and whether nocryboot can go on
+nocry loader --install --yes      # install nocryboot (without --yes: say what would happen)
+nocry loader --factory --yes      # put Creality's loader back
+```
+
+In the window: Advanced, "Boot loader…".
+
+The loader is the 24 KiB at byte 0x4400 of the eMMC, inside the unpartitioned first MiB. Before nocry writes there it checks:
+
+- the loader on the board is one it knows (Creality's or nocryboot); anything else is left alone;
+- the board family (from the identity record and from the present loader's console setting; they must agree);
+- the partitions the loader reads are where its built-in table says (`ota`, `sn_mac`, `rtos`, `rtos2`, `kernel`, `kernel2`, `rootfs`, `rootfs2`);
+- the image to install is nocryboot for that family, and not a test build.
+
+A factory loader is kept before it is replaced: on the board itself, at 0xf0000 in the unused end of the first MiB (with a line of text and a checksum in the sector before, 0xefe00), and as a file in nocry's data folder (`safety/`). `--factory` takes it from the board; `--factory --file X` takes it from a file, which can be a backup image of the board. For a board that got nocryboot before nocry kept copies, `--install --file <backup from before>` stores the factory loader from that backup on the board.
+
+Every write is read back. There is one copy of the loader on the eMMC: if a new one does not start, the board stays dark until the BOOT button brings it into USB boot mode, from where `nocry loader --factory` works.
+
+The loader carries a text nocry reads, `nocryboot-loader <version> <family>`; it is also the first line it prints on the console.
 
 ### Next
 
-- An installer in nocry (with the factory loader kept for going back).
 - Read the partition table from the disk instead of the built-in one.
