@@ -36,11 +36,11 @@ show() {
 }
 
 # Started by holding the screen at power-on (the loader says so): the screen has to stay held
-# for five more seconds, with a count on it, or the board restarts into its firmware. A stray
+# for three more seconds, with a count on it, or the board restarts into its firmware. A stray
 # touch while switching on then costs a restart and nothing else.
 confirm_hold() {
     grep -q 'nocry.rescue=touch' /proc/cmdline || return 0
-    n=5
+    n=3
     while [ $n -gt 0 ]; do
         nocry-banner "#nocry rescue" "" "Keep holding the screen" "to start the rescue system" "" "#$n"
         i=0

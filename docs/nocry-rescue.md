@@ -19,7 +19,7 @@ It needs nocryboot as the board's loader. USB boot mode stays the last resort be
 | Where it lives | **decided:** one file in `userdata`, not a partition. No repartitioning. |
 | How the loader finds it | a pointer (start sector, length, checksum) in a spare sector of `ota`; the loader reads raw sectors and checks them before starting anything |
 | Losing it | **decided, accepted for now:** a factory reset erases `userdata` and with it the file. A reset done by nocry or by rescue puts it back; after a reset from Creality's menu it is gone until nocry reinstalls it. A dedicated partition would survive; possible later. |
-| Starting it | finger on the screen at power-on, then a 5-second confirmation drawn by the boot logo program; automatically when no slot can be started; on request (a one-shot note in `ota`) |
+| Starting it | finger on the screen at power-on (the nocryboot loader reads the touch chip), then a 3-second hold with a count, drawn by the rescue system itself; automatically when no slot can be started; on request (a one-shot note in `ota`) |
 | USB keyboard as trigger | not possible: the loader has no USB stack and about 1.6 KB of room |
 | First version | **decided:** Nebula Pad first. Network setup, slot choice, factory reset, start normally, control from nocry over the LAN. |
 | Firmware install from the touchscreen | **decided:** second step (needs nocry's install engine built for the board) |
@@ -43,7 +43,7 @@ The loader never writes there and never trusts the pointer without the checksum,
 
 The first stage has almost no room and no input devices. The boot logo program (`rtos/`) runs before Linux, owns the screen, and has room:
 
-- It reads the touch controller. A finger held down at power-on brings up "Start nocry-rescue? Keep holding / tap to confirm" for 5 seconds. Without a finger, nothing changes and no time is added.
+- It reads the touch controller. (As built, differently: the nocryboot loader reads the touch controller and starts the rescue system, which asks for a 3-second hold; see `docs/nocryboot.md`.) The original plan: a finger held down at power-on brings up "Start nocry-rescue? Keep holding / tap to confirm". Without a finger, nothing changes and no time is added.
 - It reports the result to the first stage in the word it already uses for the panel id (a flag bit beside it).
 - The first stage then loads rescue instead of the slot's kernel.
 
