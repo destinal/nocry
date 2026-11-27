@@ -1,5 +1,5 @@
-//! Minimal squashfs 4.0 reader: fetch one small file by path from a gzip- or lzo-compressed
-//! image. Enough to read `etc/ota_info` from a Creality rootfs on every platform.
+//! Minimal squashfs 4.0 reader: fetch one small file by path from a gzip-, lzo- or
+//! zstd-compressed image. Enough to read `etc/ota_info` from a Creality rootfs on every platform.
 //!
 //! The image is a [`Source`]: bytes in memory, or [`Paged`], which fetches only the parts
 //! that are looked at. Finding one small file touches the superblock, a few blocks of the
@@ -108,8 +108,15 @@ fn unlzo(data: &[u8], limit: usize) -> Option<Vec<u8>> {
     (out.len() <= limit).then_some(out)
 }
 
+fn unzstd(data: &[u8], limit: usize) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    ruzstd::decoding::StreamingDecoder::new(data).ok()?.take(limit as u64 + 1).read_to_end(&mut out).ok()?;
+    (out.len() <= limit).then_some(out)
+}
+
 const COMP_GZIP: u16 = 1;
 const COMP_LZO: u16 = 3;
+const COMP_ZSTD: u16 = 6;
 
 struct Sq<'a> {
     img: &'a dyn Source,
@@ -124,6 +131,7 @@ impl<'a> Sq<'a> {
     fn unpack(&self, data: &[u8], limit: usize) -> Option<Vec<u8>> {
         match self.comp {
             COMP_LZO => unlzo(data, limit),
+            COMP_ZSTD => unzstd(data, limit),
             _ => inflate(data, limit),
         }
     }
@@ -243,7 +251,7 @@ pub fn read_file(img: &[u8], path: &str, max: usize) -> Option<Vec<u8>> {
 pub fn read_file_from(img: &dyn Source, path: &str, max: usize) -> Option<Vec<u8>> {
     let sb = img.get(0, 96)?;
     let comp = u16le(&sb, 20)?;
-    if &sb[..4] != b"hsqs" || !(comp == COMP_GZIP || comp == COMP_LZO) || u16le(&sb, 28)? != 4 {
+    if &sb[..4] != b"hsqs" || !(comp == COMP_GZIP || comp == COMP_LZO || comp == COMP_ZSTD) || u16le(&sb, 28)? != 4 {
         return None;
     }
     let sq = Sq {
@@ -293,8 +301,9 @@ mod tests {
         let Some(path) = std::env::var_os("NOCRY_TEST_ROOTFS") else { return };
         let img = std::fs::read(path).unwrap();
         let src = Paged::new(img.len() as u64, |off, len| img.get(off as usize..off as usize + len).map(|b| b.to_vec()));
-        let info = read_file_from(&src, "etc/ota_info", 64 * 1024).or_else(|| read_file_from(&src, "etc/version", 4096)).unwrap();
-        assert_eq!(Some(info), read_file(&img, "etc/ota_info", 64 * 1024).or_else(|| read_file(&img, "etc/version", 4096)));
+        let any = |f: &dyn Fn(&str) -> Option<Vec<u8>>| ["etc/ota_info", "etc/version", "usr/lib/os-release"].iter().find_map(|p| f(p));
+        let info = any(&|p| read_file_from(&src, p, 64 * 1024)).unwrap();
+        assert_eq!(Some(info), any(&|p| read_file(&img, p, 64 * 1024)));
         println!("fetched {} of {} bytes", src.fetched(), img.len());
         assert!(src.fetched() < 4 << 20);
     }

@@ -673,6 +673,9 @@ pub fn install(
     picture: PictureChoice,
 ) -> Result<InstallReport> {
     let pkg = restore::Package::load(os)?;
+    // NebulaOS brings its own start program for its own kernel; nocry's boot picture program
+    // has only been proven with Creality's firmware, so it is never put in its place.
+    let picture = if pkg.ota_board.as_deref() == Some(crate::boards::NEBULAOS) { PictureChoice::Firmware } else { picture };
     let line = pkg.ota_board.as_deref().and_then(crate::boards::line);
     let mut r = InstallReport {
         firmware_board: pkg.ota_board.clone().unwrap_or_default(),
@@ -1003,6 +1006,14 @@ pub fn start_trial(soc: &SocProfile, via: Via, slot: &str, tries: u8, target: Op
              a trial needs nocryboot with the start counter. Nothing was changed"
         );
     }
+    if info.firmware_name == crate::boards::firmware_name(crate::boards::NEBULAOS) {
+        bail!(
+            "slot {} holds NebulaOS, which does not report a successful start to nocryboot (nocry's report script \
+             lives in the settings overlay, which NebulaOS does not use). A trial would always end by going back to \
+             the other slot. Nothing was changed",
+            slot.to_uppercase()
+        );
+    }
     if !other.bootable() {
         bail!(
             "slot {} has no complete firmware, so there is nothing to go back to if slot {} fails. Nothing was changed",
@@ -1132,6 +1143,13 @@ fn apply_picture(
         let (info, cur, kept) = picture_of(t, g, part)?;
         let (Some(p), Some(cur)) = (g.find(part), cur) else { continue };
         let s = slot.to_uppercase();
+        if want == P::Kind::Nocry && info.kind == P::Kind::Firmware {
+            let rootfs = if *slot == "b" { "rootfs2" } else { "rootfs" };
+            if restore::firmware_in(t, g, rootfs).is_some_and(|(b, _)| b == crate::boards::NEBULAOS) {
+                say!("slot {s}: NebulaOS keeps its own start program (nocry's boot picture is not proven with it)");
+                continue;
+            }
+        }
         match (want, info.kind) {
             (P::Kind::Nocry, P::Kind::Firmware) | (P::Kind::Nocry, P::Kind::Nocry) => {
                 let img = nocry_picture_image(images, family).context("this copy of nocry has no boot picture image for this board family")?;
@@ -1877,6 +1895,9 @@ pub fn install_other_slot(
     picture: PictureChoice,
 ) -> Result<InstallReport> {
     let pkg = restore::Package::load(os)?;
+    // NebulaOS brings its own start program for its own kernel; nocry's boot picture program
+    // has only been proven with Creality's firmware, so it is never put in its place.
+    let picture = if pkg.ota_board.as_deref() == Some(crate::boards::NEBULAOS) { PictureChoice::Firmware } else { picture };
     let mut r = InstallReport {
         firmware_board: pkg.ota_board.clone().unwrap_or_default(),
         firmware_version: pkg.ota_version.clone().unwrap_or_default(),

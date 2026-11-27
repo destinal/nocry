@@ -1560,7 +1560,7 @@ private:
         auto *v = new QVBoxLayout(&d);
 
         // --- where the firmware comes from
-        auto *fromList = new QRadioButton(tr("Download from Creality"));
+        auto *fromList = new QRadioButton(tr("Download"));
         auto *fromFile = new QRadioButton(tr("Use a file on this computer"));
         auto *srcGroup = new QButtonGroup(&d);
         srcGroup->addButton(fromList);
@@ -1644,9 +1644,17 @@ private:
                 versionBox->addItem(t);
             }
             const QString key = m.value("key").toString();
-            hint->setText(!mine.isEmpty() && key != mine
-                ? tr("This is firmware for a different printer than this board is set up for. Installing it converts the board.")
-                : QString());
+            if (key == "NEBULAOS")
+                // one image for both printers; the board's printer type is left as it is
+                hint->setText(mine.isEmpty() || mine == "F005" || mine == "NEBULA"
+                    ? tr("NebulaOS is an independent open-source firmware, not made by Creality, for the Ender-3 V3 KE and the retail Nebula Pad. "
+                         "It uses its own firmware on the printer's mainboard: read its release notes before switching between it and Creality's firmware. "
+                         "The board's printer type is not changed.")
+                    : tr("NebulaOS is made for the Ender-3 V3 KE and the retail Nebula Pad only. nocry will not install it on this board."));
+            else
+                hint->setText(!mine.isEmpty() && key != mine
+                    ? tr("This is firmware for a different printer than this board is set up for. Installing it converts the board.")
+                    : QString());
             hint->setVisible(!hint->text().isEmpty());
         };
         auto showNotes = [&] {
@@ -1671,12 +1679,21 @@ private:
                 if (isMine)
                     sel = i;
             }
+            // self-tests: show another list than the board's own
+            const QByteArray wantKey = qgetenv("NOCRY_TEST_LIST_KEY");
+            for (int i = 0; !wantKey.isEmpty() && i < models.size(); i++)
+                if (models[i].toObject().value("key").toString() == QString::fromUtf8(wantKey))
+                    sel = i;
             modelBox->setCurrentIndex(sel);
             listInfo->setText(cat.value("updated").toBool() ? tr("List updated %1").arg(cat.value("built").toString())
                                                             : tr("List from %1").arg(cat.value("built").toString()));
         };
         auto update = [&] {
             const bool lst = fromList->isChecked();
+            // NebulaOS starts through its own program; nocry's boot picture is not used with it
+            const bool nebulaos = lst && modelBox->currentIndex() >= 0 && models.at(modelBox->currentIndex()).toObject().value("key").toString() == "NEBULAOS";
+            pic->setEnabled(!nebulaos);
+            pic->setToolTip(nebulaos ? tr("NebulaOS shows its own boot picture.") : QString());
             listBox->setEnabled(lst);
             fileBox->setEnabled(!lst);
             bb->button(QDialogButtonBox::Ok)->setEnabled(lst ? versionBox->count() > 0 : QFileInfo::exists(path->text().trimmed()));
@@ -1690,7 +1707,7 @@ private:
         update();
         connect(refresh, &QPushButton::clicked, &d, [&] {
             refresh->setEnabled(false);
-            listInfo->setText(tr("Asking Creality…"));
+            listInfo->setText(tr("Checking for new versions…"));
             auto *w = new QFutureWatcher<QJsonObject>(&d);
             connect(w, &QFutureWatcher<QJsonObject>::finished, &d, [&, w] {
                 const QJsonObject o = w->result();
@@ -1707,7 +1724,7 @@ private:
             w->setFuture(QtConcurrent::run([dir] { return takeJson(nocry_catalog_json(dir.constData(), 1)); }));
         });
         connect(file, &QPushButton::clicked, &d, [&] {
-            const QString f = QFileDialog::getOpenFileName(&d, tr("Choose firmware"), QString(), tr("Creality firmware (*.img *.ingenic);;All files (*)"));
+            const QString f = QFileDialog::getOpenFileName(&d, tr("Choose firmware"), QString(), tr("Firmware (*.img *.ingenic);;All files (*)"));
             if (!f.isEmpty())
                 path->setText(f);
         });

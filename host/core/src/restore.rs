@@ -115,6 +115,10 @@ fn ota_info(rootfs: &dyn crate::squashfs::Source) -> (Option<String>, Option<Str
     if let (Some(b), Some(v)) = (get("ota_board_name="), get("ota_version=")) {
         return (Some(b), Some(v));
     }
+    // NebulaOS: no ota_info; its own etc/os-release
+    if let Some(v) = crate::boards::nebulaos_version(rootfs) {
+        return (Some(crate::boards::NEBULAOS.to_string()), Some(v));
+    }
     // the K1 family's newer generation (Linux 5.10, late 2025): etc/hardware and etc/version
     let line = |path: &str| {
         crate::squashfs::read_file_from(rootfs, path, 4096)
@@ -916,6 +920,16 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
                 boards::family(l.family).name,
                 f.name,
                 cur_board.as_deref().unwrap_or("")
+            );
+        }
+    }
+    // NebulaOS does not look at the model field, so nocry never changes it for NebulaOS; what
+    // matters is the printer the board is really in, and it is published for these only.
+    if pkg.ota_board.as_deref() == Some(boards::NEBULAOS) && o.model.is_none() && !o.force_model {
+        if let Some(c) = cur_model.as_deref().filter(|c| !boards::NEBULAOS_MODELS.contains(c)) {
+            bail!(
+                "NebulaOS is made for the Ender-3 V3 KE and the retail Nebula Pad; this board is set up as a {} ({c}). On another printer it would load the wrong printer configuration and mainboard firmware",
+                boards::product_name(c)
             );
         }
     }

@@ -1,5 +1,5 @@
 {
-  "built": "2026-11-26",
+  "built": "2026-11-27",
   "models": [
     {
       "firmwares": [
@@ -10,6 +10,7 @@
             "2、Fixed known bugs."
           ],
           "released": "2026-01-14",
+          "sha256": "",
           "size": 118689530,
           "url": "https://file2-cdn.creality.com/file/a92ba54773af1a1da4416759f324ada8/NEBULA_ota_img_V1.1.0.30.img",
           "version": "1.1.0.30"
@@ -22,6 +23,7 @@
             "2. Adjust the origin offset of Ender-3 Neo to center the origin position."
           ],
           "released": "2025-04-24",
+          "sha256": "",
           "size": 118688874,
           "url": "https://file2-cdn.creality.com/file/53bdfd55125a6542901c9b94de47678d/NEBULA_ota_img_V1.1.0.29.img",
           "version": "1.1.0.29"
@@ -34,6 +36,7 @@
             "2. Fixed known bugs."
           ],
           "released": "2024-06-25",
+          "sha256": "",
           "size": 118709850,
           "url": "https://file2-cdn.creality.com/file/068b691524e67b418841fffc47bc428a/NEBULA_ota_img_V1.1.0.27.img",
           "version": "1.1.0.27"
@@ -54,6 +57,7 @@
             "10. Optimise the problem that the content of the tips in the light tips box is occasionally not vertically centred."
           ],
           "released": "2024-03-15",
+          "sha256": "",
           "size": 116668586,
           "url": "https://file2-cdn.creality.com/file/ff16e23430b58c458df70e20f3386f7f/NEBULA_ota_img_V1.1.0.26.img",
           "version": "1.1.0.26"
@@ -75,6 +79,7 @@
             "11. Add the function of using USB flash drive files to skip the log upload without masking during the startup self-test."
           ],
           "released": "2024-02-26",
+          "sha256": "",
           "size": 117117802,
           "url": "https://file2-cdn.creality.com/file/e1eeee66349f7133c55a1be490e21353/NEBULA_ota_img_V1.1.0.25.img",
           "version": "1.1.0.25"
@@ -101,6 +106,7 @@
             "16. Do not handle errors with error levels 0-500 before adding a universal screen without selecting a model."
           ],
           "released": "2023-10-30",
+          "sha256": "",
           "size": 113853354,
           "url": "https://file2-cdn.creality.com/file/6f129aa0ef74b323e31177b122c04c74/NEBULA_ota_img_V1.1.0.23.img",
           "version": "1.1.0.23"
@@ -117,6 +123,7 @@
             "1.1.0.17 Firmware Update Notes:\n1.Correction of some translations."
           ],
           "released": "2025-08-27",
+          "sha256": "",
           "size": 118703338,
           "url": "https://file2-cdn.creality.com/file/fd5ef4b38a5ac1e0cf2aec6847137f77/Ender-3_V3_KE_F005_ota_img_V1.1.0.17.img",
           "version": "1.1.0.17"
@@ -131,6 +138,7 @@
             "4. Ensure compatibility with Creality 5.0."
           ],
           "released": "2024-09-29",
+          "sha256": "",
           "size": 118738362,
           "url": "https://file2-cdn.creality.com/file/9a9c7558a0cfa2ba761b134b27b1264d/Ender-3_V3_KE_F005_ota_img_V1.1.0.15.img",
           "version": "1.1.0.15"
@@ -149,6 +157,7 @@
             "8. Fix the problem of gcode character encoding error report."
           ],
           "released": "2024-05-13",
+          "sha256": "",
           "size": 118624762,
           "url": "https://file2-cdn.creality.com/file/3443b29567400f1f095d6a71ae35bfc9/Ender-3_V3_KE_F005_ota_img_V1.1.0.14.img",
           "version": "1.1.0.14"
@@ -163,6 +172,7 @@
             "4. Repair the frequent connection of websocke to Creative Cloud when no camera is connected."
           ],
           "released": "2024-03-28",
+          "sha256": "",
           "size": 118580922,
           "url": "https://file2-cdn.creality.com/file/97a66354298d4ac529c002d3e3949c2b/Ender-3_V3_KE_F005_ota_img_V1.1.0.13.img",
           "version": "1.1.0.13"
@@ -178,6 +188,7 @@
             "5.Fix other known bugs."
           ],
           "released": "2024-01-12",
+          "sha256": "",
           "size": 118559722,
           "url": "https://file2-cdn.creality.com/file/6b62fa75180a982ec44dc4e1f29f8c3d/Ender-3_V3_KE_F005_ota_img_V1.1.0.12.img",
           "version": "1.1.0.12"
@@ -194,6 +205,7 @@
             "6.Fix boot network configuration bug."
           ],
           "released": "2023-10-16",
+          "sha256": "",
           "size": 113439050,
           "url": "https://file2-cdn.creality.com/file/c1f808458f0c27871eb20f9e905b8211/Ender-3_V3_KE_F005_ota_img_V1.1.0.9.img",
           "version": "1.1.0.9"
@@ -211,6 +223,7 @@
             "1. Optimization of known issues."
           ],
           "released": "2025-09-27",
+          "sha256": "",
           "size": 118829466,
           "url": "https://file2-cdn.creality.com/file/5360f2a381a044afb7efde31b9ddf5a4/CR-10_SE_F003_ota_img_V1.1.0.28.img",
           "version": "1.1.0.28"
@@ -235,6 +248,7 @@
             "15. The key403 and key404 errors are only reported during a power failure."
           ],
           "released": "2024-03-15",
+          "sha256": "",
           "size": 118568506,
           "url": "https://file2-cdn.creality.com/file/bfeb940e85acfe2ab4779cc959b8e6be/CR-10_SE_F003_ota_img_V1.1.0.27.img",
           "version": "1.1.0.27"
@@ -251,6 +265,7 @@
             "7.Fix other known bug."
           ],
           "released": "2023-11-01",
+          "sha256": "",
           "size": 113437530,
           "url": "https://file2-cdn.creality.com/file/0355630fa22a78338501846c98523719/CR-10_SE_F003_ota_img_V1.1.0.23.img",
           "version": "1.1.0.23"
@@ -275,6 +290,7 @@
             "15.Added pop-up prompts for abnormal AI brushed."
           ],
           "released": "2023-09-27",
+          "sha256": "",
           "size": 113507354,
           "url": "https://file2-cdn.creality.com/file/e37d64e73b3966e048a4b97b1d5de01b/F003_ota_img_V1.1.0.21.img",
           "version": "1.1.0.21"
@@ -295,6 +311,7 @@
             "4.Fixed known issues to further enhance user experience and product stability."
           ],
           "released": "2026-07-01",
+          "sha256": "",
           "size": 111060106,
           "url": "https://file2-cdn.creality.com/file/4a200e17b7eeddd9f521f0bf3f96f187/F004_ota_img_V1.2.0.24.img",
           "version": "1.2.0.24"
@@ -310,6 +327,7 @@
             "5. Open root permissions."
           ],
           "released": "2025-07-23",
+          "sha256": "",
           "size": 135652794,
           "url": "https://file2-cdn.creality.com/file/fec90a04284a2207073c7a5357628764/F004_ota_img_V1.2.0.21.img",
           "version": "1.2.0.21"
@@ -328,6 +346,7 @@
             "8. After the slicing software is paused, the pause point will always be executed."
           ],
           "released": "2025-04-29",
+          "sha256": "",
           "size": 117342666,
           "url": "https://file2-cdn.creality.com/file/18abd5dd216cc942c6e297b1527bde84/F004_ota_img_V1.2.0.20.img",
           "version": "1.2.0.20"
@@ -342,6 +361,7 @@
             "4. Fixed the issue that some devices could not connect to Creality Cloud APP."
           ],
           "released": "2025-04-03",
+          "sha256": "",
           "size": 117325690,
           "url": "https://file2-cdn.creality.com/file/0f5abfea65e0bc48bccfd1f5b5e16bbf/F004_ota_img_V1.2.0.10.img",
           "version": "1.2.0.10"
@@ -352,6 +372,7 @@
             "Factory Firmware."
           ],
           "released": "2025-04-03",
+          "sha256": "",
           "size": 117325002,
           "url": "https://file2-cdn.creality.com/file/0b922bb5b5c302b8eb87740961adc47b/F004_ota_img_V1.2.0.09.img",
           "version": "1.2.0.09"
@@ -370,6 +391,7 @@
             "2.Optimize model fan control logic."
           ],
           "released": "2026-07-10",
+          "sha256": "",
           "size": 142580074,
           "url": "https://file2-cdn.creality.com/file/98eeaa1ef181496ccd5dbffe54eb1ab2/CR4CU220812S11_ota_img_V1.3.5.22.img",
           "version": "1.3.5.22"
@@ -381,6 +403,7 @@
             "1.Fixed known issues to improve user experience and product stability."
           ],
           "released": "2025-12-30",
+          "sha256": "",
           "size": 165920826,
           "url": "https://file2-cdn.creality.com/file/b7988cbf341c24d5d0773adeb35dbb9f/CR4CU220812S11_ota_img_V2.3.5.34.img",
           "version": "2.3.5.34"
@@ -392,6 +415,7 @@
             "1.Fix the issue where CrealityPrint shows a filament‑mismatch warning when starting a print."
           ],
           "released": "2025-12-04",
+          "sha256": "",
           "size": 137717018,
           "url": "https://file2-cdn.creality.com/file/a07d079630a920b1c2c9225693b6fafa/CR4CU220812S11_ota_img_V1.3.5.19.img",
           "version": "1.3.5.19"
@@ -412,6 +436,7 @@
             "7. Fix screen-off issue during screen operation."
           ],
           "released": "2024-12-24",
+          "sha256": "",
           "size": 135906314,
           "url": "https://file2-cdn.creality.com/file/808cb39dab5935b98cd9297b6595500b/CR4CU220812S11_ota_img_V1.3.3.46.img",
           "version": "1.3.3.46"
@@ -428,6 +453,7 @@
             "3. Fixed some bugs."
           ],
           "released": "2024-10-24",
+          "sha256": "",
           "size": 135409434,
           "url": "https://file2-cdn.creality.com/file/f977e009ba48f163845169b11225c381/CR4CU220812S11_ota_img_V1.3.3.40.img",
           "version": "1.3.3.40"
@@ -438,6 +464,7 @@
             "Factory firmware."
           ],
           "released": "2024-10-24",
+          "sha256": "",
           "size": 135427898,
           "url": "https://file2-cdn.creality.com/file/6af9326782edc1b0885fd077ac1476b0/CR4CU220812S11_ota_img_V1.3.3.38.img",
           "version": "1.3.3.38"
@@ -456,6 +483,7 @@
             "5. Fixed some bugs."
           ],
           "released": "2024-10-24",
+          "sha256": "",
           "size": 135412170,
           "url": "https://file2-cdn.creality.com/file/05cf62a3a5024b2e609e9d85443696d5/CR4CU220812S11_ota_img_V1.3.3.36.img",
           "version": "1.3.3.36"
@@ -476,6 +504,7 @@
             "7. Fix machine malfunctions caused by printing with BambuStudio sliced files."
           ],
           "released": "2024-05-17",
+          "sha256": "",
           "size": 130265370,
           "url": "https://file2-cdn.creality.com/file/1f7f3932a08a6748aa72200d547bb67a/CR4CU220812S11_ota_img_V1.3.3.29.img",
           "version": "1.3.3.29"
@@ -488,6 +517,7 @@
             "2.Fix some bugs."
           ],
           "released": "2024-03-21",
+          "sha256": "",
           "size": 130542362,
           "url": "https://file2-cdn.creality.com/file/4ba071338e120558283f884266f9250d/CR4CU220812S11_ota_img_V1.3.3.8.img",
           "version": "1.3.3.8"
@@ -512,6 +542,7 @@
             "4.Fixed the issue where abnormal print file names did not exit the print task."
           ],
           "released": "2024-01-25",
+          "sha256": "",
           "size": 130539786,
           "url": "https://file2-cdn.creality.com/file/0c96dc76c1455460ef66a8adaa367902/CR4CU220812S11_ota_img_V1.3.3.5.img",
           "version": "1.3.3.5"
@@ -528,6 +559,7 @@
             "6. Fixed other known bugs."
           ],
           "released": "2023-11-20",
+          "sha256": "",
           "size": 120368794,
           "url": "https://file2-cdn.creality.com/file/a577bc37ee4f2defabb960b7fa89d8a6/CR4CU220812S11_ota_img_V1.3.2.20.img",
           "version": "1.3.2.20"
@@ -546,6 +578,7 @@
             "8. Fix some known issues."
           ],
           "released": "2023-08-30",
+          "sha256": "",
           "size": 114851274,
           "url": "https://file2-cdn.creality.com/file/1ba6931b792817b1a8040a47dccd28e4/CR4CU220812S11_ota_img_V1.3.1.28.img",
           "version": "1.3.1.28"
@@ -592,6 +625,7 @@
             "Click on the screen for upgrade, wait for the upgrade to complete, then click on Settings - Device Self-Check - check Input Shaping and Auto Bed Leveling, click on Self-Check, wait for self-check to complete, then use the machine."
           ],
           "released": "2023-08-18",
+          "sha256": "",
           "size": 114736762,
           "url": "https://file2-cdn.creality.com/file/9a0828fd58dd87d79217d4cee74d00cb/CR4CU220812S11_ota_img_V1.3.1.19.img",
           "version": "1.3.1.19"
@@ -604,6 +638,7 @@
             "2. Improved other known issues."
           ],
           "released": "2023-07-28",
+          "sha256": "",
           "size": 113989290,
           "url": "https://file2-cdn.creality.com/file/c25ff4f5f495815f46c484398b67e2e4/CR4CU220812S11_ota_img_V1.3.1.14.img",
           "version": "1.3.1.14"
@@ -615,6 +650,7 @@
             "1. Bug fixed."
           ],
           "released": "2023-07-25",
+          "sha256": "",
           "size": 113988026,
           "url": "https://file2-cdn.creality.com/file/d0c132b8d5b804b485598be31ecaa6f7/CR4CU220812S11_ota_img_V1.3.1.4.img",
           "version": "1.3.1.4"
@@ -626,6 +662,7 @@
             "1.Bug fixed."
           ],
           "released": "2023-07-17",
+          "sha256": "",
           "size": 105550874,
           "url": "https://file2-cdn.creality.com/file/21651e1cd4dd54ac3be8137d34174eaf/CR4CU220812S11_ota_img_V1.3.0.39.img",
           "version": "1.3.0.39"
@@ -637,6 +674,7 @@
             "1.Bug fixed."
           ],
           "released": "2023-07-11",
+          "sha256": "",
           "size": 102173146,
           "url": "https://file2-cdn.creality.com/file/46edced616d6b5743158b5bb9ca6fc34/CR4CU220812S11_ota_img_V1.2.9.22.img",
           "version": "1.2.9.22"
@@ -651,6 +689,7 @@
             "Note: Please do not touch the platform during Z-axis return to zero lift, otherwise it may cause abnormal machine detection."
           ],
           "released": "2023-06-29",
+          "sha256": "",
           "size": 102173898,
           "url": "https://file2-cdn.creality.com/file/bcbb922b16b10c90277c4e9b459869fe/CR4CU220812S11_ota_img_V1.2.9.21.img",
           "version": "1.2.9.21"
@@ -664,6 +703,7 @@
             "3. Other bug fixes."
           ],
           "released": "2023-06-06",
+          "sha256": "",
           "size": 201961082,
           "url": "https://file2-cdn.creality.com/file/a3882d389d5f316095b4da665ce0a279/CR4CU220812S11_ota_img_V1.2.9.15.img",
           "version": "1.2.9.15"
@@ -680,6 +720,7 @@
             "6.Details have been optimized to enhance the user experience."
           ],
           "released": "2023-05-27",
+          "sha256": "",
           "size": 201707178,
           "url": "https://file2-cdn.creality.com/file/8495d1606785f381f5271ec65ba241a1/CR4CU220812S11_ota_img_V1.2.9.14.img",
           "version": "1.2.9.14"
@@ -692,6 +733,7 @@
             "2. Optimize the bangbang algorithm."
           ],
           "released": "2023-04-27",
+          "sha256": "",
           "size": 210781818,
           "url": "https://file2-cdn.creality.com/file/bf10cce8e25ed10be1e3b822248283d9/CR4CU220812S11_ota_img_V1.2.9.12.img",
           "version": "1.2.9.12"
@@ -710,6 +752,7 @@
             "2. Fixed known issues to further enhance user experience and product stability."
           ],
           "released": "2025-04-17",
+          "sha256": "",
           "size": 169858106,
           "url": "https://file2-cdn.creality.com/file/9115557bcb60e2e0bc68c4eeb99d41b9/F001_ota_img_V1.2.3.28.img",
           "version": "1.2.3.28"
@@ -717,6 +760,36 @@
       ],
       "key": "F001",
       "name": "Ender-3 V3 series (V3, V3 Plus)"
+    },
+    {
+      "firmwares": [
+        {
+          "file": "NebulaOS-Ender3V3KE-1.0.5.img",
+          "notes": [
+            "NebulaOS 1.0.5 for the Creality Ender-3 V3 KE.",
+            "Release notes: https://github.com/NebulaOS-KE/NebulaOS/releases/tag/v1.0.5"
+          ],
+          "released": "2026-11-26",
+          "sha256": "1314cc5494a64b571e48ce78692b8b8843ee5deea2c905474ae695811f3d918f",
+          "size": 148815426,
+          "url": "https://github.com/NebulaOS-KE/NebulaOS/releases/download/v1.0.5/NebulaOS-Ender3V3KE-1.0.5.img",
+          "version": "1.0.5"
+        },
+        {
+          "file": "NebulaOS-Ender3V3KE-1.0.4.img",
+          "notes": [
+            "NebulaOS 1.0.4 for the Creality Ender-3 V3 KE.",
+            "Release notes: https://github.com/NebulaOS-KE/NebulaOS/releases/tag/v1.0.4"
+          ],
+          "released": "2026-11-18",
+          "sha256": "3f06bc372ddf3a2502feffd762e200f5b2f668333052c952dffed50ce82afbc3",
+          "size": 148745202,
+          "url": "https://github.com/NebulaOS-KE/NebulaOS/releases/download/v1.0.4/NebulaOS-Ender3V3KE-1.0.4.img",
+          "version": "1.0.4"
+        }
+      ],
+      "key": "NEBULAOS",
+      "name": "NebulaOS (Ender-3 V3 KE, Nebula Pad)"
     }
   ]
 }

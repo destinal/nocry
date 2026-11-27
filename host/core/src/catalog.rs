@@ -5,6 +5,12 @@
 //! `refresh` asks the API behind crealitycloud.com/downloads/firmware for the current list
 //! and saves it next to the user's data; `load` prefers that copy when it is newer.
 //! Downloads are verified: the 32-hex path segment of a Creality CDN URL is the file's md5.
+//!
+//! NebulaOS (github.com/NebulaOS-KE/NebulaOS), an independent open firmware for the Nebula Pad
+//! family, is listed too: from its GitHub releases, each file verified against the sha256 the
+//! release publishes for it. Its three .img files per release hold the same system under
+//! different wrapper names (for its own updater, Creality's updater on a KE, and on a retail
+//! pad); nocry lists the plain one.
 
 use crate::events;
 use anyhow::{bail, Context, Result};
@@ -15,6 +21,9 @@ use std::path::{Path, PathBuf};
 
 const BUILTIN: &str = include_str!("../data/catalog.json");
 const API: &str = "https://admin.crealitycloud.com";
+const NEBULAOS_RELEASES: &str = "https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases?per_page=30";
+const NEBULAOS_DOWNLOADS: &str = "https://github.com/NebulaOS-KE/NebulaOS/releases/download/";
+const NEBULAOS_NAME: &str = "NebulaOS (Ender-3 V3 KE, Nebula Pad)";
 /// A list of firmware in the catalog: one per firmware line (`boards::LINES`).
 struct Listing {
     /// the firmware's ota_board_name
@@ -65,6 +74,8 @@ pub struct Firmware {
     pub released: String,
     pub url: String,
     pub notes: Vec<String>,
+    /// the file's sha256 where the publisher gives one (NebulaOS); "" otherwise
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +119,7 @@ pub fn parse(text: &str) -> Result<Catalog> {
                             .and_then(|n| n.as_array())
                             .map(|n| n.iter().filter_map(|x| x.as_str().map(String::from)).collect())
                             .unwrap_or_default(),
+                        sha256: s(f, "sha256").to_lowercase(),
                     })
                     .filter(|f| f.url.starts_with("https://") && !f.file.is_empty())
                     .collect()
@@ -125,7 +137,7 @@ fn to_value(c: &Catalog) -> Value {
             "key": m.key, "name": m.name,
             "firmwares": m.firmwares.iter().map(|f| json!({
                 "version": f.version, "file": f.file, "size": f.size, "released": f.released,
-                "url": f.url, "notes": f.notes,
+                "url": f.url, "notes": f.notes, "sha256": f.sha256,
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     })
@@ -229,7 +241,65 @@ fn search(mut params: Value) -> Result<Vec<Value>> {
     Ok(out)
 }
 
-/// Ask Creality for the current list and save it in `data_dir`.
+fn is_sha256(h: &str) -> bool {
+    h.len() == 64 && h.bytes().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The NebulaOS versions in the answer of GitHub's releases API, newest first. A release
+/// counts when it is final, has the plain image `NebulaOS-Ender3V3KE-<version>.img` with a
+/// sha256, and is also published for the retail Nebula Pad (from 1.0.4, the first version
+/// that sets up an erased data partition by itself, which a clean install needs).
+pub fn nebulaos_from_releases(v: &Value) -> Vec<Firmware> {
+    let mut out: Vec<Firmware> = vec![];
+    for r in v.as_array().map(|a| a.as_slice()).unwrap_or_default() {
+        let flag = |k: &str| r.get(k).and_then(|x| x.as_bool()).unwrap_or(true);
+        let version = s(r, "tag_name").trim_start_matches(['V', 'v']).to_string();
+        if flag("draft") || flag("prerelease") || version.is_empty() || !version.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
+            continue;
+        }
+        let assets = r.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+        let want = format!("NebulaOS-Ender3V3KE-{version}.img");
+        let Some(a) = assets.iter().find(|a| s(a, "name") == want) else { continue };
+        if !assets.iter().any(|a| s(a, "name").starts_with("NebulaOS-NebulaPad-") && s(a, "name").ends_with(".img")) {
+            continue;
+        }
+        let (url, sha256) = (s(a, "browser_download_url"), s(a, "digest").trim_start_matches("sha256:").to_lowercase());
+        let size = a.get("size").and_then(|x| x.as_u64()).unwrap_or(0);
+        if !url.starts_with(NEBULAOS_DOWNLOADS) || !is_sha256(&sha256) || size == 0 {
+            continue;
+        }
+        // the first paragraph of the release text says what the version is about
+        let body = s(r, "body").replace('\r', "");
+        let about = body.split("\n\n").map(|p| p.split_whitespace().collect::<Vec<_>>().join(" ")).find(|p| !p.is_empty() && !p.starts_with('#') && !p.starts_with('|'));
+        let mut notes: Vec<String> = about.into_iter().collect();
+        let page = s(r, "html_url");
+        if page.starts_with("https://github.com/NebulaOS-KE/NebulaOS/") {
+            notes.push(format!("Release notes: {page}"));
+        }
+        out.push(Firmware { version, file: want, size, released: s(r, "published_at").chars().take(10).collect(), url, notes, sha256 });
+    }
+    out.sort_by(|a, b| b.released.cmp(&a.released));
+    out
+}
+
+fn nebulaos_firmwares() -> Result<Vec<Firmware>> {
+    let resp = ureq::get(NEBULAOS_RELEASES)
+        .timeout(std::time::Duration::from_secs(30))
+        .set("Accept", "application/vnd.github+json")
+        .set("User-Agent", "nocry")
+        .call()
+        .context("could not reach GitHub for the NebulaOS list")?;
+    let v: Value = serde_json::from_reader(resp.into_reader()).context("unexpected answer from GitHub")?;
+    Ok(nebulaos_from_releases(&v))
+}
+
+/// The sha256 the firmware list promises for `url`, looked up in the list kept in `data_dir`
+/// (or the built-in one).
+pub fn listed_sha256(data_dir: Option<&Path>, url: &str) -> Option<String> {
+    load(data_dir).models.iter().flat_map(|m| &m.firmwares).find(|f| f.url == url && is_sha256(&f.sha256)).map(|f| f.sha256.clone())
+}
+
+/// Ask Creality (and GitHub, for NebulaOS) for the current list and save it in `data_dir`.
 pub fn refresh(data_dir: &Path) -> Result<Catalog> {
     crate::say!("asking Creality for the current firmware list");
     let mut series: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
@@ -273,6 +343,7 @@ pub fn refresh(data_dir: &Path) -> Result<Catalog> {
                         .and_then(|n| n.as_array())
                         .map(|n| n.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
                         .unwrap_or_default(),
+                    sha256: String::new(),
                 },
             ));
         }
@@ -281,6 +352,18 @@ pub fn refresh(data_dir: &Path) -> Result<Catalog> {
     }
     if models.iter().all(|m| m.firmwares.is_empty()) {
         bail!("Creality's server returned no firmware; keeping the current list");
+    }
+    // NebulaOS: its own source. If that cannot be reached, what the current list has is kept.
+    crate::say!("asking GitHub for the current NebulaOS versions");
+    let nebulaos = match nebulaos_firmwares() {
+        Ok(f) if !f.is_empty() => f,
+        r => {
+            crate::say!("NebulaOS list not updated ({}); keeping the versions already known", r.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "no usable release found".into()));
+            load(Some(data_dir)).models.into_iter().find(|m| m.key == crate::boards::NEBULAOS).map(|m| m.firmwares).unwrap_or_default()
+        }
+    };
+    if !nebulaos.is_empty() {
+        models.push(Model { key: crate::boards::NEBULAOS.into(), name: NEBULAOS_NAME.into(), firmwares: nebulaos });
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
     let cat = Catalog { built: date(now), updated: true, models };
@@ -344,13 +427,42 @@ fn file_md5(p: &Path) -> Result<String> {
     Ok(format!("{:x}", h.finalize()))
 }
 
+fn file_sha256(p: &Path) -> Result<String> {
+    use sha2::Digest as _;
+    let mut f = std::fs::File::open(p)?;
+    let mut h = sha2::Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", h.finalize()))
+}
+
 /// Download `url` into the cache (or reuse a verified copy). Returns the local path.
 pub fn download(url: &str, file: &str, size: u64, cache_dir: &Path) -> Result<PathBuf> {
     if !url.starts_with("https://") {
         bail!("refusing to download from a non-https address");
     }
     let dest = cached_path(cache_dir, url, file);
+    // what the file has to be: Creality's md5 in the address, or the sha256 the list gives
+    let want_sha = listed_sha256(cache_dir.parent(), url);
+    if url.starts_with(NEBULAOS_DOWNLOADS) && want_sha.is_none() {
+        bail!("the firmware list has no checksum for {file}; update the list and try again. Nothing was downloaded");
+    }
     let want = url_md5(url);
+    if dest.exists() {
+        if let Some(w) = &want_sha {
+            if &file_sha256(&dest)? == w {
+                crate::say!("already downloaded: {}", dest.display());
+                return Ok(dest);
+            }
+            let _ = std::fs::remove_file(&dest); // damaged or incomplete copy
+        }
+    }
     if dest.exists() {
         match &want {
             Some(w) if &file_md5(&dest)? == w => {
@@ -372,10 +484,12 @@ pub fn download(url: &str, file: &str, size: u64, cache_dir: &Path) -> Result<Pa
         .with_context(|| format!("could not download {file} (no internet connection?)"))?;
     let total = resp.header("Content-Length").and_then(|l| l.parse().ok()).unwrap_or(size);
     let part = dest.with_extension("part");
-    let r = (|| -> Result<String> {
+    let r = (|| -> Result<(String, String)> {
+        use sha2::Digest as _;
         let mut out = std::fs::File::create(&part)?;
         let mut rd = resp.into_reader();
         let mut h = Md5::new();
+        let mut h256 = sha2::Sha256::new();
         let mut buf = vec![0u8; 256 * 1024];
         let (mut done, t0, mut last) = (0u64, std::time::Instant::now(), std::time::Instant::now());
         loop {
@@ -386,6 +500,7 @@ pub fn download(url: &str, file: &str, size: u64, cache_dir: &Path) -> Result<Pa
             }
             out.write_all(&buf[..n])?;
             h.update(&buf[..n]);
+            h256.update(&buf[..n]);
             done += n as u64;
             if last.elapsed().as_millis() >= 500 {
                 last = std::time::Instant::now();
@@ -399,9 +514,9 @@ pub fn download(url: &str, file: &str, size: u64, cache_dir: &Path) -> Result<Pa
         if size > 0 && done != size {
             bail!("the download is incomplete ({done} of {size} bytes)");
         }
-        Ok(format!("{:x}", h.finalize()))
+        Ok((format!("{:x}", h.finalize()), format!("{:x}", h256.finalize())))
     })();
-    let got = match r {
+    let (got, got_sha) = match r {
         Ok(g) => g,
         Err(e) => {
             events::progress_end();
@@ -413,6 +528,12 @@ pub fn download(url: &str, file: &str, size: u64, cache_dir: &Path) -> Result<Pa
         if &got != w {
             let _ = std::fs::remove_file(&part);
             bail!("the downloaded file is damaged (checksum {got}, expected {w}); nothing was installed");
+        }
+    }
+    if let Some(w) = &want_sha {
+        if &got_sha != w {
+            let _ = std::fs::remove_file(&part);
+            bail!("the downloaded file is damaged (sha256 {got_sha}, expected {w}); nothing was installed");
         }
     }
     std::fs::rename(&part, &dest)?;
@@ -432,10 +553,39 @@ mod tests {
         assert!(neb.firmwares.len() >= 6);
         for m in &c.models {
             for f in &m.firmwares {
-                assert!(f.url.starts_with("https://") && url_md5(&f.url).is_some(), "{}", f.url);
+                assert!(f.url.starts_with("https://") && (url_md5(&f.url).is_some() || is_sha256(&f.sha256)), "{}", f.url);
                 assert!(f.size > 50 << 20 && !f.version.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn nebulaos_releases() {
+        let asset = |name: &str, digest: &str| json!({"name": name, "size": 148815426u64, "digest": digest,
+            "browser_download_url": format!("https://github.com/NebulaOS-KE/NebulaOS/releases/download/v1.0.5/{name}")});
+        let sha = "sha256:1314cc5494a64b571e48ce78692b8b8843ee5deea2c905474ae695811f3d918f";
+        let rel = |tag: &str, pre: bool, assets: Vec<Value>| json!({"tag_name": tag, "draft": false, "prerelease": pre,
+            "published_at": "2026-11-26T13:27:03Z", "html_url": "https://github.com/NebulaOS-KE/NebulaOS/releases/tag/v1.0.5",
+            "body": "NebulaOS 1.0.5 for the Creality\r\nEnder-3 V3 KE.\r\n\r\n## At a glance\r\n", "assets": assets});
+        let both = |v: &str| vec![asset(&format!("NebulaOS-Ender3V3KE-{v}.img"), sha), asset(&format!("NebulaOS-NebulaPad-NEBULA_ota_img_V9.{v}.img"), sha),
+            asset(&format!("NebulaOS-Ender3V3KE-{v}.ingenic"), sha)];
+        let v = json!([
+            rel("v1.0.5", false, both("1.0.5")),
+            rel("v1.0.6-rc1", false, both("1.0.6-rc1")),                                   // not a plain version
+            rel("v1.0.6", true, both("1.0.6")),                                            // prerelease
+            rel("v1.0.3", false, vec![asset("NebulaOS-Ender3V3KE-1.0.3.img", sha)]),       // not published for the pad
+            rel("v1.0.4", false, vec![asset("NebulaOS-Ender3V3KE-1.0.4.img", "md5:abc"), asset("NebulaOS-NebulaPad-x.img", sha)]), // no sha256
+        ]);
+        let f = nebulaos_from_releases(&v);
+        assert_eq!(f.len(), 1);
+        assert_eq!((f[0].version.as_str(), f[0].file.as_str(), f[0].released.as_str()), ("1.0.5", "NebulaOS-Ender3V3KE-1.0.5.img", "2026-11-26"));
+        assert_eq!(f[0].sha256, &sha[7..]);
+        assert_eq!(f[0].notes[0], "NebulaOS 1.0.5 for the Creality Ender-3 V3 KE.");
+        assert!(f[0].notes.last().unwrap().starts_with("Release notes: https://github.com/NebulaOS-KE/"));
+        // the list keeps the checksum through saving and loading
+        let c = Catalog { built: "2026-11-27".into(), updated: false, models: vec![Model { key: "NEBULAOS".into(), name: "x".into(), firmwares: f.clone() }] };
+        assert_eq!(parse(&to_value(&c).to_string()).unwrap().models[0].firmwares[0].sha256, f[0].sha256);
+        assert!(nebulaos_from_releases(&json!({"message": "rate limited"})).is_empty());
     }
 
     #[test]

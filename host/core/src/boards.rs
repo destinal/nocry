@@ -88,11 +88,35 @@ pub struct Line {
     pub model: Option<&'static str>,
 }
 
+/// The `ota_board` nocry gives NebulaOS (github.com/NebulaOS-KE/NebulaOS), an independent
+/// open firmware for the Nebula Pad family. It has no etc/ota_info; nocry recognises it by
+/// its etc/os-release (`nebulaos_version`).
+pub const NEBULAOS: &str = "NEBULAOS";
+
+/// The printer types NebulaOS is published for (its release notes: "Which file do I need?").
+/// It ships one image for all of them and does not read the model field, so the field is
+/// left as it is; these are the boards nocry offers it on.
+pub const NEBULAOS_MODELS: &[&str] = &["F005", "Nebula Pad"];
+
+/// The version of a NebulaOS system (VERSION_ID of its etc/os-release); None for anything else.
+pub fn nebulaos_version(rootfs: &dyn squashfs::Source) -> Option<String> {
+    // etc/os-release is a link to usr/lib/os-release there, and this reader follows no links
+    let file = squashfs::read_file_from(rootfs, "usr/lib/os-release", 4096).or_else(|| squashfs::read_file_from(rootfs, "etc/os-release", 4096))?;
+    let text = String::from_utf8_lossy(&file).into_owned();
+    let get = |k: &str| text.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().trim_matches('"').to_string());
+    if get("ID=")? != "nebulaos" {
+        return None;
+    }
+    get("VERSION_ID=").filter(|v| !v.is_empty() && v.len() < 32 && v.bytes().all(|c| c.is_ascii_alphanumeric() || b".-+_".contains(&c)))
+}
+
 pub const LINES: &[Line] = &[
     Line { ota_board: "NEBULA", family: FamilyId::Nebula, name: "Retail Nebula Pad", model: Some("Nebula Pad") },
     Line { ota_board: "F003", family: FamilyId::Nebula, name: "CR-10 SE", model: Some("F003") },
     Line { ota_board: "F004", family: FamilyId::Nebula, name: "Ender-5 Max", model: Some("F004") },
     Line { ota_board: "F005", family: FamilyId::Nebula, name: "Ender-3 V3 KE", model: Some("F005") },
+    // one image for the Ender-3 V3 KE and the retail Nebula Pad; the model field is not changed
+    Line { ota_board: NEBULAOS, family: FamilyId::Nebula, name: "NebulaOS", model: None },
     // the K1 line is published under the S11 mainboard's name and serves S10, S11 and S12
     Line { ota_board: "CR4CU220812S10", family: FamilyId::K1, name: "K1 series", model: None },
     Line { ota_board: "CR4CU220812S11", family: FamilyId::K1, name: "K1 series", model: None },
@@ -153,6 +177,9 @@ pub struct Support {
 /// /etc/init.d/S55klipper_service, which picks the printer's configuration at every start.
 /// Empty if the script is missing or reads differently.
 pub fn firmware_support(rootfs: &[u8]) -> Vec<Support> {
+    if nebulaos_version(&rootfs).is_some() {
+        return NEBULAOS_MODELS.iter().map(|m| Support { model: m.to_string(), mainboards: vec![] }).collect();
+    }
     // the second path is where the K1 family's newer generation keeps it
     for path in ["etc/init.d/S55klipper_service", "apps/etc/init.d/CS55klipper_service"] {
         if let Some(script) = squashfs::read_file(rootfs, path, 1 << 20) {

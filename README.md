@@ -65,7 +65,7 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 | `tools/nocryboot-analysis`, `tools/rtos-analysis` | emulator harnesses that compare Creality's loader and boot picture image with ours, register access by register access |
 | `tools/recovery-build` | reproducible build of the recovery Linux (kernel patch, Buildroot config, `nocry-fbd`) |
 | `tools/splhdr` | generator for the SPL parameter header (DDR settings) |
-| `docs` | findings and design notes: USB boot protocol, `sn_mac`, `.ingenic` packages, restore logic, fastboot/recovery design, GUI plan |
+| `docs` | findings and design notes: USB boot protocol, `sn_mac`, `.ingenic` packages, restore logic, fastboot/recovery design, GUI plan, NebulaOS |
 
 ## Building
 
