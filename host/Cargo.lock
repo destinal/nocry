@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "nocry"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "nocry-core"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -618,7 +618,7 @@ dependencies = [
 
 [[package]]
 name = "nocry-ffi"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "nocry-core",

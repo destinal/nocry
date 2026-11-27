@@ -39,11 +39,14 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 - **Install firmware** from a Creality `.ingenic` package or an unpacked OTA: repair in place (keep data) or clean install. Handles a completely blank board, generating a serial number and MAC address if needed.
 - **Convert** within a family: between Nebula-based models (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max) by installing the other model's firmware, or which K1-family printer a K1 mainboard is set up for.
 - **Switch the active firmware slot** (A/B) and **factory reset**.
-- **Install to the other slot**: put a second firmware version of the same printer type beside the running one, then choose which starts. Untested on hardware beyond the write itself: no board has been started from slot B yet.
+- **Install to the other slot**: put a second firmware version of the same printer type beside the running one, then choose which starts. Both test boards have been started from slot B.
 - **Copy a slot**: copy the firmware of slot A into slot B or the other way round, verified (about 40 seconds), from the Switch Active Slot window or with `nocry copy-slot a --yes`.
 - **Secure erase**: a factory reset that also destroys the old settings and files, using the storage chip's secure erase where it has one (it does on the Nebula Pad), then checks that every byte is zero. About 3 minutes.
 - **Board log**: read the recovery system's kernel log from the window or with `nocry boot-log`.
 - **Rebuild a blank board** from an update file or the list: the bootloader and partition table that update files lack are fetched once from Creality's factory package and checksum-verified.
+- **nocryboot**, an open replacement for the board's boot loader (Advanced, "Boot loader…", or `nocry loader`): built from public source, it does what Creality's does and adds a way out of trouble. If a firmware slot is damaged it starts the other one; if neither can be started it puts the board in USB boot mode by itself, so no BOOT button is needed to repair it. Creality's loader is kept on the board and can be put back. Tested on a Nebula Pad and a K1 mainboard. See `docs/nocryboot.md`.
+- **Firmware on trial** (`nocry slots --set b --try 3`, needs nocryboot): the chosen slot gets a number of starts to come up; if it never does, the board returns to the other slot by itself.
+- **nocry boot picture**: the picture of the first seconds after power-on comes from nocry's own open program instead of Creality's (default when installing firmware on the Nebula Pad family; untick it to keep the Creality logo, or switch later under Advanced, "Boot picture…"). Creality's is kept on the board.
 - **Advanced**: back up, restore or erase a single partition; edit the serial number, MAC address and model; erase the entire storage.
 - **Pick firmware from a list**: versions published by Creality for the supported printers, downloaded and checksum-verified, or use a local update file (`*_ota_img_V*.img`), `.ingenic` package or folder.
 - **Shell access**: the window shows whether `adb` and the USB serial console are available on the running recovery and gives the exact command for each.
@@ -57,6 +60,9 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 | `host/ffi` | C interface to the library (`nocry.h`) |
 | `gui` | Qt 6 Widgets front end |
 | `tools/burner-build` | reproducible Docker build of the SPL and U-Boot stages (fastboot, USB disk) |
+| `rtos` | nocry-rtos, the open boot picture image (bare metal, no FreeRTOS) |
+| `tools/nocryboot-build` | reproducible build of nocryboot's first stage (SPL) for the eMMC |
+| `tools/nocryboot-analysis`, `tools/rtos-analysis` | emulator harnesses that compare Creality's loader and boot picture image with ours, register access by register access |
 | `tools/recovery-build` | reproducible build of the recovery Linux (kernel patch, Buildroot config, `nocry-fbd`) |
 | `tools/splhdr` | generator for the SPL parameter header (DDR settings) |
 | `docs` | findings and design notes: USB boot protocol, `sn_mac`, `.ingenic` packages, restore logic, fastboot/recovery design, GUI plan |

@@ -212,11 +212,13 @@ jobs:
           prerelease: true
           files: out/*
           body: |
-            **Early pre-release.** Tested on Linux and macOS with a Creality Nebula Pad. On Windows the app runs, but talking to a board has **not been tested**: use "Set up driver…" in the window once (one administrator prompt; see "Windows driver" in the README).
+            **Early pre-release.** Tested on Linux with a Creality Nebula Pad and a K1 mainboard (earlier versions also on macOS). On Windows the app runs, but talking to a board has **not been tested**: use "Set up driver…" in the window once (one administrator prompt; see "Windows driver" in the README).
 
             - Linux: `nocry-*-x86_64.AppImage` (make it executable; the window offers the one-time udev rule setup)
             - Windows: `nocry-*-windows-x64-setup.exe` (installs for the current user, no administrator rights), or `nocry-*-windows-x64-portable.zip` (unzip anywhere and run `nocry-gui.exe`; nothing is installed)
             - macOS (Apple silicon): `nocry-*-macos-arm64.dmg` (unsigned: right-click the app and choose Open the first time)
-            - `nocry-board-images-*.tar.gz`: the SPL, U-Boot stages and recovery Linux loaded onto the board, built from the sources and patches in this repository
+            - `nocry-board-images-*.tar.gz`: what nocry loads onto or installs on the board (SPL, U-Boot stages, recovery Linux, the nocryboot loader, the boot picture image), built from the sources and patches in this repository
+
+            New in alpha.4: K1-family boards; **nocryboot**, an open boot loader that falls back to the other firmware slot and enters USB boot mode by itself when nothing can be started (Advanced, "Boot loader…"; Creality's is kept on the board); firmware on trial; the nocry boot picture (default on the Nebula Pad family, Creality's logo one tick away). Replacing the boot loader is for people who can reach the BOOT button if it goes wrong. See `docs/nocryboot.md`.
 
             Take a backup before changing anything on a board.
