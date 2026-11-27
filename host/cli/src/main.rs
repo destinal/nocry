@@ -263,6 +263,9 @@ enum FbCmd {
         file: PathBuf,
         #[arg(long, default_value = "0")]
         offset: String,
+        /// Allow writing a protected region (mmc0, gpt, bootloader, sn_mac)
+        #[arg(long)]
+        critical: bool,
     },
     /// Hash NAME on the board and print a digest of all chunk digests
     Hash {
@@ -313,8 +316,11 @@ fn cmd_fb(c: FbCmd) -> Result<()> {
             }
             println!("fetched {size} bytes of {name} in {}", rate(size, t));
         }
-        FbCmd::Write { name, file, offset } => {
+        FbCmd::Write { name, file, offset, critical } => {
             let off = num(&offset)?;
+            if critical {
+                fb.command("flashing unlock_critical")?;
+            }
             let mut data = read(&file)?;
             data.resize(data.len().div_ceil(512) * 512, 0);
             let t = std::time::Instant::now();

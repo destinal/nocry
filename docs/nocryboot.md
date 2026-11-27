@@ -4,7 +4,7 @@ nocryboot is the open boot loader for Creality's Ingenic X2000E boards (Nebula P
 
 | Part | Factory | nocryboot | State |
 |---|---|---|---|
-| First stage (SPL), eMMC byte 0x4400 | Creality build of Ingenic's U-Boot SPL, no source published | built from public source, `tools/nocryboot-build` | builds; matches the factory SPL in the emulator; boots a Nebula Pad when started from RAM (`nocry run-spl`, 2026-11-26, with the factory loader run the same way as control); not yet installed, K1 not yet tried |
+| First stage (SPL), eMMC byte 0x4400 | Creality build of Ingenic's U-Boot SPL, no source published | built from public source, `tools/nocryboot-build` | builds; matches the factory SPL in the emulator; boots a Nebula Pad when started from RAM (`nocry run-spl`, 2026-11-26, with the factory loader run the same way as control); installed on a Nebula Pad and cold-boots it (2026-11-26); K1 not yet tried |
 | Boot picture image (`rtos`, `rtos2`) | Ingenic FreeRTOS image, closed | `rtos/` (nocry-rtos) | runs on the Nebula Pad and a K1 mainboard |
 | Full U-Boot in the boot area | present, never started | not needed | – |
 
@@ -54,10 +54,11 @@ nocry run-spl tools/nocryboot-build/out/nocryboot-nebula.bin      # board in USB
 
 `nocry run-spl` sends the loader to the boot ROM over USB and starts it from RAM. Nothing is written; the loader then boots whatever is installed. The factory loader can be started the same way (cut 24 KiB at byte 0x4400 from a backup), which is the control for this test.
 
-Installing it means writing the 24 KiB file at byte 0x4400 of the eMMC (inside the `xboot` area). There is no installer for that yet, and no second copy of the SPL: a bad one leaves the board dark until it is rewritten from USB boot mode, which always works because the boot ROM does not depend on the eMMC.
+Installing it means writing the 24 KiB file at byte 0x4400 of the eMMC (inside the `xboot` area). For now that is done by hand from the recovery system (`nocry recovery`, then `nocry fb write mmc0 nocryboot-nebula.bin --offset 0x4400 --critical`); there is no installer yet, and no second copy of the SPL: a bad one leaves the board dark until it is rewritten from USB boot mode, which always works because the boot ROM does not depend on the eMMC.
 
 ### Next
 
-- Run it on a K1 board over USB; install it on both.
+- Run it on a K1 board over USB, then install it there.
+- An installer in nocry (with the factory loader kept for going back).
 - A recovery door: a way to reach a loader without the BOOT button (the factory SPL has none).
 - Read the partition table from the disk instead of the built-in one.
