@@ -69,3 +69,15 @@ Tested on a copy of the backup image with `--selftest-adv` (2026-11-26): partiti
 ## Over the network
 
 A board that runs nocry-rescue (see `docs/nocry-rescue.md`) can be used without a USB cable: **Connect over the network…** finds it, asks for the pairing code on its screen, and from then on every action works on that board. Self-tests: `--selftest-net-dialog shot.png`, `--selftest-net ADDRESS CODE shot.png`.
+
+## Progress and Cancel
+
+While anything runs, the bar under the tabs is shown: moving until the operation reports how far it is, then filling. Cancel is offered for everything that can take long:
+
+| Operation | Cancel |
+|---|---|
+| Backup, partition backup, firmware download, the checks before an install or restore | stops at once; nothing on the board was changed |
+| Install, install to the other slot, restore a backup, copy a slot, factory reset, secure erase, partition restore or erase, erase all | asks first, saying what stopping half-way leaves behind (for example: the board will not start until the installation is run again) |
+| Boot loader, boot picture, identity, switching the slot, reading the board | none: they take seconds, and the first three must not be cut short |
+
+A stop takes effect at the next safe point (between two writes), never in the middle of one. Self-tests: `--selftest-cancel-question shot.png`; `NOCRY_TEST_CANCEL_MS=n` presses Cancel n ms after a risky operation offers it.

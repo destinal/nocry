@@ -488,6 +488,7 @@ impl Target {
                 // in pieces, so progress is visible and no single command runs very long
                 let (mut done, mut method) = (0u64, String::new());
                 while done < len {
+                    events::check_cancelled()?;
                     let n = (128 * MIB).min(len - done);
                     method = fb.borrow_mut().secure_erase("mmc0", off + done, n).with_context(|| format!("erasing {what}"))?;
                     done += n;
@@ -499,6 +500,7 @@ impl Target {
         let zeros = vec![0u8; (32 * MIB) as usize];
         let mut done = 0;
         while done < len {
+            events::check_cancelled()?;
             let n = (32 * MIB).min(len - done) as usize;
             if !self.matches(off + done, &zeros[..n])? {
                 self.write_raw(off + done, &zeros[..n], what)?;
@@ -1044,6 +1046,7 @@ pub fn plan(t: &Target, pkg: &Package, boot_override: Option<Vec<u8>>, o: &Optio
             let len = src.len();
             let mut c = 0u64;
             while c < len {
+                events::check_cancelled()?; // nothing has been written yet
                 let n = CH.min(len - c) as usize;
                 if !t.matches(off + c, src.chunk(c, n, &zeros))? {
                     st.dirty.push((ei, c, n));
@@ -1111,6 +1114,8 @@ impl Plan {
             // consecutive dirty chunks go out as one write (up to 64 MiB)
             let mut i = 0;
             while i < st.dirty.len() {
+                // between two writes: what is on the board stays readable, but incomplete
+                events::check_cancelled()?;
                 let (ei, c0, n0) = st.dirty[i];
                 let (off, src) = &st.extents[ei];
                 let mut buf = src.chunk(c0, n0, &zeros).to_vec();

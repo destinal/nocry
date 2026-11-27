@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QRadioButton>
 #include <QDate>
+#include <QDateTime>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -289,11 +290,7 @@ public:
         });
         connect(resetButton, &QPushButton::clicked, this, [this] { chooseReset(); });
         connect(switchButton, &QPushButton::clicked, this, [this] { startSlots(QString()); });
-        connect(cancelButton, &QPushButton::clicked, this, [this] {
-            cancelButton->setEnabled(false);
-            stateHint->setText(tr("Stopping…"));
-            nocry_cancel();
-        });
+        connect(cancelButton, &QPushButton::clicked, this, [this] { requestCancel(); });
         auto *timer = new QTimer(this);
         connect(timer, &QTimer::timeout, this, [this] { pollState(); });
         timer->start(1000);
@@ -408,6 +405,14 @@ public:
             stateHint->setText(tr("Installing. Do not unplug the board."));
         else
             log->appendPlainText(tr("Checking %1").arg(QDir::toNativeSeparators(os)));
+        if (!execute)
+            allowCancel();      // only reading and comparing so far
+        else if (keepData == 2)
+            allowCancel(tr("The slot being installed is left incomplete and cannot be started until the installation is run again. "
+                           "The board keeps starting the firmware it starts now."));
+        else
+            allowCancel(tr("The firmware on the board is being replaced and is incomplete right now. If you stop, the board will not start "
+                           "until the installation is run again to the end.\n\nnocry can always do that: USB boot mode does not depend on what is installed."));
         const QByteArray p = os.toUtf8();
         const QByteArray safety = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
@@ -437,8 +442,8 @@ public:
                 fwName = o.value("firmware_board").toString();
             const QString fw = tr("%1 firmware %2").arg(fwName, o.value("firmware_version").toString()).simplified();
             if (!o.value("ok").toBool()) {
-                log->appendPlainText(tr("Install failed: %1").arg(o.value("error").toString()));
-                if (!quiet)
+                log->appendPlainText(wasCancelled(o) ? (execute ? tr("Installation stopped before it was finished.") : tr("Stopped.")) : tr("Install failed: %1").arg(o.value("error").toString()));
+                if (!quiet && !wasCancelled(o))
                     QMessageBox::critical(this, execute ? tr("Installation failed") : tr("Cannot install this firmware"), o.value("error").toString());
             } else if (o.value("bytes_to_write").toDouble() == 0) {
                 const QString msg = keepData == 2
@@ -489,7 +494,9 @@ public:
                     const QJsonObject t = o.value(T.toLower()).toObject();
                     return tr("Slot %1 now holds a verified copy of slot %2 (%3 %4).\n\nThe board still starts slot %5.")
                         .arg(T, F, t.value("firmware_name").toString(), t.value("firmware_version").toString(), o.value("active").toString().toUpper());
-                });
+                }, true,
+                tr("Slot %1 is left with an incomplete copy and cannot be started until the copy is run again. "
+                   "If slot %1 is the one the board starts, the board will not start until then.").arg(T));
             return;
         }
         if (busy)
@@ -507,7 +514,7 @@ public:
             lastResult = o;
             if (!o.value("ok").toBool()) {
                 log->appendPlainText(tr("Error: %1").arg(o.value("error").toString()));
-                if (!quiet)
+                if (!quiet && !wasCancelled(o))
                     QMessageBox::critical(this, tr("Switch Active Slot"), o.value("error").toString());
             } else if (!switchTo.isEmpty()) {
                 infoStale = true;
@@ -539,6 +546,9 @@ public:
         setBusy(true);
         if (execute)
             stateHint->setText(tr("Restoring. Do not unplug the board."));
+        allowCancel(execute ? tr("The board then holds a mix of what it had and what the backup has. It will probably not start until the restore "
+                                 "is run again to the end.\n\nnocry can always do that: USB boot mode does not depend on what is on the board.")
+                            : QString());
         log->appendPlainText(execute ? tr("Restoring %1").arg(QDir::toNativeSeparators(image)) : tr("Checking %1").arg(QDir::toNativeSeparators(image)));
         const QByteArray p = image.toUtf8();
         const QByteArray safety = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8();
@@ -551,8 +561,8 @@ public:
             pollState();
             lastResult = o;
             if (!o.value("ok").toBool()) {
-                log->appendPlainText(tr("Restore failed: %1").arg(o.value("error").toString()));
-                if (!quiet)
+                log->appendPlainText(wasCancelled(o) ? (execute ? tr("Restore stopped before it was finished.") : tr("Stopped.")) : tr("Restore failed: %1").arg(o.value("error").toString()));
+                if (!quiet && !wasCancelled(o))
                     QMessageBox::critical(this, execute ? tr("Restore failed") : tr("Cannot restore this file"), o.value("error").toString());
             } else if (!execute) {
                 const int c = confirmRestore(o, image);
@@ -580,15 +590,17 @@ public:
     int autoRestore = 0;            // self-tests only: 1 = confirm, 2 = confirm and allow another board's identity
 
     // Runs one advanced operation off the UI thread; `done` gets the result when it succeeded.
-    void runAdvanced(const QString &what, std::function<QJsonObject()> job, std::function<QString(const QJsonObject &)> done, bool cancellable = false)
+    // cancellable: offer Cancel; risk: what stopping half-way leaves behind (asked before stopping; "" = nothing)
+    void runAdvanced(const QString &what, std::function<QJsonObject()> job, std::function<QString(const QJsonObject &)> done, bool cancellable = false,
+                     const QString &risk = QString())
     {
         if (busy)
             return;
         setBusy(true);
         stateHint->setText(tr("%1. Do not unplug the board.").arg(what));
         log->appendPlainText(what + QStringLiteral("…"));
-        cancelButton->setEnabled(cancellable);
-        cancelButton->setVisible(cancellable);
+        if (cancellable)
+            allowCancel(risk);
         auto *w = new QFutureWatcher<QJsonObject>(this);
         connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, what, done] {
             const QJsonObject o = w->result();
@@ -604,8 +616,8 @@ public:
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, what, msg);
-            } else if (o.value("cancelled").toBool()) {
-                log->appendPlainText(tr("%1: cancelled.").arg(what));
+            } else if (wasCancelled(o)) {
+                log->appendPlainText(tr("%1: stopped before it was finished.").arg(what));
             } else {
                 log->appendPlainText(tr("%1 failed: %2").arg(what, o.value("error").toString()));
                 if (!quiet)
@@ -862,13 +874,15 @@ public:
             [name](const QJsonObject &o) {
                 return o.value("bytes_written").toDouble() == 0 ? tr("Partition %1 already held exactly this data. Nothing was written.").arg(name)
                                                                 : tr("Partition %1 was written and verified (%2 changed).").arg(name, QLocale().formattedDataSize(qint64(o.value("bytes_written").toDouble())));
-            });
+            }, true,
+            tr("Partition %1 then holds a mix of its old contents and the file's. Whatever uses it will probably not work until the restore is run again to the end.").arg(name));
     }
     void startPartErase(const QString &name)
     {
         const QByteArray n = name.toUtf8(), sd = safetyDir();
         runAdvanced(tr("Erasing partition %1").arg(name), [n, sd] { return takeJson(nocry_partition_erase_json(n.constData(), sd.constData())); },
-            [name](const QJsonObject &) { return tr("Partition %1 is erased (all zeros) and verified.").arg(name); });
+            [name](const QJsonObject &) { return tr("Partition %1 is erased (all zeros) and verified.").arg(name); }, true,
+            tr("Partition %1 is then partly erased: neither its old contents nor empty. Whatever uses it will probably not work until it is erased completely or written again.").arg(name));
     }
     void startEraseAll()
     {
@@ -876,7 +890,9 @@ public:
         runAdvanced(tr("Erasing the entire storage"), [sd] { return takeJson(nocry_erase_disk_json(sd.constData())); },
             [](const QJsonObject &) {
                 return tr("The board's storage is completely erased. The board is blank and will only start in USB boot mode.\n\nUse Install firmware to rebuild it.");
-            });
+            }, true,
+            tr("The storage is then partly erased. What has been erased so far is gone and is not brought back by stopping; the board will most likely "
+               "only start in USB boot mode, as after a complete erase."));
     }
     void startSecureWipe()
     {
@@ -891,7 +907,9 @@ public:
                 how.removeDuplicates();
                 return tr("Settings and files are erased (%1, using %2) and every part was checked to be empty.\n\nUnplug the board, then power it on normally. The first start takes longer while the printer sets itself up again.")
                     .arg(QLocale().formattedDataSize(qint64(o.value("bytes").toDouble())), how.join(tr(" and ")));
-            });
+            }, true,
+            tr("Settings and files are then partly erased: what is gone stays gone, and the rest may still be readable. "
+               "The printer may not start properly until the erase is run to the end."));
     }
     void startIdentity(const QString &sn, const QString &mac, const QString &model, const QString &board)
     {
@@ -909,6 +927,7 @@ public:
             return;
         setBusy(true);
         stateHint->setText(tr("Resetting. Do not unplug the board."));
+        allowCancel(tr("Settings and files are then partly erased. The printer may not start properly until a factory reset is run to the end."));
         log->appendPlainText(tr("Factory reset…"));
         const QByteArray safety = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
@@ -920,8 +939,8 @@ public:
             pollState();
             lastResult = o;
             if (!o.value("ok").toBool()) {
-                log->appendPlainText(tr("Factory reset failed: %1").arg(o.value("error").toString()));
-                if (!quiet)
+                log->appendPlainText(wasCancelled(o) ? tr("Factory reset stopped before it was finished.") : tr("Factory reset failed: %1").arg(o.value("error").toString()));
+                if (!quiet && !wasCancelled(o))
                     QMessageBox::critical(this, tr("Factory reset failed"), o.value("error").toString());
             } else {
                 infoStale = true;
@@ -949,6 +968,24 @@ public:
     QString autoModel, autoBoard;   // self-tests: answers for the printer type / mainboard questions
     void openShellHelp() { showShellHelp(); }
     void openNetworkDialog() { chooseNetwork(); }
+    // self-tests: press Cancel if it is on offer; show the question an install's Cancel asks
+    bool cancelOffered() const { return busy && cancelButton->isVisible() && cancelButton->isEnabled() && !cancelRisk.isEmpty(); }
+    bool testCancel()
+    {
+        if (!busy || !cancelButton->isVisible() || !cancelButton->isEnabled())
+            return false;
+        requestCancel();
+        return true;
+    }
+    void testCancelQuestion()
+    {
+        setBusy(true);
+        progressLabel->setText(tr("Writing — 96 MB of 143 MB"));
+        allowCancel(tr("The firmware on the board is being replaced and is incomplete right now. If you stop, the board will not start "
+                       "until the installation is run again to the end.\n\nnocry can always do that: USB boot mode does not depend on what is installed."));
+        requestCancel();
+        setBusy(false);
+    }
     // self-tests: pair without the dialog; true when the board accepted the code
     bool testConnect(const QString &address, const QString &code)
     {
@@ -1783,6 +1820,8 @@ private:
         if (kind == NOCRY_EVENT_LOG) {
             log->appendPlainText(text);
         } else if (kind == NOCRY_EVENT_PROGRESS) {
+            if (!busy)
+                return;     // a late report from an operation that has ended
             progress->setVisible(true);
             progress->setRange(0, 1000);
             progress->setValue(total ? int(done * 1000 / total) : 0);
@@ -1811,15 +1850,67 @@ private:
             else if (text.startsWith("verify"))
                 what = tr("Verifying");
             progressLabel->setText(QStringLiteral("%1 — %2 of %3   %4").arg(what, QLocale().formattedDataSize(qint64(done)), QLocale().formattedDataSize(qint64(total)), note.simplified()));
+        } else if (busy) {
+            // between two steps: back to the moving bar
+            progress->setRange(0, 0);
+            progressLabel->setText(tr("Working…"));
         } else {
             progress->setVisible(false);
             progressLabel->clear();
         }
     }
 
+    // Offer Cancel for the operation under way. `risk` says what stopping half-way leaves behind;
+    // when it is not empty the user has to confirm it first. Operations that take seconds and
+    // must not be cut short (boot loader, boot picture, identity) offer no Cancel at all.
+    void allowCancel(const QString &risk = QString())
+    {
+        cancelRisk = risk;
+        cancelButton->setEnabled(true);
+        cancelButton->setVisible(true);
+    }
+
+    void requestCancel()
+    {
+        if (!busy)
+            return;
+        if (!cancelRisk.isEmpty() && !quiet) {
+            QMessageBox box(QMessageBox::Warning, tr("Stop now?"), tr("Stop before this is finished?"), QMessageBox::NoButton, this);
+            box.setInformativeText(cancelRisk);
+            auto *stop = box.addButton(tr("Stop anyway"), QMessageBox::DestructiveRole);
+            auto *go = box.addButton(tr("Keep going"), QMessageBox::RejectRole);
+            box.setDefaultButton(go);
+            box.setEscapeButton(go);
+            box.exec();
+            // the work went on while the question was open and may have finished
+            if (box.clickedButton() != stop || !busy)
+                return;
+        }
+        cancelButton->setEnabled(false);
+        stateHint->setText(tr("Stopping at the next safe point…"));
+        log->appendPlainText(tr("Stop requested."));
+        nocry_cancel();
+    }
+
+    static bool wasCancelled(const QJsonObject &o)
+    {
+        return o.value("cancelled").toBool() || o.value("error").toString().contains(QLatin1String("cancelled"));
+    }
+
     void setBusy(bool b)
     {
         busy = b;
+        // something is always shown while work is under way: a moving bar until the operation
+        // reports how far it is, and again between its steps
+        progress->setVisible(b);
+        if (b) {
+            progress->setRange(0, 0);
+            progressLabel->setText(tr("Working…"));
+        } else {
+            progressLabel->clear();
+        }
+        cancelButton->setVisible(false);
+        cancelRisk.clear();
         readButton->setEnabled(!b && canRead);
         backupButton->setEnabled(!b && canRead);
         installButton->setEnabled(!b && canRead);
@@ -2304,6 +2395,7 @@ private:
     QProgressBar *progress;
     QPlainTextEdit *log;
     bool busy = false, polling = false, canRead = false;
+    QString cancelRisk;     // what stopping the current operation half-way would leave behind ("" = nothing)
 };
 
 // Development default: find the built images in the source tree (packaged builds ship them
@@ -2468,6 +2560,34 @@ int main(int argc, char **argv)
     }
     if (qEnvironmentVariableIsSet("NOCRY_TEST_PICTURE"))
         w.setPictureChoice(qEnvironmentVariableIntValue("NOCRY_TEST_PICTURE"));
+    // NOCRY_TEST_CANCEL_MS=n with any self-test: press Cancel n ms after it first becomes available
+    if (const int ms = qEnvironmentVariableIntValue("NOCRY_TEST_CANCEL_MS")) {
+        auto *t = new QTimer(&w);
+        auto *seen = new qint64(0);
+        QObject::connect(t, &QTimer::timeout, &w, [&w, t, seen, ms] {
+            if (!w.cancelOffered())
+                return;
+            if (!*seen)
+                *seen = QDateTime::currentMSecsSinceEpoch();
+            if (QDateTime::currentMSecsSinceEpoch() - *seen >= ms && w.testCancel())
+                t->stop();
+        });
+        t->start(20);
+    }
+    // --selftest-cancel-question shot.png: the question Cancel asks during an install, and the window behind it
+    const int scq = args.indexOf("--selftest-cancel-question");
+    if (scq >= 0 && scq + 1 < args.size()) {
+        const QString shot = args[scq + 1];
+        QTimer::singleShot(600, [&w] { w.testCancelQuestion(); });
+        QTimer::singleShot(1500, [&w, shot] {
+            w.grab().save(shot + ".window.png");
+            if (QWidget *d = QApplication::activeModalWidget()) {
+                d->grab().save(shot);
+                d->close();
+            }
+            QTimer::singleShot(200, [] { QApplication::quit(); });
+        });
+    }
     // --selftest-net-dialog shot.png: open the network dialog, save a picture of it after the search
     const int snd = args.indexOf("--selftest-net-dialog");
     if (snd >= 0 && snd + 1 < args.size()) {

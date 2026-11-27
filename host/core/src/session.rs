@@ -2070,6 +2070,7 @@ pub fn secure_wipe_data(soc: &SocProfile, via: Via, safety_dir: Option<&std::pat
     for (i, &(name, off, size)) in parts.iter().enumerate() {
         let mut done = 0;
         while done < size {
+            crate::events::check_cancelled()?;
             let n = STEP.min(size - done) as usize;
             if !t.matches(off + done, &zeros[..n])? {
                 bail!("{name} is not fully erased at {:#x}", off + done);
