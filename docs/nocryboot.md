@@ -60,7 +60,7 @@ When the SPL starts the other slot it does not change the `ota` record (it canno
 
 Not covered: an image that looks valid but does not work (a kernel that panics, a boot picture image that hangs). That needs a count of failed starts, which needs the started system to report success; not built yet.
 
-State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. An earlier door build (which started a slot without its boot picture image; on a K1 that gave a running system with a dark screen) is installed on the K1 mainboard; the Nebula Pad still carries the build without the door. The whole-slot rule above has run in the emulator only.
+State: all cases pass in the emulator (`splemu.py --blank ... --slot ... --console-input ...`). `nocryboot-doortest-<family>.bin` is a loader that only opens the door; started from RAM on a K1 mainboard (2026-11-26) the board was back in USB boot mode within half a second, without the BOOT button, and the boot ROM answered. On a K1 mainboard with the first sector of `rtos2` zeroed and slot B named, this loader (started from RAM) started slot A, with video (2026-11-26); an earlier build that started slot B without its boot picture image gave a running system with a dark screen. It is installed on the K1 mainboard; the Nebula Pad still carries the build without the door.
 
 ### Build and try
 
