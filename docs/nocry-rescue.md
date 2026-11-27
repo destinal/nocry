@@ -165,7 +165,13 @@ How it is built: the pages do no work themselves. `/usr/sbin/nocry-rescue-do` (s
 
 Plain HTTP: on a network shared with others the code and the session can be overheard. A browser will not take an encrypted page from a board without a warning on every visit; nocry on a computer has its own encrypted link.
 
-Not on the pages yet: installing firmware (needs nocry's own install logic on the board, see the to-do list), backups, the boot loader.
+5. **Repair** (`/repair`): remove system modifications, check and repair a file system (`e2fsck -fy` on the data or the settings partition, as a job; the report is kept for the log download), factory reset.
+6. **Files** (`/files`): the data partition (`userdata`, the firmware's `/usr/data`): browse, download, delete, upload a replacement of up to 8 MB (a corrected `printer.cfg`). It is mounted only while a request needs it, read-only unless something is changed, and paths that climb out of it are refused.
+7. **Board** (`/board`): the storage chip's own wear estimate and spare-block state, how full the data partition is (with a warning when it is nearly full, a common reason for a printer that no longer starts); downloads: logs (the printer's, plus the rescue system's kernel log, board status and the last check report) as one `tar.gz`, the printer configuration, the identity record; "give the printer this Wi-Fi network", which writes the network the board is on into the installed firmware's own settings file; restart into the firmware.
+
+Not on the pages yet: installing firmware (needs nocry's own install logic on the board, see the to-do list), full backups, the boot loader and boot picture, the kernel log of the last normal start, a restart into USB boot mode or into the other slot once.
+
+Tested (second round, 2026-11-27): browsing, downloads, an upload of text and of 2 MB of binary data, deleting, an over-size upload, an upload without a session, paths that climb out, all on a PC against a stand-in folder; on the Nebula Pad the read-only parts (storage report, file listing, log and identity downloads). Not yet run on a board: upload, delete, the file system check, saving the Wi-Fi network, restart.
 
 Tested: every page and action on a PC with stand-in tools (sign-in, forged and missing sessions, odd characters, confirmations, a job and its Cancel); on the Nebula Pad over the home network, sign-in and a copy of slot A to slot B through the page (512 MiB in about 20 s), checked afterwards with nocry.
 

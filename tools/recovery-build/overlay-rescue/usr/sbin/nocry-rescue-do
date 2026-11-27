@@ -7,6 +7,15 @@
 #   nocry-rescue-do switch a|b      make that slot the one that starts
 #   nocry-rescue-do copy a|b        copy that slot's firmware over the other slot       (a job)
 #   nocry-rescue-do reset mods|all  blank the settings overlay, or it and all files     (a job)
+#   nocry-rescue-do check data|settings   check and repair that file system (e2fsck)      (a job)
+#   nocry-rescue-do health          the storage chip's own wear report, the data partition's state
+#   nocry-rescue-do ls DIR          a folder of the data partition: "d|f<TAB>size<TAB>name" lines
+#   nocry-rescue-do get FILE        a file of the data partition, to standard output
+#   nocry-rescue-do put FILE        standard input into a file of the data partition
+#   nocry-rescue-do rm FILE         delete a file (or an empty folder) of the data partition
+#   nocry-rescue-do bundle logs|config|identity   a download, to standard output (tar.gz; identity: the raw record)
+#   nocry-rescue-do wifi-save       write the Wi-Fi network the board is on into the installed firmware's settings
+#   nocry-rescue-do restart         leave the rescue system: restart the board normally
 #   nocry-rescue-do job             the running or last job: state=, what=, done=, total=, message=
 #   nocry-rescue-do cancel          ask the running job to stop at its next safe point
 #
@@ -130,8 +139,121 @@ do_reset() {    # do_reset mods|all
     MSG="erased and verified"
 }
 
+# --- the data partition (userdata, "/usr/data" in the firmware), mounted only while it is used
+DATA=$RUN/nocry-files
+data_on() {     # data_on ro|rw
+    [ -d $LOCK ] && { echo "another operation is still running" >&2; return 1; }
+    p=$(part userdata) || { echo "this board has no data partition" >&2; return 1; }
+    mkdir -p $DATA
+    grep -q " $DATA " /proc/mounts && umount $DATA 2>/dev/null
+    if [ "$1" = rw ]; then mount -t ext4 -o rw "$p" $DATA 2>/dev/null
+    else mount -t ext4 -o ro,noload "$p" $DATA 2>/dev/null; fi || {
+        echo "the data partition has no readable file system (blank after a reset, or damaged: try the file system check)" >&2; return 1; }
+}
+data_off() { sync; umount $DATA 2>/dev/null; }
+# a path inside the data partition; nothing that climbs out of it
+inside() {
+    case "/$1/" in */../*|*/./*) echo "bad path" >&2; return 1 ;; esac
+    P=$DATA/${1#/}
+}
+
+do_check() {    # do_check PARTITION: e2fsck, repairing; the report is kept for the page
+    p=$(part "$1") || { MSG="no $1 partition"; return 1; }
+    TOTAL=1; DONE=0
+    if [ "$(dd if="$p" bs=1 skip=1080 count=2 2>/dev/null | hexdump -v -e '/1 "%02x"')" != 53ef ]; then
+        MSG="there is no file system (blank: the firmware makes a new one at its next start)"; DONE=1; return 0
+    fi
+    e2fsck -fy "$p" > $RUN/nocry-check.log 2>&1; rc=$?
+    DONE=1
+    case $rc in
+        0) MSG="no errors found" ;;
+        1|2|3) MSG="errors were found and repaired" ;;
+        *) MSG="errors remain that could not be repaired (code $rc); a factory reset makes a new file system"; return 1 ;;
+    esac
+}
+
+health() {
+    d=/sys/block/mmcblk0/device
+    echo "chip=$(cat $d/name 2>/dev/null)"
+    # JEDEC: life time estimates A and B in steps of 10 % used (0x01 = 0-10 %, 0x0b = past its life)
+    lt=$(cat $d/life_time 2>/dev/null); a=${lt% *}; b=${lt#* }
+    pct() { case "$1" in 0x0[1-9]|0x0a) echo $(( ($1 - 1) * 10 ))-$(( $1 * 10 )) ;; 0x0b) echo over-100 ;; *) echo unknown ;; esac; }
+    echo "wear_a=$(pct "$a")"; echo "wear_b=$(pct "$b")"
+    case "$(cat $d/pre_eol_info 2>/dev/null)" in 0x01) echo "spare=normal" ;; 0x02) echo "spare=80 % of the spare blocks used" ;; 0x03) echo "spare=90 % of the spare blocks used" ;; *) echo "spare=unknown" ;; esac
+    if data_on ro 2>/dev/null; then
+        df -k $DATA | awk 'END { printf "data_total_mb=%d\ndata_used_mb=%d\ndata_free_mb=%d\n", $2 / 1024, $3 / 1024, $4 / 1024 }'
+        echo "data_state=readable"; data_off
+    else echo "data_state=no file system"; fi
+}
+
+# What a download holds. Paths that exist are taken; both firmwares' layouts are known.
+bundle() {
+    case "$1" in
+      identity) p=$(part sn_mac) || exit 1; dd if="$p" bs=512 count=1 2>/dev/null; return ;;
+      logs)   want="printer_data/logs nebulaos/printer_data/logs nebulaos/system creality/userdata/log" ;;
+      config) want="printer_data/config nebulaos/printer_data/config nebulaos/nebulascreen nebulascreen creality/userdata/config" ;;
+      *) echo "usage: nocry-rescue-do bundle logs|config|identity" >&2; exit 2 ;;
+    esac
+    data_on ro || exit 1
+    have=; for w in $want; do [ -e "$DATA/$w" ] && have="$have $w"; done
+    T=$RUN/nocry-bundle; rm -rf $T; mkdir -p $T
+    if [ "$1" = logs ]; then        # plus what the rescue system itself knows
+        dmesg > $T/rescue-kernel.log 2>/dev/null
+        status > $T/board-status.txt 2>/dev/null; health >> $T/board-status.txt 2>/dev/null
+        cp $RUN/nocry-check.log $T/ 2>/dev/null
+        data_on ro || exit 1        # health unmounted it
+    fi
+    # one archive: the board's files under data/, the rescue system's own notes beside them
+    if [ -n "$have" ]; then ( cd $DATA && tar cf - $have 2>/dev/null ) | ( cd $T && mkdir -p data && cd data && tar xf - 2>/dev/null ); fi
+    ( cd $T && tar cf - . 2>/dev/null ) | gzip      # this tar has no compression of its own
+    rm -rf $T; data_off
+}
+
+# The network the board is on, into the settings of the installed firmware, so the printer
+# joins it by itself at its next normal start (a board whose screen cannot be used).
+wifi_save() {
+    [ -s $RUN/nocry-sta.conf ] || { echo "the board is not on a Wi-Fi network chosen here" >&2; exit 1; }
+    data_on rw || exit 1
+    if [ -d $DATA/nebulaos ]; then f=$DATA/nebulaos/network/wpa_supplicant.conf; else f=$DATA/wpa_supplicant.conf; fi
+    mkdir -p "$(dirname "$f")"
+    {
+        # the firmware's own first lines if it has any, else what both firmwares write themselves
+        if [ -f "$f" ]; then awk '/^[ \t]*network=\{/ { exit } { print }' "$f"; else printf 'ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\n'; fi
+        awk '/^[ \t]*network=\{/ { on = 1 } on { print } on && /^[ \t]*\}/ { on = 0 }' $RUN/nocry-sta.conf | grep -v 'scan_ssid'
+    } > "$f.new" && mv "$f.new" "$f" && chmod 600 "$f"
+    rc=$?; data_off
+    [ $rc = 0 ] && echo "saved for ${f#$DATA/}"
+    exit $rc
+}
+
 case "$1" in
   status) status ;;
+  health) health ;;
+  check)
+    case "$2" in data) n=userdata; t="the data file system" ;; settings) n=rootfs_data; t="the settings file system" ;; *) echo "usage: nocry-rescue-do check data|settings" >&2; exit 2 ;; esac
+    grep -q " $DATA " /proc/mounts && umount $DATA 2>/dev/null
+    RISK="A repair that is cut short can leave the file system worse than before. Let it finish."
+    run_job "Checking $t" do_check $n ;;
+  ls)
+    inside "${2:-/}" || exit 1; data_on ro || exit 1
+    [ -d "$P" ] || { data_off; echo "no such folder" >&2; exit 1; }
+    ls -lA "$P" 2>/dev/null | awk 'NR > 1 || $1 !~ /^total/ { t = substr($1, 1, 1); if (t != "d" && t != "-") next; n = $9; for (i = 10; i <= NF; i++) n = n " " $i; printf "%s\t%s\t%s\n", (t == "d" ? "d" : "f"), $5, n }'
+    data_off ;;
+  get)
+    inside "$2" || exit 1; data_on ro || exit 1
+    if [ -f "$P" ] && [ ! -L "$P" ]; then cat "$P"; rc=$?; else echo "no such file" >&2; rc=1; fi
+    data_off; exit $rc ;;
+  put)
+    inside "$2" || exit 1; data_on rw || exit 1
+    if [ -d "$(dirname "$P")" ] && [ ! -d "$P" ] && [ ! -L "$P" ]; then cat > "$P.nocry-new" && mv "$P.nocry-new" "$P"; rc=$?; else echo "no such folder" >&2; rc=1; fi
+    data_off; exit $rc ;;
+  rm)
+    inside "$2" || exit 1; [ "$P" != "$DATA/" ] || exit 1; data_on rw || exit 1
+    if [ -d "$P" ] && [ ! -L "$P" ]; then rmdir "$P" 2>/dev/null || { echo "the folder is not empty" >&2; false; }; else rm -f "$P"; fi; rc=$?
+    data_off; exit $rc ;;
+  bundle) bundle "$2" ;;
+  wifi-save) wifi_save ;;
+  restart) sync; ( sleep 2; reboot -f ) </dev/null >/dev/null 2>&1 & ;;
   switch)
     case "$2" in a|b) ;; *) echo "slot must be a or b" >&2; exit 2 ;; esac
     [ -d $LOCK ] && { echo "another operation is still running" >&2; exit 1; }

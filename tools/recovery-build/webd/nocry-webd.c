@@ -23,6 +23,7 @@
  *
  * usage: nocry-webd [--address A] [--port N] [--wifi PATH] [--do PATH] [--code-file F] [--state F]
  */
+#define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
@@ -165,6 +166,68 @@ static int code_ok(const char *given)
 	return !diff;
 }
 
+
+/* Sends a tool's standard output as a download (no length known beforehand: the connection's
+ * end is the file's end). */
+static void stream(int s, const char *filename, const char *type, const char *tool, const char *a1, const char *a2)
+{
+	int fd[2]; pid_t pid; char h[400], buf[16384]; ssize_t k; int n;
+	struct timeval tv = { 120, 0 };
+	if (pipe(fd)) return;
+	pid = fork();
+	if (pid == 0) {
+		int nul = open("/dev/null", O_WRONLY);
+		dup2(fd[1], 1); if (nul >= 0) dup2(nul, 2); close(fd[0]); close(fd[1]);
+		execl(tool, tool, a1, a2, (char *)NULL);
+		_exit(127);
+	}
+	close(fd[1]);
+	setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);	/* a slow link is not an error */
+	n = snprintf(h, sizeof h, "HTTP/1.0 200 OK\r\nContent-Type: %s\r\nContent-Disposition: attachment; filename=\"%s\"\r\n"
+		     "Cache-Control: no-store\r\nConnection: close\r\n\r\n", type, filename);
+	if (write(s, h, n) == n)
+		while ((k = read(fd[0], buf, sizeof buf)) > 0) {
+			ssize_t off = 0, w;
+			while (off < k && (w = write(s, buf + off, k - off)) > 0) off += w;
+			if (off < k) break;
+		}
+	close(fd[0]);
+	if (pid > 0) { kill(pid, SIGTERM); waitpid(pid, NULL, 0); }
+}
+
+/* Runs a tool with `data` as its standard input; its messages and exit status. */
+static char *feed(const char *tool, const char *a1, const char *a2, const char *data, size_t len, int *status)
+{
+	int in[2], out[2], st = 0; pid_t pid; char *msg = calloc(1, 513); size_t n = 0, off = 0; ssize_t k;
+	*status = -1;
+	if (!msg || pipe(in) || pipe(out)) return msg;
+	pid = fork();
+	if (pid == 0) {
+		dup2(in[0], 0); dup2(out[1], 1); dup2(out[1], 2);
+		close(in[0]); close(in[1]); close(out[0]); close(out[1]);
+		execl(tool, tool, a1, a2, (char *)NULL);
+		_exit(127);
+	}
+	close(in[0]); close(out[1]);
+	while (off < len && (k = write(in[1], data + off, len - off)) > 0) off += k;
+	close(in[1]);
+	while (n < 512 && (k = read(out[0], msg + n, 512 - n)) > 0) n += k;
+	close(out[0]);
+	if (pid > 0) { waitpid(pid, &st, 0); *status = (WIFEXITED(st) && off == len) ? WEXITSTATUS(st) : -1; }
+	msg[n] = 0;
+	while (n && (msg[n - 1] == '\n' || msg[n - 1] == '\r')) msg[--n] = 0;
+	return msg;
+}
+
+/* text for a URL query value */
+static void urlenc(struct buf *b, const char *s)
+{
+	char t[4];
+	for (; *s; s++) {
+		if (isalnum((unsigned char)*s) || strchr("-_.~/", *s)) put(b, s, 1);
+		else { snprintf(t, sizeof t, "%%%02X", (unsigned char)*s); puts_(b, t); }
+	}
+}
 
 /* ------------------------------------------------------------------ sessions -- */
 
@@ -337,16 +400,119 @@ static void page_home(struct buf *b, const char *flash, int flash_ok)
 	puts_(b, "<hr style=\"border:0;border-top:1px solid #8884\">");
 	slot_row(b, bs, 'b', active[0] == 'b', running);
 	puts_(b, "<p class=t>The board holds two firmware slots and starts one of them. Settings and files are shared by both.</p></div>");
-	if (!running)
-		puts_(b, "<div class=c><h2>Reset</h2>"
-			 "<p><b>Remove system modifications.</b> Clears changes made to the system itself (installed mods, helper scripts, "
-			 "changed system settings). Your files, print history and printer configuration stay. Try this first when the printer stopped starting after a mod.</p>"
-			 "<form method=post action=/reset><input type=hidden name=kind value=mods><button class=q>Remove system modifications</button></form>"
-			 "<p><b>Factory reset.</b> Erases all settings and files. The firmware, the slots and the board's serial number stay.</p>"
-			 "<form method=post action=/reset><input type=hidden name=kind value=all><button class=d>Factory reset</button></form></div>");
-	puts_(b, "<p class=t>Installing firmware, backups and the boot loader need nocry on a computer for now "
+	puts_(b, "<div class=c><h2>More</h2>"
+		 "<a class=\"b q w\" href=/repair>Repair: undo modifications, check the file system, factory reset</a>"
+		 "<a class=\"b q w\" href=/files>Files: browse, download, delete, replace</a>"
+		 "<a class=\"b q w\" href=/board>Board: storage health, logs, identity, restart</a></div>"
+		 "<p class=t>Installing firmware, full backups and the boot loader need nocry on a computer for now "
 		 "(github.com/destinal/nocry): it finds this board on the network by itself.</p>");
 	free(st); free(job); free(bs);
+}
+
+static void back(struct buf *b) { puts_(b, "<a class=\"b q\" href=/>Back</a>"); }
+
+static void page_repair(struct buf *b)
+{
+	char *job = run(doer, "job", NULL, NULL, 2048, NULL), state[16]; int running;
+	field(job, "state", state, sizeof state); running = !strcmp(state, "running");
+	head(b, running ? "<meta http-equiv=refresh content=3>" : NULL);
+	job_card(b, job);
+	if (!running) {
+		puts_(b, "<div class=c><h2>Remove system modifications</h2>"
+			 "<p>Clears changes made to the system itself: installed mods, helper scripts, changed system settings. "
+			 "Your files, print history and printer configuration stay. Try this first when the printer stopped starting after a mod. "
+			 "(Creality's firmware keeps such changes apart from your files; NebulaOS does not use this area.)</p>"
+			 "<form method=post action=/reset><input type=hidden name=kind value=mods><button class=q>Remove system modifications</button></form></div>"
+			 "<div class=c><h2>Check the file system</h2>"
+			 "<p>Switching a printer off at the wall can damage the file system that holds your settings and files, and the printer then hangs at its logo. "
+			 "This finds and repairs such damage.</p>"
+			 "<form method=post action=/check><input type=hidden name=which value=data><button class=q>Check files and settings</button></form>"
+			 "<form method=post action=/check><input type=hidden name=which value=settings><button class=q>Check system changes</button></form></div>"
+			 "<div class=c><h2>Factory reset</h2>"
+			 "<p>Erases all settings and files. The firmware, the slots and the board's serial number stay. "
+			 "Save what you want to keep first: <a href=/files>Files</a>.</p>"
+			 "<form method=post action=/reset><input type=hidden name=kind value=all><button class=d>Factory reset</button></form></div>");
+	}
+	back(b);
+	free(job);
+}
+
+static void page_board(struct buf *b, const char *flash, int flash_ok)
+{
+	char *h = run(doer, "health", NULL, NULL, 2048, NULL), *bs = run(doer, "status", NULL, NULL, 4096, NULL), *st = slurp(statefile, 1024);
+	char v[96], w[96], mode[24];
+	head(b, NULL);
+	note(b, flash_ok ? "ok" : "e", flash);
+	puts_(b, "<div class=c><h2>Storage</h2>");
+	field(h, "wear_a", v, sizeof v); field(h, "wear_b", w, sizeof w);
+	puts_(b, "<p>The storage chip's own estimate of how much of its life is used: <b>"); esc(b, v); puts_(b, "&nbsp;%</b>");
+	if (strcmp(v, w)) { puts_(b, " and <b>"); esc(b, w); puts_(b, "&nbsp;%</b> for its two kinds of cells"); }
+	field(h, "spare", v, sizeof v); puts_(b, ". Spare blocks: "); esc(b, v); puts_(b, ".");
+	field(h, "chip", v, sizeof v); if (v[0]) { puts_(b, " <span class=t>(chip "); esc(b, v); puts_(b, ")</span>"); }
+	puts_(b, "</p><p class=t>A chip near or past 100&nbsp;% explains file systems that keep getting damaged.</p>");
+	field(h, "data_state", v, sizeof v);
+	if (!strcmp(v, "readable")) {
+		char t[24], u[24], f[24];
+		field(h, "data_total_mb", t, sizeof t); field(h, "data_used_mb", u, sizeof u); field(h, "data_free_mb", f, sizeof f);
+		puts_(b, "<p>Settings and files: "); esc(b, u); puts_(b, " MB used of "); esc(b, t); puts_(b, " MB, "); esc(b, f); puts_(b, " MB free.");
+		if (atol(f) < 50) puts_(b, " <b>Almost full: a printer with no free space may not start. Delete something under <a href=/files>Files</a>.</b>");
+		puts_(b, "</p>");
+	} else puts_(b, "<p>Settings and files: no readable file system (blank after a reset, or damaged; see <a href=/repair>Repair</a>).</p>");
+	puts_(b, "</div><div class=c><h2>Save from the board</h2>"
+		 "<p><a class=\"b q\" href=/dl/logs>Logs</a> What the printer and this rescue system recorded, in one file: attach it when you ask for help.</p>"
+		 "<p><a class=\"b q\" href=/dl/config>Printer configuration</a> The printer's configuration files, to keep before a reset.</p>"
+		 "<p><a class=\"b q\" href=/dl/identity>Identity record</a> The board's serial number and network address as stored on it. Keep it private.</p></div>");
+	field(bs, "model", v, sizeof v); field(bs, "mainboard", w, sizeof w);
+	puts_(b, "<div class=c><h2>Board</h2><p>Set up as: "); esc(b, v[0] ? v : "unknown"); puts_(b, ", mainboard "); esc(b, w[0] ? w : "unknown"); puts_(b, ".</p></div>");
+	field(st, "mode", mode, sizeof mode);
+	if (!strcmp(mode, "client")) {
+		field(st, "ssid", v, sizeof v);
+		puts_(b, "<div class=c><h2>Give the printer this Wi-Fi network</h2><p>Writes <b>"); esc(b, v);
+		puts_(b, "</b> and its password into the installed firmware's settings, so the printer joins it by itself when it starts normally. "
+			 "For a printer whose screen cannot be used.</p><form method=post action=/wifi/save><button class=q>Save this network for the printer</button></form></div>");
+	}
+	puts_(b, "<div class=c><h2>Restart</h2><p>Leaves the rescue system and starts the board normally, from the slot marked to start.</p>"
+		 "<form method=post action=/restart><button>Restart the board</button></form></div>");
+	back(b);
+	free(h); free(bs); free(st);
+}
+
+/* the folder `dir` of the data partition */
+static void page_files(struct buf *b, const char *dir, const char *flash, int flash_ok)
+{
+	int st; char *ls = run(doer, "ls", dir[0] ? dir : "/", NULL, 65536, &st), *line, *save; int any = 0;
+	head(b, NULL);
+	note(b, flash_ok ? "ok" : "e", flash);
+	puts_(b, "<div class=c><h2>Files: /"); esc(b, dir); puts_(b, "</h2>");
+	if (st != 0) { note(b, "e", ls && *ls ? ls : "The folder cannot be read."); }
+	else {
+		puts_(b, "<p class=t>The printer's settings and files (its /usr/data). Deleting cannot be undone.</p>");
+		if (dir[0]) {
+			char up[512]; char *sl;
+			snprintf(up, sizeof up, "%s", dir); sl = strrchr(up, '/'); if (sl) *sl = 0; else up[0] = 0;
+			puts_(b, "<div class=n><a href=\"/files?p="); urlenc(b, up); puts_(b, "\">&larr; up</a></div>");
+		}
+		for (line = strtok_r(ls, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+			char *t1 = strchr(line, '\t'), *t2 = t1 ? strchr(t1 + 1, '\t') : NULL, path[700], sz[32];
+			unsigned long long bytes;
+			if (!t2 || !t2[1]) continue;
+			snprintf(path, sizeof path, "%s%s%s", dir, dir[0] ? "/" : "", t2 + 1);
+			bytes = strtoull(t1 + 1, NULL, 10);
+			if (bytes >= 10 << 20) snprintf(sz, sizeof sz, "%llu MB", bytes >> 20); else if (bytes >= 10 << 10) snprintf(sz, sizeof sz, "%llu KB", bytes >> 10); else snprintf(sz, sizeof sz, "%llu B", bytes);
+			puts_(b, "<div class=n>");
+			if (line[0] == 'd') { puts_(b, "<a href=\"/files?p="); urlenc(b, path); puts_(b, "\"><b>"); esc(b, t2 + 1); puts_(b, "/</b></a>"); }
+			else { puts_(b, "<a href=\"/files/get?p="); urlenc(b, path); puts_(b, "\">"); esc(b, t2 + 1); puts_(b, "</a><small>"); puts_(b, sz); puts_(b, "</small>"); }
+			puts_(b, "<form method=post action=/files/delete style=\"margin-left:"); puts_(b, line[0] == 'd' ? "auto" : ".6em");
+			puts_(b, "\"><input type=hidden name=p value=\""); esc(b, path); puts_(b, "\"><button class=q style=\"margin:0;padding:.2em .6em\">Delete</button></form></div>");
+			any = 1;
+		}
+		if (!any) puts_(b, "<p>This folder is empty.</p>");
+		puts_(b, "</div><div class=c><h2>Put a file here</h2><p class=t>For example a corrected printer.cfg. A file of the same name is replaced. Up to 8 MB.</p>"
+			 "<form method=post action=\"/files/upload?p="); urlenc(b, dir);
+		puts_(b, "\" enctype=multipart/form-data><input type=file name=file><button class=q>Upload</button></form>");
+	}
+	puts_(b, "</div>"); back(b);
+	free(ls);
 }
 
 static void page_wifi(struct buf *b, const char *error, const char *keep_ssid)
@@ -424,6 +590,38 @@ static void redirect(int s, const char *where)
 	free(b.p);
 }
 
+#define UPLOAD_MAX (8u << 20)
+
+/* The file in a multipart/form-data body: its bytes and its name. 0 if there is none. */
+static int upload(char *headers, char *body, size_t blen, char **data, size_t *len, char *name, size_t namemax)
+{
+	char *ct = strcasestr(headers, "\nContent-Type: multipart/form-data"), *bd, delim[128], *p, *end, *fn, *e;
+	size_t dl;
+	if (!ct || !(bd = strstr(ct, "boundary="))) return 0;
+	bd += 9; if (*bd == '"') bd++;
+	dl = snprintf(delim, sizeof delim, "\r\n--%.*s", (int)strcspn(bd, "\"\r\n;"), bd);
+	p = body;
+	while (p && p < body + blen) {
+		char *hend = strstr(p, "\r\n\r\n");
+		if (!hend) return 0;
+		*hend = 0;
+		fn = strstr(p, "filename=\"");
+		end = memmem(hend + 4, body + blen - (hend + 4), delim, dl);
+		if (!end) return 0;
+		if (fn && strstr(p, "name=\"file\"")) {
+			fn += 10; e = strchr(fn, '"'); if (!e) return 0; *e = 0;
+			if (strrchr(fn, '/')) fn = strrchr(fn, '/') + 1;
+			if (strrchr(fn, '\\')) fn = strrchr(fn, '\\') + 1;
+			if (!fn[0] || !strcmp(fn, ".") || !strcmp(fn, "..") || strlen(fn) >= namemax) return 0;
+			snprintf(name, namemax, "%s", fn);
+			*data = hend + 4; *len = end - (hend + 4);
+			return 1;
+		}
+		p = end + dl;
+	}
+	return 0;
+}
+
 static int is(const char *req, const char *method_path)	/* exact request line prefix followed by space or ? */
 {
 	size_t n = strlen(method_path);
@@ -432,19 +630,32 @@ static int is(const char *req, const char *method_path)	/* exact request line pr
 
 static void serve(int s)
 {
-	static char req[8192]; size_t n = 0, clen = 0; ssize_t k; char *body, *cl; struct buf b = { 0 };
-	char v1[80], v2[80], v3[80], yes[4]; int st;
-	while (n < sizeof req - 1 && (k = read(s, req + n, sizeof req - 1 - n)) > 0) {
-		n += k; req[n] = 0;
-		if ((body = strstr(req, "\r\n\r\n"))) {
-			for (cl = req; cl < body; cl++) if (!strncasecmp(cl, "\nContent-Length:", 16)) clen = strtoul(cl + 16, NULL, 10);
-			if (n >= (size_t)(body + 4 - req) + clen) break;
+	static char *req; static size_t cap; size_t n = 0, clen = 0, blen; ssize_t k; char *body = NULL, *cl; struct buf b = { 0 };
+	char v1[80], v2[80], v3[80], yes[4], query[600] = "", path[512], *q, *sp; int st;
+	if (!req) { cap = 16384; req = malloc(cap); if (!req) return; }
+	for (;;) {
+		if (n + 1 >= cap) {
+			/* only a signed-in upload may grow the buffer, and only to its stated size (8 MB at most) */
+			if (!body || clen > UPLOAD_MAX || !signed_in(req) || cap >= (size_t)(body - req) + clen + 2) break;
+			{ size_t off = body - req; char *r = realloc(req, off + clen + 2); if (!r) break; req = r; cap = off + clen + 2; body = req + off; }
 		}
+		k = read(s, req + n, cap - 1 - n);
+		if (k <= 0) break;
+		n += k; req[n] = 0;
+		if (!body && (body = strstr(req, "\r\n\r\n"))) {
+			char save = *body; *body = 0;
+			for (cl = req; *cl; cl++) if (!strncasecmp(cl, "\nContent-Length:", 16)) clen = strtoul(cl + 16, NULL, 10);
+			*body = save; body += 4;
+		}
+		if (body && n >= (size_t)(body - req) + clen) break;
 	}
-	req[n] = 0;
-	body = strstr(req, "\r\n\r\n");
 	if (!body) return;
-	*body = 0; body += 4;		/* req: request line and headers; body: the form */
+	body[-4] = 0;			/* req: request line and headers; body: the form or the upload */
+	blen = n - (body - req); if (blen > clen) blen = clen;
+	body[blen] = 0;
+	/* the part of the address after "?" */
+	sp = strchr(req, ' '); q = sp ? strchr(sp + 1, '?') : NULL;
+	if (q && q < strchr(sp + 1, ' ' ) ) { size_t l = strcspn(q + 1, " \r\n"); if (l >= sizeof query) l = sizeof query - 1; memcpy(query, q + 1, l); query[l] = 0; }
 
 	if (is(req, "POST /login")) {
 		time_t now = time(NULL);
@@ -544,6 +755,87 @@ static void serve(int s)
 			if (st == 0) redirect(s, "/");
 			else { page_home(&b, out && *out ? out : "The reset could not be started.", 0); reply(s, "200 OK", NULL, &b); }
 			free(out);
+		}
+	} else if (is(req, "GET /repair")) {
+		page_repair(&b);
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "GET /board")) {
+		page_board(&b, NULL, 0);
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /check")) {
+		form(body, "which", v1, sizeof v1); form(body, "yes", yes, sizeof yes);
+		if (strcmp(v1, "data") && strcmp(v1, "settings")) { redirect(s, "/repair"); free(b.p); return; }
+		if (!yes[0]) {
+			page_confirm(&b, "Check and repair the file system?",
+				     "Damage that is found is repaired. Files that were damaged beyond repair may be lost or end up in a folder called lost+found. It usually takes under a minute. Do not stop it once it runs.",
+				     "/check", "which", v1, "Check and repair", 0);
+			reply(s, "200 OK", NULL, &b);
+		} else {
+			char *out = run(doer, "check", v1, NULL, 512, &st);
+			if (st == 0) redirect(s, "/repair");
+			else { page_home(&b, out && *out ? out : "The check could not be started.", 0); reply(s, "200 OK", NULL, &b); }
+			free(out);
+		}
+	} else if (is(req, "GET /dl/logs")) {
+		stream(s, "nocry-board-logs.tar.gz", "application/gzip", doer, "bundle", "logs");
+	} else if (is(req, "GET /dl/config")) {
+		stream(s, "nocry-printer-configuration.tar.gz", "application/gzip", doer, "bundle", "config");
+	} else if (is(req, "GET /dl/identity")) {
+		stream(s, "nocry-identity-record.bin", "application/octet-stream", doer, "bundle", "identity");
+	} else if (is(req, "GET /files/get")) {
+		const char *base;
+		if (!form(query, "p", path, sizeof path)) { redirect(s, "/files"); free(b.p); return; }
+		base = strrchr(path, '/'); base = base ? base + 1 : path;
+		{ char safe[128]; size_t i; for (i = 0; base[i] && i < sizeof safe - 1; i++) safe[i] = (isalnum((unsigned char)base[i]) || strchr("._-", base[i])) ? base[i] : '_'; safe[i] = 0;
+		  stream(s, safe[0] ? safe : "file", "application/octet-stream", doer, "get", path); }
+	} else if (is(req, "GET /files")) {
+		form(query, "p", path, sizeof path);
+		page_files(&b, path, NULL, 0);
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /files/delete")) {
+		char *sl;
+		form(body, "p", path, sizeof path); form(body, "yes", yes, sizeof yes);
+		if (!path[0]) { redirect(s, "/files"); free(b.p); return; }
+		if (!yes[0]) {
+			char text[700];
+			snprintf(text, sizeof text, "\"%s\" is removed from the printer for good. A folder has to be empty first.", path);
+			page_confirm(&b, "Delete this?", text, "/files/delete", "p", path, "Delete", 1);
+		} else {
+			char *out = run(doer, "rm", path, NULL, 512, &st);
+			sl = strrchr(path, '/'); if (sl) *sl = 0; else path[0] = 0;
+			page_files(&b, path, st == 0 ? "Deleted." : (out && *out ? out : "It could not be deleted."), st == 0);
+			free(out);
+		}
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /files/upload")) {
+		char *data, name[160], dest[700], *out; size_t len;
+		form(query, "p", path, sizeof path);
+		if (clen > UPLOAD_MAX) page_files(&b, path, "That file is larger than 8 MB.", 0);
+		else if (!upload(req, body, blen, &data, &len, name, sizeof name)) page_files(&b, path, "No file was chosen.", 0);
+		else {
+			snprintf(dest, sizeof dest, "%s%s%s", path, path[0] ? "/" : "", name);
+			out = feed(doer, "put", dest, data, len, &st);
+			page_files(&b, path, st == 0 ? "Uploaded." : (out && *out ? out : "The file could not be stored."), st == 0);
+			free(out);
+		}
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /wifi/save")) {
+		char *out = run(doer, "wifi-save", NULL, NULL, 512, &st);
+		page_board(&b, st == 0 ? "The network is saved in the printer's settings." : (out && *out ? out : "It could not be saved."), st == 0);
+		free(out);
+		reply(s, "200 OK", NULL, &b);
+	} else if (is(req, "POST /restart")) {
+		form(body, "yes", yes, sizeof yes);
+		if (!yes[0]) {
+			page_confirm(&b, "Restart the board?", "The rescue system ends and the board starts normally. These pages go away; to come back here the rescue system has to be started again.",
+				     "/restart", NULL, NULL, "Restart", 0);
+			reply(s, "200 OK", NULL, &b);
+		} else {
+			head(&b, NULL);
+			puts_(&b, "<div class=c><h2>Restarting</h2><p class=ok>The board is restarting normally. This page will stop answering.</p></div>");
+			reply(s, "200 OK", NULL, &b);
+			shutdown(s, SHUT_WR);
+			free(run(doer, "restart", NULL, NULL, 64, NULL));
 		}
 	} else if (is(req, "POST /job/cancel")) {
 		char *job = run(doer, "job", NULL, NULL, 2048, NULL), risk[220], state[16];

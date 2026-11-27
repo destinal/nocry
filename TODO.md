@@ -37,17 +37,17 @@ Last updated: 2026-11-27.
   - [ ] **Install firmware from the page** (downloaded by the board, or uploaded from the browser). Needs nocry's install logic on the board rather than a second implementation: build the Rust core for the board's processor (mipsel is not a ready-made target) and make it stream firmware instead of holding it in memory (the board has about 230 MB of RAM); stage downloads on the data partition.
   - [ ] the rescue functions below, on the pages too
 - [ ] **Rescue functions for both the desktop app and the web pages** (asked for 2026-11-27; what each has today in brackets):
-  - [ ] Remove system modifications only: blank the settings overlay, keep files [web: yes; desktop: factory reset can keep files, but it is not offered as its own, clearly named action]
-  - [ ] Check and repair the data file system (e2fsck) [neither]
-  - [ ] File browser for the data partition: see what fills it, download, delete; replace a broken `printer.cfg` [neither]
-  - [ ] Save before wiping: download configuration and files, the identity record, or a backup [desktop: full and per-partition backup; web: none]
-  - [ ] "Why didn't it start?": the nocryboot note, the kernel log of the last start, the firmware's own logs, bundled into one file [desktop: board log only; web: the note only]
-  - [ ] Storage health: the eMMC's own wear report [neither]
-  - [ ] Write the Wi-Fi network just joined into the installed firmware's settings [neither]
-  - [ ] Restart: into the firmware, into the other slot once, into USB boot mode [neither]
-  - [ ] Screen and touch test [neither; only meaningful on the board]
-  - [ ] Identity: show and repair [desktop: yes; web: shows the printer type only]
-  - [ ] Boot loader and boot picture [desktop: yes; web: none]
+  - [ ] Remove system modifications only [web: yes; desktop: factory reset can keep files, but not as its own clearly named action]
+  - [ ] Check and repair the data file system [web: yes, not yet run on a board; desktop: no]
+  - [ ] File browser for the data partition: browse, download, delete, upload [web: yes, writing not yet run on a board; desktop: no]
+  - [ ] Save before wiping [web: configuration, logs, identity record; desktop: full and per-partition backup, no configuration-only download]
+  - [ ] "Why didn't it start?" in one file [web: printer logs, rescue kernel log, status, the nocryboot note; desktop: board log only. Neither has the kernel log of the last normal start]
+  - [ ] Storage health [web: yes; desktop: no]
+  - [ ] Write the Wi-Fi network into the installed firmware's settings [web: yes, not yet run on a board; desktop: no]
+  - [ ] Restart [web: into the firmware, not yet run on a board; neither: the other slot once, USB boot mode; desktop: none]
+  - [ ] Screen and touch test [neither]
+  - [ ] Identity: show and repair [desktop: yes; web: printer type and a download of the record]
+  - [ ] Boot loader and boot picture [desktop: yes; web: no]
 - [ ] Step 3: stored as a file in `userdata` with a pointer in `ota`; nocryboot loads it; touch trigger in the boot picture program.
 - [ ] Step 4: slots and factory reset on the touchscreen; start automatically when no slot can be started.
 - [ ] Step 5: K1 family. Step 6: firmware install on the printer.
