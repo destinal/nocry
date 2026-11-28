@@ -30,6 +30,20 @@ Get the latest pre-release from the [releases page](https://github.com/destinal/
 
 <sub>The serial number and MAC address in the screenshots are made up. More: [Advanced tab](docs/screenshots/advanced.png).</sub>
 
+## Rescue on the printer, without a computer
+
+On a Nebula Pad family printer (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max) running its normal firmware, one command in a root shell on the printer (ssh) installs the nocryboot loader and the rescue system from the newest release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/destinal/nocry/main/install.sh | sh
+```
+
+Afterwards: switch the printer off, put a finger on the screen, switch it on, and the rescue system starts (touch interface, Wi-Fi, a web application, flash drives). Without the finger the printer starts as before.
+
+The script (`install.sh`, readable in a minute) checks the board before it writes anything: the loader on it must be Creality's or an earlier nocryboot, the partitions must be where the new loader looks for them, and the downloads must match the size and SHA-256 GitHub lists for the release. It says what it is about to do and asks. Creality's loader is kept on the board; every write is read back, and a loader that does not read back right is replaced by the one that was there. Firmware, settings and the identity record are not touched. `sh install.sh --check` only looks. To undo it from a computer: `nocry loader --factory --yes` and `nocry rescue --remove`. Take a backup first if you can.
+
+State: tested against images of a Nebula Pad's storage (the result starts the rescue system in the emulator and is recognised by `nocry loader`), under the busybox shell the firmware has. **Not yet run on a printer.**
+
 ## What it does
 
 - Loads its own SPL and second stage through the SoC's USB boot mode (hold BOOT, tap RESET). No blobs: both are built from GPL U-Boot source with the patches in `tools/burner-build`.
