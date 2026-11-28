@@ -1823,6 +1823,15 @@ static void home_tick(lv_timer_t *t)
 	/* Eject is there to be seen, and greyed out while no drive is mounted */
 	if (usb_mounted()) lv_obj_clear_state(home_eject, LV_STATE_DISABLED); else lv_obj_add_state(home_eject, LV_STATE_DISABLED);
 }
+/* Started by the loader because no firmware slot could be started (nobody held the screen)?
+   Say so once: otherwise the owner switches on a printer and finds this instead, unexplained. */
+static int slots_told;
+static void home_slots(int rc, char *out)
+{
+	if (rc || modal || depth != 1) return;
+	if (!strcmp(kv(out, "a_complete"), "yes") || !strcmp(kv(out, "b_complete"), "yes")) return;
+	message("No firmware can be started", "Neither slot holds a complete firmware, so the rescue system started instead. Install firmware (Install, or USB drive), or restore a backup.");
+}
 static void home_job(int rc, char *out)
 {
 	if (!rc && !strcmp(kv(out, "state"), "running")) { job_next = NULL; job_home = 0; job_undo = NULL; go(job_screen); }
@@ -1864,6 +1873,7 @@ static void home_screen(void)
 	home_tick(NULL);
 	screen_timer = lv_timer_create(home_tick, 1000, NULL);
 	start(home_job, NULL, "nocry-rescue-do", "job", NULL);
+	if (!slots_told) { slots_told = 1; start(home_slots, NULL, "nocry-rescue-do", "status", NULL); }
 }
 
 /* ---- start ----------------------------------------------------------------------------- */

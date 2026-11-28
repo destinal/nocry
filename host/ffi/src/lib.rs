@@ -353,7 +353,16 @@ fn slots_json(r: std::thread::Result<anyhow::Result<session::Slots>>) -> *mut c_
         )
     };
     out(match r {
-        Ok(Ok(s)) => format!("{{\"ok\":true,\"active\":\"{}\",\"a\":{},\"b\":{}}}", s.active, one(&s.a), one(&s.b)),
+        Ok(Ok(s)) => {
+            let trial = |x: &str| s.trial_refusal(x).unwrap_or_default();
+            let (ta, tb) = (trial("a"), trial("b"));
+            format!(
+                "{{\"ok\":true,\"active\":\"{}\",\"a\":{},\"b\":{},\"loader_counts\":{},\"note\":\"{}\",\
+                 \"trial_a\":\"{}\",\"trial_a_why\":\"{}\",\"trial_b\":\"{}\",\"trial_b_why\":\"{}\"}}",
+                s.active, one(&s.a), one(&s.b), s.loader_counts, esc(&s.note.as_ref().map(|n| n.describe()).unwrap_or_default()),
+                ta.0, esc(&ta.1), tb.0, esc(&tb.1)
+            )
+        }
         Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
         Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
     })
@@ -378,6 +387,18 @@ pub unsafe extern "C" fn nocry_set_active_slot_json(slot: *const c_char, safety_
     events::reset_cancel();
     slots_json(std::panic::catch_unwind(|| {
         session::set_active_slot(&nocry_core::bootrom::SOCS[0], Via::Auto, &slot, safety.as_deref(), test_target().as_ref())
+    }))
+}
+
+/// Set slot "a"/"b" active on trial for `tries` starts (1-9), as `nocry slots --set X --try N`.
+/// # Safety
+/// `slot` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_start_trial_json(slot: *const c_char, tries: c_int) -> *mut c_char {
+    let slot = CStr::from_ptr(slot).to_string_lossy().to_string();
+    events::reset_cancel();
+    slots_json(std::panic::catch_unwind(|| {
+        session::start_trial(&nocry_core::bootrom::SOCS[0], Via::Auto, &slot, tries.clamp(0, 255) as u8, test_target().as_ref())
     }))
 }
 
@@ -723,6 +744,92 @@ pub extern "C" fn nocry_boot_log_json() -> *mut c_char {
     out(match r {
         Ok(Ok((kind, text))) => format!("{{\"ok\":true,\"kind\":\"{kind}\",\"text\":\"{}\"}}", esc(&text)),
         Ok(Err(e)) => format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&format!("{e:#}"))),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
+/// The rescue image stored on the board. `action`: 0 = report, 1 = install (`image` NULL:
+/// nocry-rescue.uImage among the board images), 2 = remove.
+/// {"ok":true,"stored":"yes|damaged|no","copies":N,"loader_old":bool,"image":"what action 1 would install, or empty"}
+/// # Safety
+/// `image` must be NULL or a valid NUL-terminated path.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_rescue_json(action: c_int, image: *const c_char) -> *mut c_char {
+    let image = opt_path(image);
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| -> anyhow::Result<String> {
+        let found = session::rescue_image(image.as_ref());
+        let (stored, copies) = match action {
+            1 => ("yes".to_string(), session::rescue_install(&found?)?),
+            2 => {
+                session::rescue_remove()?;
+                ("no".to_string(), 0)
+            }
+            _ => session::rescue_status()?,
+        };
+        let img = session::rescue_image(image.as_ref()).map(|p| p.display().to_string()).unwrap_or_default();
+        Ok(format!(
+            "{{\"ok\":true,\"stored\":\"{}\",\"copies\":{copies},\"loader_old\":{},\"image\":\"{}\"}}",
+            esc(&stored), session::rescue_loader_old()?, esc(&img)
+        ))
+    });
+    out(match r {
+        Ok(Ok(j)) => j,
+        Ok(Err(e)) => fail_json(&e),
+        Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
+    })
+}
+
+/// What the board does for its own repair (`nocry board ...`). `verb`: "health"; "check" (`arg`
+/// "data" = userdata or "settings" = rootfs_data: fsck, a job on the board, waited for,
+/// cancellable); "ls" (`arg` a folder of the data partition); "get" (`arg` a file there, saved
+/// to `file`); "put" (`file` stored as `arg`); "rm" (`arg`); "bundle" (`arg` "logs" or "config":
+/// a tar.gz saved to `file`).
+/// # Safety
+/// Pointers must be NULL or valid NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn nocry_board_json(verb: *const c_char, arg: *const c_char, file: *const c_char) -> *mut c_char {
+    let (verb, arg, file) = (text(verb), text(arg), opt_path(file).unwrap_or_default());
+    events::reset_cancel();
+    let r = std::panic::catch_unwind(|| -> anyhow::Result<String> {
+        use anyhow::Context;
+        Ok(match verb.as_str() {
+            "health" => {
+                let h = session::board_health()?;
+                format!(
+                    "{{\"ok\":true,\"chip\":\"{}\",\"wear_a\":\"{}\",\"wear_b\":\"{}\",\"spare\":\"{}\",\"data_state\":\"{}\",\
+                     \"data_total_mb\":{},\"data_used_mb\":{},\"data_free_mb\":{}}}",
+                    esc(&h.chip), esc(&h.wear_a), esc(&h.wear_b), esc(&h.spare), esc(&h.data_state), h.data_total_mb, h.data_used_mb, h.data_free_mb
+                )
+            }
+            "check" => format!("{{\"ok\":true,\"message\":\"{}\"}}", esc(&session::board_check(&arg)?)),
+            "ls" => {
+                let es: Vec<String> = session::board_list(&arg)?
+                    .iter()
+                    .map(|e| format!("{{\"name\":\"{}\",\"dir\":{},\"size\":{}}}", esc(&e.name), e.is_dir, e.size))
+                    .collect();
+                format!("{{\"ok\":true,\"entries\":[{}]}}", es.join(","))
+            }
+            "get" | "bundle" => {
+                let d = if verb == "get" { session::board_get(&arg)? } else { session::board_bundle(&arg)? };
+                std::fs::write(&file, &d).with_context(|| format!("writing {}", file.display()))?;
+                format!("{{\"ok\":true,\"bytes\":{}}}", d.len())
+            }
+            "put" => {
+                let d = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+                session::board_put(&arg, &d)?;
+                format!("{{\"ok\":true,\"bytes\":{}}}", d.len())
+            }
+            "rm" => {
+                session::board_delete(&arg)?;
+                "{\"ok\":true}".into()
+            }
+            _ => anyhow::bail!("unknown action"),
+        })
+    });
+    out(match r {
+        Ok(Ok(j)) => j,
+        Ok(Err(e)) => fail_json(&e),
         Err(_) => "{\"ok\":false,\"error\":\"internal error\"}".into(),
     })
 }

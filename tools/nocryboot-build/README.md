@@ -7,7 +7,7 @@ It does what the factory loader does, and adds three things the factory loader l
 | | Factory loader | nocryboot |
 |---|---|---|
 | A firmware slot is damaged | hangs | starts the other slot |
-| Neither slot can start | hangs; BOOT button on the mainboard needed | restarts the board in USB boot mode by itself, so a computer can repair it |
+| Neither slot can start | hangs; BOOT button on the mainboard needed | starts the rescue system if the board has one (Nebula Pad); otherwise restarts the board in USB boot mode by itself, so a computer can repair it |
 | A new firmware should be tried safely | not possible | a slot can be put on trial for a number of starts; if it never comes up, the board goes back to the other slot |
 | Recovery without a computer | none | a finger on the screen at power-on starts a rescue system stored on the board (Nebula Pad) |
 
@@ -18,7 +18,7 @@ The design notes, measurements and test log are in [`docs/nocryboot.md`](../../d
 1. Clocks, console UART, memory (LPDDR2).
 2. *(Nebula Pad build)* The touch chip is read. Three pressure readings 20 ms apart, all pressed, mean "rescue": go to step 7.
 3. The slot record is read from the first sector of the `ota` partition: `ota:kernel2` means slot B, anything else slot A.
-4. The slot is checked: kernel, boot logo image and root file system each have to carry their signature. If the slot is incomplete, or its trial count has run out, the other slot is taken and the record rewritten. If no slot is complete, the board restarts in USB boot mode.
+4. The slot is checked: kernel, boot logo image and root file system each have to carry their signature. If the slot is incomplete, or its trial count has run out, the other slot is taken and the record rewritten. If no slot is complete, the rescue system is tried (step 7), and if there is none the board restarts in USB boot mode.
 5. The slot's boot logo image (`rtos` partition) runs on the second processor core and switches the display on.
 6. The slot's kernel is loaded and started.
 7. *(rescue)* A copy of the rescue system is looked for in the last 50 MiB of each root file system partition, the active slot's first. A copy is a plain uImage named `nocry-rescue...`; it is started only if the CRCs in its header match the header and the contents. If neither copy is good, the start goes on at step 3.

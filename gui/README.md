@@ -81,3 +81,13 @@ While anything runs, the bar under the tabs is shown: moving until the operation
 | Boot loader, boot logo, identity, switching the slot, reading the board | none: they take seconds, and the first three must not be cut short |
 
 A stop takes effect at the next safe point (between two writes), never in the middle of one. Self-tests: `--selftest-cancel-question shot.png`; `NOCRY_TEST_CANCEL_MS=n` presses Cancel n ms after a risky operation offers it.
+
+## Added after 0.2.0-beta.2
+
+- **Advanced, "Rescue system…":** whether the rescue image is stored on the board (and how many of its two copies are good), install it, remove it; says so when the boot loader is too old to find it.
+- **Advanced, "Board tools…":** eMMC health, fsck of userdata and rootfs_data, saving the logs and the printer configuration, and a file browser for userdata (list, download, upload, delete; 32 MiB per file).
+- **Firmware slots:** setting another slot active puts it on trial for 3 starts by default (nocryboot returns to the other slot if the firmware never reports a successful start); the tick box is greyed out with the reason where a trial is not possible.
+- **Connect over the network:** says that the rescue system accepts nocry over the network only after it is switched on at the board.
+- `nocry-gui --selftest-dialogs PREFIX` builds these dialogs without a board and saves a picture of each.
+
+None of these has been used against a board yet.

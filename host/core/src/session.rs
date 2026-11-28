@@ -1209,6 +1209,48 @@ pub struct Slots {
     pub loader_counts: bool,
 }
 
+impl Slots {
+    /// Why `start_trial` refuses to put `slot` ("a"/"b") on trial, as far as the slots tell:
+    /// a short code ("incomplete", "loader", "nebulaos", "other") and the message. `None`: no
+    /// objection here (storing the success script in rootfs_data can still fail).
+    pub fn trial_refusal(&self, slot: &str) -> Option<(&'static str, String)> {
+        let (info, other) = if slot == "a" { (&self.a, &self.b) } else { (&self.b, &self.a) };
+        if !info.bootable() {
+            return Some(("incomplete", format!("slot {} has no complete firmware installed; the board would not start from it", slot.to_uppercase())));
+        }
+        if !self.loader_counts {
+            return Some((
+                "loader",
+                "the loader on this board does not count starts (it is the factory loader or an older nocryboot); \
+                 a trial needs nocryboot with the start counter. Nothing was changed"
+                    .into(),
+            ));
+        }
+        if info.firmware_name == crate::boards::firmware_name(crate::boards::NEBULAOS) {
+            return Some((
+                "nebulaos",
+                format!(
+                    "slot {} holds NebulaOS, which does not report a successful start to nocryboot (nocry's report script \
+                     lives in the rootfs_data overlay, which NebulaOS does not use). A trial would always end by going back to \
+                     the other slot. Nothing was changed",
+                    slot.to_uppercase()
+                ),
+            ));
+        }
+        if !other.bootable() {
+            return Some((
+                "other",
+                format!(
+                    "slot {} has no complete firmware, so there is nothing to go back to if slot {} fails. Nothing was changed",
+                    if slot == "a" { "B" } else { "A" },
+                    slot.to_uppercase()
+                ),
+            ));
+        }
+        None
+    }
+}
+
 /// What nocryboot wrote (or was told) in the second sector of the `ota` partition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootNote {
@@ -1348,30 +1390,8 @@ pub fn start_trial(soc: &SocProfile, via: Via, slot: &str, tries: u8, target: Op
     }
     let t = open_target(soc, target, Want::Rw, true, false, None, None, via)?;
     let (g, mut s) = read_slots(&t)?;
-    let (info, other) = if slot == "a" { (&s.a, &s.b) } else { (&s.b, &s.a) };
-    if !info.bootable() {
-        bail!("slot {} has no complete firmware installed; the board would not start from it", slot.to_uppercase());
-    }
-    if !s.loader_counts {
-        bail!(
-            "the loader on this board does not count starts (it is the factory loader or an older nocryboot); \
-             a trial needs nocryboot with the start counter. Nothing was changed"
-        );
-    }
-    if info.firmware_name == crate::boards::firmware_name(crate::boards::NEBULAOS) {
-        bail!(
-            "slot {} holds NebulaOS, which does not report a successful start to nocryboot (nocry's report script \
-             lives in the rootfs_data overlay, which NebulaOS does not use). A trial would always end by going back to \
-             the other slot. Nothing was changed",
-            slot.to_uppercase()
-        );
-    }
-    if !other.bootable() {
-        bail!(
-            "slot {} has no complete firmware, so there is nothing to go back to if slot {} fails. Nothing was changed",
-            if slot == "a" { "B" } else { "A" },
-            slot.to_uppercase()
-        );
+    if let Some((_, why)) = s.trial_refusal(slot) {
+        bail!(why);
     }
     // 1. the success script, so a working system can say so. Without it the trial would always fail.
     t.put_file("rootfs_data", CONFIRM_SCRIPT_PATH, 0o755, CONFIRM_SCRIPT.as_bytes()).context(

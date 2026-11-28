@@ -247,6 +247,15 @@ public:
         irow->addWidget(pictureButton);
         irow->addStretch(1);
         av->addLayout(irow);
+        rescueButton = new QPushButton(tr("Rescue system…"));
+        rescueButton->setToolTip(tr("Show, install or remove the rescue image stored on the board (started by nocryboot when the screen is held at power-on)"));
+        boardToolsButton = new QPushButton(tr("Board tools…"));
+        boardToolsButton->setToolTip(tr("eMMC health, fsck, logs, printer configuration and the files in userdata, through the recovery or rescue system"));
+        auto *brow = new QHBoxLayout;
+        brow->addWidget(rescueButton);
+        brow->addWidget(boardToolsButton);
+        brow->addStretch(1);
+        av->addLayout(brow);
         tabs->addTab(adv, tr("Advanced"));
         connect(parts, &QTableWidget::itemSelectionChanged, this, [this] { updateButtons(); });
         connect(partBackupButton, &QPushButton::clicked, this, [this] { choosePartBackup(); });
@@ -256,6 +265,8 @@ public:
         connect(eraseAllButton, &QPushButton::clicked, this, [this] { chooseEraseAll(); });
         connect(loaderButton, &QPushButton::clicked, this, [this] { startLoader(0, {}); });
         connect(pictureButton, &QPushButton::clicked, this, [this] { startPicture(-1); });
+        connect(rescueButton, &QPushButton::clicked, this, [this] { startRescue(0, {}); });
+        connect(boardToolsButton, &QPushButton::clicked, this, [this] { chooseBoardTools(); });
 
         // --- Activity log
         log = new QPlainTextEdit;
@@ -509,11 +520,15 @@ public:
         if (busy)
             return;
         setBusy(true);
-        log->appendPlainText(switchTo.isEmpty() ? tr("Reading the firmware slots…") : tr("Setting slot %1 active…").arg(switchTo.toUpper()));
-        const QByteArray slotArg = switchTo.toUtf8();
+        // "try:a"/"try:b": on trial, as `nocry slots --set X --try 3`
+        const bool trial = switchTo.startsWith("try:");
+        const QString target = trial ? switchTo.mid(4) : switchTo;
+        log->appendPlainText(switchTo.isEmpty() ? tr("Reading the firmware slots…")
+                             : trial ? tr("Setting slot %1 active on trial (3 starts)…").arg(target.toUpper()) : tr("Setting slot %1 active…").arg(target.toUpper()));
+        const QByteArray slotArg = target.toUtf8();
         const QByteArray safety = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8();
         auto *w = new QFutureWatcher<QJsonObject>(this);
-        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, switchTo] {
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w, switchTo, trial] {
             const QJsonObject o = w->result();
             w->deleteLater();
             setBusy(false);
@@ -525,7 +540,11 @@ public:
                     QMessageBox::critical(this, tr("Firmware slots"), o.value("error").toString());
             } else if (!switchTo.isEmpty()) {
                 infoStale = true;
-                const QString msg = tr("Slot %1 is now the active slot. It boots at the next power-on.").arg(o.value("active").toString().toUpper());
+                const QString act = o.value("active").toString().toUpper();
+                const QString msg = trial
+                    ? tr("Slot %1 is now the active slot, on trial. It boots at the next power-on. Unless the firmware reports a successful start within 3 starts, "
+                         "nocryboot returns to slot %2.").arg(act, act == "A" ? "B" : "A")
+                    : tr("Slot %1 is now the active slot. It boots at the next power-on.").arg(act);
                 log->appendPlainText(msg);
                 if (!quiet)
                     QMessageBox::information(this, tr("Firmware slots"), msg);
@@ -539,8 +558,9 @@ public:
             if (onIdle)
                 onIdle();
         });
-        w->setFuture(QtConcurrent::run([slotArg, safety] {
-            return takeJson(slotArg.isEmpty() ? nocry_slots_json() : nocry_set_active_slot_json(slotArg.constData(), safety.constData()));
+        w->setFuture(QtConcurrent::run([slotArg, safety, trial] {
+            return takeJson(slotArg.isEmpty() ? nocry_slots_json()
+                            : trial ? nocry_start_trial_json(slotArg.constData(), 3) : nocry_set_active_slot_json(slotArg.constData(), safety.constData()));
         }));
     }
 
@@ -863,6 +883,395 @@ public:
         return choice;
     }
 
+    // The rescue image stored on the board. action 0: read its state and offer what can be done;
+    // 1: install it (image: the file, or empty for nocry-rescue.uImage among the board images); 2: remove it.
+    void startRescue(int action, const QString &image)
+    {
+        const QByteArray f = image.toUtf8();
+        if (action != 0) {
+            runAdvanced(action == 1 ? tr("Installing the rescue image") : tr("Removing the rescue image"),
+                [action, f] { return takeJson(nocry_rescue_json(action, f.isEmpty() ? nullptr : f.constData())); },
+                [action](const QJsonObject &o) {
+                    if (action == 2)
+                        return tr("Rescue image removed.");
+                    const int n = o.value("copies").toInt();
+                    QString msg = tr("Rescue image installed and verified (%1 of 2 copies).").arg(n);
+                    if (n < 2)
+                        msg += tr("\n\nOne slot has no room for a copy: its firmware image extends into the last 50 MiB of the rootfs partition.");
+                    msg += tr("\n\nTo start it, hold a finger on the screen while switching the board on.");
+                    msg += o.value("loader_old").toBool()
+                        ? tr("\n\nThe boot loader on this board is older than nocryboot 0.4 and does not look where the rescue image is stored. "
+                             "Update it: Advanced > Boot loader… > Update nocryboot…")
+                        : tr("\n\nThis requires nocryboot 0.4 or later as the boot loader (Advanced > Boot loader…).");
+                    return msg;
+                });
+            return;
+        }
+        if (busy)
+            return;
+        setBusy(true);
+        log->appendPlainText(tr("Reading the rescue image state…"));
+        auto *w = new QFutureWatcher<QJsonObject>(this);
+        connect(w, &QFutureWatcher<QJsonObject>::finished, this, [this, w] {
+            const QJsonObject o = w->result();
+            w->deleteLater();
+            setBusy(false);
+            pollState();
+            lastResult = o;
+            if (!o.value("ok").toBool()) {
+                log->appendPlainText(tr("Rescue system: %1").arg(o.value("error").toString()));
+                if (!quiet)
+                    QMessageBox::critical(this, tr("Rescue system"), o.value("error").toString());
+            } else if (!quiet) {
+                const auto [act, file] = chooseRescue(o);
+                if (act != 0) {
+                    startRescue(act, file);
+                    return;
+                }
+            }
+            if (onIdle)
+                onIdle();
+        });
+        w->setFuture(QtConcurrent::run([] { return takeJson(nocry_rescue_json(0, nullptr)); }));
+    }
+
+    static QString rescueText(const QJsonObject &o)
+    {
+        const QString stored = o.value("stored").toString();
+        return stored == "yes" ? tr("stored, verified (%1 of 2 copies)").arg(o.value("copies").toInt())
+               : stored == "damaged" ? tr("damaged (checksum mismatch); install it again") : tr("not stored");
+    }
+
+    // Shows what the board has and returns what to do: {0,""} nothing, {1,file} install, {2,""} remove.
+    std::pair<int, QString> chooseRescue(const QJsonObject &o)
+    {
+        const QString image = o.value("image").toString();
+        log->appendPlainText(tr("Rescue image on the board: %1").arg(rescueText(o)));
+        QDialog d(this);
+        d.setWindowTitle(tr("Rescue System"));
+        auto *v = new QVBoxLayout(&d);
+        auto *intro = new QLabel(tr("The rescue image is a recovery system stored on the board itself (Nebula Pad family). It is started by holding a finger on the screen "
+                                    "at power-on and needs nocryboot 0.4 or later as the boot loader. The board can then be repaired from its touchscreen or over the network, without USB."));
+        intro->setWordWrap(true);
+        intro->setMinimumWidth(560);
+        v->setSizeConstraint(QLayout::SetMinimumSize);
+        v->addWidget(intro);
+        auto *f = new QFormLayout;
+        f->addRow(tr("Rescue image on the board:"), new QLabel(rescueText(o)));
+        f->addRow(tr("Available:"), new QLabel(image.isEmpty() ? tr("no nocry-rescue.uImage among the board images; Install asks for a file") : QDir::toNativeSeparators(image)));
+        v->addLayout(f);
+        if (o.value("loader_old").toBool()) {
+            auto *l = new QLabel(tr("The boot loader on this board is older than nocryboot 0.4 and does not look where the rescue image is stored. Update it: Boot loader… > Update nocryboot…"));
+            l->setWordWrap(true);
+            v->addWidget(l);
+        }
+        std::pair<int, QString> choice{0, {}};
+        auto *row = new QHBoxLayout;
+        auto *inst = new QPushButton(tr("Install rescue image…"));
+        auto *rem = new QPushButton(tr("Remove rescue image…"));
+        rem->setEnabled(o.value("stored").toString() != "no");
+        row->addWidget(inst);
+        row->addWidget(rem);
+        row->addStretch(1);
+        v->addLayout(row);
+        connect(inst, &QPushButton::clicked, &d, [&] {
+            QString file = image;
+            if (file.isEmpty())
+                file = QFileDialog::getOpenFileName(&d, tr("Select rescue image"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("Rescue images (*.uImage);;All files (*)"));
+            if (file.isEmpty())
+                return;
+            QMessageBox box(QMessageBox::Warning, tr("Rescue system"), tr("Install the rescue image on this board?"), QMessageBox::Cancel, &d);
+            box.setInformativeText(tr("The last 50 MiB of each rootfs partition (rootfs and rootfs2), behind the firmware image, are overwritten with a copy of the rescue image. "
+                                      "A slot whose firmware image extends into that area gets no copy. Each copy is read back and verified.\n\nImage: %1\n\n"
+                                      "Firmware, rootfs_data, userdata and the identity record are not modified.").arg(QDir::toNativeSeparators(file)));
+            auto *go = box.addButton(tr("Install"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() != go)
+                return;
+            choice = {1, file};
+            d.accept();
+        });
+        connect(rem, &QPushButton::clicked, &d, [&] {
+            QMessageBox box(QMessageBox::Warning, tr("Rescue system"), tr("Remove the rescue image from this board?"), QMessageBox::Cancel, &d);
+            box.setInformativeText(tr("Both copies of the rescue image, in the last 50 MiB of the rootfs partitions, are erased. Holding a finger on the screen at power-on "
+                                      "then no longer starts the rescue system.\n\nFirmware, rootfs_data, userdata and the identity record are not modified."));
+            auto *go = box.addButton(tr("Remove"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() != go)
+                return;
+            choice = {2, {}};
+            d.accept();
+        });
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        v->addWidget(bb);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        d.exec();
+        return choice;
+    }
+
+    // fsck on the board ("data": userdata, "settings": rootfs_data): a job the board runs; the core waits for it.
+    void startBoardCheck(const QString &which)
+    {
+        const QString part = which == "settings" ? QStringLiteral("rootfs_data") : QStringLiteral("userdata");
+        const QByteArray a = which.toUtf8();
+        runAdvanced(tr("Checking %1 (fsck)").arg(part), [a] { return takeJson(nocry_board_json("check", a.constData(), nullptr)); },
+            [part](const QJsonObject &o) { return tr("fsck on %1 finished: %2").arg(part, o.value("message").toString()); }, true);
+    }
+
+    // What the board does for its own repair (recovery or rescue system): eMMC health, fsck, the log and
+    // configuration bundles, the files in userdata. The short actions run while the dialog stays open;
+    // fsck closes it and runs like every other operation, with progress and Cancel.
+    void chooseBoardTools()
+    {
+        if (busy)
+            return;
+        struct ToolsDialog : QDialog {
+            using QDialog::QDialog;
+            bool working = false;      // an action is under way: stay open until it ends
+            void reject() override
+            {
+                if (!working)
+                    QDialog::reject();
+            }
+        };
+        ToolsDialog d(this);
+        d.setWindowTitle(tr("Board Tools"));
+        const QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        auto *v = new QVBoxLayout(&d);
+        auto *intro = new QLabel(tr("Actions run by the board itself, in the recovery or rescue system. From USB boot mode the recovery system is started first (RAM only)."));
+        intro->setWordWrap(true);
+        intro->setMinimumWidth(560);
+        v->addWidget(intro);
+        auto *panel = new QWidget;      // disabled as a whole while an action runs
+        auto *pv = new QVBoxLayout(panel);
+        pv->setContentsMargins(0, 0, 0, 0);
+        v->addWidget(panel, 1);
+        auto *status = new QLabel;
+        status->setWordWrap(true);
+        v->addWidget(status);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        v->addWidget(bb);
+        connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+
+        // one action off the UI thread; the window counts as busy meanwhile (no USB polling, progress shown)
+        auto run = [&](const QString &what, std::function<QJsonObject()> job, std::function<void(const QJsonObject &)> done) {
+            d.working = true;
+            setBusy(true);
+            panel->setEnabled(false);
+            bb->setEnabled(false);
+            status->setText(what + QStringLiteral("…"));
+            auto *w = new QFutureWatcher<QJsonObject>(&d);
+            connect(w, &QFutureWatcher<QJsonObject>::finished, &d, [&, w, what, done] {
+                const QJsonObject o = w->result();
+                w->deleteLater();
+                d.working = false;
+                setBusy(false);
+                pollState();
+                panel->setEnabled(true);
+                bb->setEnabled(true);
+                if (o.value("ok").toBool()) {
+                    status->clear();
+                    done(o);
+                } else {
+                    log->appendPlainText(tr("%1 failed: %2").arg(what, o.value("error").toString()));
+                    status->setText(tr("<b>%1 failed.</b> %2").arg(what.toHtmlEscaped(), o.value("error").toString().toHtmlEscaped()));
+                }
+            });
+            w->setFuture(QtConcurrent::run(job));
+        };
+        auto report = [&](const QString &msg) {
+            log->appendPlainText(msg);
+            status->setText(msg.toHtmlEscaped());
+        };
+
+        // --- eMMC health
+        auto *hbox = new QGroupBox(tr("eMMC health"));
+        auto *hrow = new QHBoxLayout(hbox);
+        auto *hf = new QFormLayout;
+        hrow->addLayout(hf, 1);
+        QLabel *chip = new QLabel(QStringLiteral("—")), *wear = new QLabel(QStringLiteral("—")), *spare = new QLabel(QStringLiteral("—")), *usage = new QLabel(QStringLiteral("—"));
+        hf->addRow(tr("Chip:"), chip);
+        hf->addRow(tr("Wear (rated life used):"), wear);
+        hf->addRow(tr("Spare blocks:"), spare);
+        hf->addRow(tr("userdata:"), usage);
+        auto *readHealth = new QPushButton(tr("Read"));
+        hrow->addWidget(readHealth, 0, Qt::AlignTop);
+        pv->addWidget(hbox);
+
+        // --- fsck and the bundles
+        auto *crow = new QHBoxLayout;
+        auto *checkData = new QPushButton(tr("Check userdata (fsck)…"));
+        auto *checkSettings = new QPushButton(tr("Check rootfs_data (fsck)…"));
+        auto *saveLogs = new QPushButton(tr("Save logs…"));
+        auto *saveConfig = new QPushButton(tr("Save printer configuration…"));
+        for (QPushButton *b : {checkData, checkSettings, saveLogs, saveConfig})
+            crow->addWidget(b);
+        crow->addStretch(1);
+        pv->addLayout(crow);
+        QString check;      // "data"/"settings": fsck to run once the dialog has closed
+        auto askCheck = [&](const QString &which, const QString &part) {
+            QMessageBox box(QMessageBox::Warning, tr("Board tools"), tr("Run fsck on %1?").arg(part), QMessageBox::Cancel, &d);
+            box.setInformativeText(tr("fsck checks the %1 file system on the board and repairs what it finds. Repairs modify %1: damaged files can be moved to lost+found or removed.\n\n"
+                                      "This can take several minutes. Do not unplug the board; the result is shown when the board has finished.").arg(part));
+            auto *go = box.addButton(tr("Run fsck"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() != go)
+                return;
+            check = which;
+            d.accept();
+        };
+        connect(checkData, &QPushButton::clicked, &d, [&] { askCheck(QStringLiteral("data"), QStringLiteral("userdata")); });
+        connect(checkSettings, &QPushButton::clicked, &d, [&] { askCheck(QStringLiteral("settings"), QStringLiteral("rootfs_data")); });
+        auto saveBundle = [&](bool logs) {
+            const QString fn = QStringLiteral("nocry-%1-%2.tar.gz").arg(logs ? QStringLiteral("logs") : QStringLiteral("config"), QDate::currentDate().toString("yyyyMMdd"));
+            const QString p = QFileDialog::getSaveFileName(&d, logs ? tr("Save logs as") : tr("Save printer configuration as"), QDir(docs).filePath(fn), tr("Archives (*.tar.gz);;All files (*)"));
+            if (p.isEmpty())
+                return;
+            const QByteArray pb = p.toUtf8();
+            run(logs ? tr("Saving the logs") : tr("Saving the printer configuration"),
+                [logs, pb] { return takeJson(nocry_board_json("bundle", logs ? "logs" : "config", pb.constData())); },
+                [&, logs, p](const QJsonObject &o) {
+                    report((logs ? tr("Logs saved to %1 (%2).") : tr("Printer configuration saved to %1 (%2)."))
+                               .arg(QDir::toNativeSeparators(p), QLocale().formattedDataSize(qint64(o.value("bytes").toDouble()))));
+                });
+        };
+        connect(saveLogs, &QPushButton::clicked, &d, [&] { saveBundle(true); });
+        connect(saveConfig, &QPushButton::clicked, &d, [&] { saveBundle(false); });
+
+        // --- the files in userdata
+        auto *fbox = new QGroupBox(tr("Files in userdata (the printer's /usr/data)"));
+        auto *fv = new QVBoxLayout(fbox);
+        auto *where = new QLabel(QStringLiteral("/"));
+        where->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        fv->addWidget(where);
+        auto *list = new QListWidget;
+        list->setMinimumHeight(180);
+        fv->addWidget(list, 1);
+        auto *frow = new QHBoxLayout;
+        auto *up = new QPushButton(tr("Up")), *refresh = new QPushButton(tr("Refresh")), *get = new QPushButton(tr("Download…"));
+        auto *put = new QPushButton(tr("Upload…")), *del = new QPushButton(tr("Delete…"));
+        for (QPushButton *b : {up, refresh, get, put, del})
+            frow->addWidget(b);
+        frow->addStretch(1);
+        fv->addLayout(frow);
+        pv->addWidget(fbox, 1);
+        QString cwd = QStringLiteral("/"), after;      // after: what to show once the folder has been listed again
+        bool listed = false;
+        auto child = [&](const QString &name) { return cwd == QStringLiteral("/") ? cwd + name : cwd + QLatin1Char('/') + name; };
+        auto selection = [&] {
+            QListWidgetItem *it = list->currentItem();
+            const bool file = it && !it->data(Qt::UserRole + 1).toBool();
+            up->setEnabled(cwd != QStringLiteral("/"));
+            get->setEnabled(file);
+            put->setEnabled(listed);
+            del->setEnabled(it != nullptr);
+        };
+        std::function<void(const QString &)> listDir = [&](const QString &dir) {
+            const QByteArray a = dir.toUtf8();
+            run(tr("Listing %1").arg(dir), [a] { return takeJson(nocry_board_json("ls", a.constData(), nullptr)); }, [&, dir](const QJsonObject &o) {
+                cwd = dir;
+                listed = true;
+                where->setText(dir);
+                list->clear();
+                for (const auto &ev : o.value("entries").toArray()) {
+                    const QJsonObject e = ev.toObject();
+                    const QString name = e.value("name").toString();
+                    const bool isDir = e.value("dir").toBool();
+                    auto *it = new QListWidgetItem(isDir ? name + QLatin1Char('/') : tr("%1 — %2").arg(name, QLocale().formattedDataSize(qint64(e.value("size").toDouble()))));
+                    it->setData(Qt::UserRole, name);
+                    it->setData(Qt::UserRole + 1, isDir);
+                    list->addItem(it);
+                }
+                status->setText(after.toHtmlEscaped());
+                after.clear();
+                selection();
+            });
+        };
+        connect(list, &QListWidget::currentItemChanged, &d, [&] { selection(); });
+        connect(list, &QListWidget::itemActivated, &d, [&](QListWidgetItem *it) {
+            if (it->data(Qt::UserRole + 1).toBool())
+                listDir(child(it->data(Qt::UserRole).toString()));
+        });
+        connect(up, &QPushButton::clicked, &d, [&] { listDir(cwd.lastIndexOf('/') > 0 ? cwd.left(cwd.lastIndexOf('/')) : QStringLiteral("/")); });
+        connect(refresh, &QPushButton::clicked, &d, [&] { listDir(cwd); });
+        connect(get, &QPushButton::clicked, &d, [&] {
+            const QString name = list->currentItem()->data(Qt::UserRole).toString(), path = child(name);
+            const QString p = QFileDialog::getSaveFileName(&d, tr("Save %1 as").arg(name), QDir(docs).filePath(name));
+            if (p.isEmpty())
+                return;
+            const QByteArray a = path.toUtf8(), pb = p.toUtf8();
+            run(tr("Downloading %1").arg(path), [a, pb] { return takeJson(nocry_board_json("get", a.constData(), pb.constData())); }, [&, path, p](const QJsonObject &o) {
+                report(tr("%1 saved to %2 (%3).").arg(path, QDir::toNativeSeparators(p), QLocale().formattedDataSize(qint64(o.value("bytes").toDouble()))));
+            });
+        });
+        connect(put, &QPushButton::clicked, &d, [&] {
+            const QString f = QFileDialog::getOpenFileName(&d, tr("Select file to upload to %1").arg(cwd), docs);
+            if (f.isEmpty())
+                return;
+            const QString name = QFileInfo(f).fileName(), path = child(name);
+            for (int i = 0; i < list->count(); i++) {
+                if (list->item(i)->data(Qt::UserRole).toString() != name)
+                    continue;
+                QMessageBox box(QMessageBox::Warning, tr("Board tools"), tr("Overwrite \"%1\" in userdata?").arg(path), QMessageBox::Cancel, &d);
+                box.setInformativeText(tr("%1 on the board is replaced by %2. The file on the board is not kept.").arg(path, QDir::toNativeSeparators(f)));
+                auto *go = box.addButton(tr("Overwrite"), QMessageBox::DestructiveRole);
+                box.setDefaultButton(QMessageBox::Cancel);
+                box.exec();
+                if (box.clickedButton() != go)
+                    return;
+            }
+            const QByteArray a = path.toUtf8(), fb = f.toUtf8();
+            run(tr("Uploading %1").arg(path), [a, fb] { return takeJson(nocry_board_json("put", a.constData(), fb.constData())); }, [&, path](const QJsonObject &o) {
+                after = tr("%1 stored (%2).").arg(path, QLocale().formattedDataSize(qint64(o.value("bytes").toDouble())));
+                log->appendPlainText(after);
+                listDir(cwd);
+            });
+        });
+        connect(del, &QPushButton::clicked, &d, [&] {
+            const QString path = child(list->currentItem()->data(Qt::UserRole).toString());
+            const bool isDir = list->currentItem()->data(Qt::UserRole + 1).toBool();
+            QMessageBox box(QMessageBox::Warning, tr("Board tools"), tr("Delete \"%1\" from userdata?").arg(path), QMessageBox::Cancel, &d);
+            box.setInformativeText(isDir ? tr("The folder %1 is deleted from userdata. Only an empty folder can be deleted.").arg(path)
+                                         : tr("The file %1 is deleted from userdata. Not reversible.").arg(path));
+            auto *go = box.addButton(tr("Delete"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() != go)
+                return;
+            const QByteArray a = path.toUtf8();
+            run(tr("Deleting %1").arg(path), [a] { return takeJson(nocry_board_json("rm", a.constData(), nullptr)); }, [&, path](const QJsonObject &) {
+                after = tr("%1 deleted.").arg(path);
+                log->appendPlainText(after);
+                listDir(cwd);
+            });
+        });
+        selection();
+
+        auto health = [&] {
+            run(tr("Reading eMMC health"), [] { return takeJson(nocry_board_json("health", nullptr, nullptr)); }, [&](const QJsonObject &o) {
+                const QString a = o.value("wear_a").toString(), b = o.value("wear_b").toString();
+                const bool readable = o.value("data_state").toString() == "readable";
+                chip->setText(o.value("chip").toString());
+                wear->setText(a == b ? tr("%1 % (type A)").arg(a) : tr("%1 % (type A), %2 % (type B)").arg(a, b));
+                spare->setText(o.value("spare").toString());
+                usage->setText(readable ? tr("%1 MB used of %2 MB, %3 MB free").arg(o.value("data_used_mb").toInt()).arg(o.value("data_total_mb").toInt()).arg(o.value("data_free_mb").toInt())
+                                        : o.value("data_state").toString());
+                log->appendPlainText(tr("eMMC %1: wear %2, spare blocks: %3; userdata: %4").arg(chip->text(), wear->text(), spare->text(), usage->text()));
+                if (readable && !listed)
+                    listDir(cwd);
+            });
+        };
+        connect(readHealth, &QPushButton::clicked, &d, [&] { health(); });
+        if (!noDevice())
+            QTimer::singleShot(0, &d, [&] { health(); });
+        d.exec();
+        if (!check.isEmpty())
+            startBoardCheck(check);
+    }
+
     QByteArray safetyDir() const { return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("safety").toUtf8(); }
 
     void startPartBackup(const QString &name, const QString &path)
@@ -1004,6 +1413,27 @@ public:
         return o.value("ok").toBool();
     }
     void openBootHelp() { showBootHelp(); }
+    // --selftest-dialogs: the dialogs added for the rescue image, the board tools and the trial, with made-up states
+    void testDialog(int i)
+    {
+        const QJsonObject fw{{"bootable", true}, {"firmware_name", "Nebula Pad"}, {"firmware_version", "1.1.0.30"}};
+        QJsonObject two{{"ok", true}, {"active", "a"}, {"a", fw}, {"b", fw}, {"loader_counts", true}, {"note", ""},
+                          {"trial_a", ""}, {"trial_a_why", ""}, {"trial_b", ""}, {"trial_b_why", ""}};
+        if (i == 0) {
+            chooseRescue(QJsonObject{{"ok", true}, {"stored", "damaged"}, {"copies", 0}, {"loader_old", true}, {"image", ""}});
+        } else if (i == 1) {
+            chooseBoardTools();
+        } else if (i == 2) {
+            chooseSlot(two);
+        } else if (i == 3) {
+            two["loader_counts"] = false;
+            two["trial_a"] = two["trial_b"] = "loader";
+            two["trial_a_why"] = two["trial_b_why"] = "the loader on this board does not count starts";
+            chooseSlot(two);
+        } else {
+            chooseNetwork();
+        }
+    }
     void fetchBoardLog() { showBoardLog(); }
     void testSecureWipe() { startSecureWipe(); }
     // self-test entry points (no dialogs)
@@ -1121,6 +1551,19 @@ private:
         if (!a.value("bootable").toBool() || !b.value("bootable").toBool())
             v->addWidget(new QLabel(tr("A slot without complete firmware cannot be set active.")));
         v->addWidget(new QLabel(tr("rootfs_data and userdata are shared by both slots and are not changed.")));
+        if (!o.value("note").toString().isEmpty()) {
+            auto *note = new QLabel(tr("nocryboot: %1.").arg(o.value("note").toString()));
+            note->setWordWrap(true);
+            v->addWidget(note);
+        }
+        // on trial: nocryboot counts the starts and returns to the other slot by itself
+        auto *trial = new QCheckBox(tr("Trial: return to the other slot if this one does not start within 3 starts"));
+        auto *trialWhy = new QLabel;
+        trialWhy->setWordWrap(true);
+        v->addWidget(trial);
+        v->addWidget(trialWhy);
+        bool wantTrial = true;
+        connect(trial, &QCheckBox::clicked, &d, [&wantTrial](bool on) { wantTrial = on; });
         // copying one slot's firmware over the other
         QString copyFrom;
         auto *copyRow = new QHBoxLayout;
@@ -1153,7 +1596,20 @@ private:
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         bb->button(QDialogButtonBox::Ok)->setText(tr("Set active"));
         v->addWidget(bb);
-        auto update = [=] { bb->button(QDialogButtonBox::Ok)->setEnabled((ra->isChecked() ? "a" : "b") != active); };
+        auto update = [&, bb, ra, trial, trialWhy] {
+            const QString pick = ra->isChecked() ? "a" : "b", P = pick.toUpper(), O = pick == "a" ? "B" : "A";
+            bb->button(QDialogButtonBox::Ok)->setEnabled(pick != active);
+            // the conditions are the core's (Slots::trial_refusal); its full message is the tool tip
+            const QString why = o.value("trial_" + pick).toString();
+            trial->setEnabled(why.isEmpty());
+            trial->setChecked(why.isEmpty() && wantTrial);
+            trialWhy->setToolTip(o.value("trial_" + pick + "_why").toString());
+            trialWhy->setText(why.isEmpty() ? tr("Requires rootfs_data: the script that reports a successful start is stored there. After a factory reset or clean install, boot the printer once first.")
+                              : why == "loader" ? tr("Not available: the boot loader on this board does not count starts (factory loader or an older nocryboot).")
+                              : why == "nebulaos" ? tr("Not available: slot %1 holds NebulaOS, which does not report a successful start to nocryboot.").arg(P)
+                              : why == "other" ? tr("Not available: slot %1 has no complete firmware to return to.").arg(O)
+                              : tr("Not available: slot %1 has no complete firmware.").arg(P));
+        };
         connect(ra, &QRadioButton::toggled, &d, update);
         update();
         connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
@@ -1162,7 +1618,7 @@ private:
             return QString();
         if (!copyFrom.isEmpty())
             return QStringLiteral("copy:") + copyFrom;
-        return ra->isChecked() ? "a" : "b";
+        return (trial->isEnabled() && trial->isChecked() ? QStringLiteral("try:") : QString()) + (ra->isChecked() ? "a" : "b");
     }
 
     // 0 = cancelled, 1 = restore, 2 = restore a different board's backup (copies its identity)
@@ -1232,7 +1688,9 @@ private:
         auto *v = new QVBoxLayout(&d);
         auto *intro = new QLabel(tr("A board running nocry-rescue can be used over Wi-Fi instead of USB.\n\n"
                                     "This computer must be on the same network as the board. If the board is in access point mode, "
-                                    "connect this computer to the SSID shown on its screen first."));
+                                    "connect this computer to the SSID shown on its screen first.\n\n"
+                                    "Since 0.2.0-beta.2 the rescue system accepts nocry over the network only after it is switched on at the board: "
+                                    "Advanced > Remote access > \"nocry over the network\"."));
         intro->setWordWrap(true);
         intro->setMinimumWidth(500);
         v->addWidget(intro);
@@ -1334,7 +1792,8 @@ private:
             w->setFuture(QtConcurrent::run([ab, cb] { return takeJson(nocry_net_connect_json(ab.constData(), cb.constData())); }));
         });
         valid();
-        search();
+        if (!noDevice())
+            search();
         code->setFocus();
         if (d.exec() == QDialog::Accepted)
             networkConnected(networkAddress);
@@ -1544,6 +2003,8 @@ private:
         identityButton->setEnabled(ok && parts->rowCount() > 0);
         loaderButton->setEnabled(ok && parts->rowCount() > 0);
         pictureButton->setEnabled(ok && parts->rowCount() > 0);
+        rescueButton->setEnabled(ok && parts->rowCount() > 0);
+        boardToolsButton->setEnabled(ok);
         eraseAllButton->setEnabled(ok);
     }
 
@@ -2039,6 +2500,11 @@ private:
                 progressLabel->setText(what);
                 return;
             }
+            if (!total) {       // a job on the board that does not say how far it is
+                progress->setRange(0, 0);
+                progressLabel->setText(what);
+                return;
+            }
             if (text == "downloading")
                 what = tr("Downloading");
             if (text == "reimage")
@@ -2126,9 +2592,16 @@ private:
         }
     }
 
+    // --selftest-dialogs: nothing is looked for on USB or the network, nothing is sent to a board
+    static bool noDevice()
+    {
+        static const bool v = QCoreApplication::arguments().contains(QStringLiteral("--selftest-dialogs"));
+        return v;
+    }
+
     void pollState()
     {
-        if (busy || polling)
+        if (busy || polling || noDevice())
             return;
         polling = true;
         auto *w = new QFutureWatcher<QJsonObject>(this);
@@ -2590,7 +3063,7 @@ private:
     QString pendingModel, pendingBoard;
     int pendingPicture = 2;     // boot logo choice for the install under way (see nocry_install3_json)
     QWidget *udevBanner = nullptr;
-    QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton, *loaderButton, *pictureButton;
+    QPushButton *partBackupButton, *partRestoreButton, *partEraseButton, *identityButton, *eraseAllButton, *loaderButton, *pictureButton, *rescueButton, *boardToolsButton;
     QJsonObject shell;
     QPushButton *readButton, *backupButton, *installButton, *switchButton, *resetButton, *restoreButton, *cancelButton;
     QString modelId;
@@ -2837,6 +3310,31 @@ int main(int argc, char **argv)
             }
         });
         QTimer::singleShot(90000, [] { QApplication::exit(2); });
+    }
+    // --selftest-dialogs PREFIX: open the Rescue System, Board Tools, Firmware Slots (trial possible / refused)
+    // and network dialogs with made-up states, save PREFIX.<name>.png of each. No board, USB or network access.
+    const int sdl = args.indexOf("--selftest-dialogs");
+    if (sdl > 0 && sdl + 1 < args.size()) {
+        const QString shot = args[sdl + 1];
+        const QStringList names{"rescue", "board-tools", "slots-trial", "slots-no-trial", "network"};
+        auto *seen = new int(0);
+        for (int i = 0; i < names.size(); i++) {
+            QTimer::singleShot(500 + i * 1500, [&w, i] { w.testDialog(i); });
+            QTimer::singleShot(1300 + i * 1500, [shot, names, seen, i] {
+                if (QWidget *m = QApplication::activeModalWidget()) {
+                    for (QRadioButton *r : m->findChildren<QRadioButton *>())
+                        if (r->isEnabled() && !r->isChecked()) {
+                            r->click();     // the inactive slot: what "Set active" and the trial are about
+                            break;
+                        }
+                    m->grab().save(QStringLiteral("%1.%2.png").arg(shot, names[i]));
+                    fprintf(stderr, "%s: %s\n", qPrintable(names[i]), qPrintable(m->windowTitle()));
+                    ++*seen;
+                    static_cast<QDialog *>(m)->reject();
+                }
+            });
+        }
+        QTimer::singleShot(500 + int(names.size()) * 1500, [seen, names] { QApplication::exit(*seen == names.size() ? 0 : 1); });
     }
     // --selftest-picture shot.png: open the Boot Logo dialog (needs NOCRY_TEST_TARGET, an image file)
     const int spi = args.indexOf("--selftest-picture");

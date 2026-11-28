@@ -1,15 +1,16 @@
-nocryboot: hold the screen at power-on to start the rescue system
+nocryboot: start the rescue system when the screen is held, or when no slot can start
 
 The Nebula Pad build reads the touch chip once at start (NS2009, I2C bit-banged on PC25/PC26).
 If the screen is pressed it looks for the rescue system, a Linux kernel as a uImage, in the
 last 50 MiB of each root file system partition (the slot that would start first, then the
 other), checks the header and the contents against the CRCs in the header, and starts it with
-nocry.rescue=touch. Anything missing or wrong and the board starts as always. Version 0.4
-(0.2 read a file on the data partition through a note in "ota"; 0.3, never released, had the
-copies in the last 32 MiB).
+nocry.rescue=touch. Anything missing or wrong and the board starts as always. The same is
+tried when neither slot can be started, before the board goes to USB boot mode. Version 0.5
+(0.4: only when the screen is held; 0.3, never released, had the copies in the last 32 MiB;
+0.2 read a file on the data partition through a note in "ota").
 ---
 diff --git a/common/spl/spl_jzsdhci.c b/common/spl/spl_jzsdhci.c
-index 6e6d88620..875ea35fa 100644
+index 6e6d88620..3e6871473 100644
 --- a/common/spl/spl_jzsdhci.c
 +++ b/common/spl/spl_jzsdhci.c
 @@ -2065,6 +2065,7 @@ void spl_mmc_mcu_rtos_boot(void)
@@ -20,7 +21,7 @@ index 6e6d88620..875ea35fa 100644
  extern const char nocryboot_ident[];
  
  /*
-@@ -2216,6 +2217,70 @@ static int nocryboot_slot_state(int slot_b)
+@@ -2216,6 +2217,78 @@ static int nocryboot_slot_state(int slot_b)
   *     nocryboot:incomplete=B    parts missing, left it
   *     nocryboot:unconfirmed=B   never reported success, but nothing else to start
   */
@@ -33,7 +34,8 @@ index 6e6d88620..875ea35fa 100644
 + * a kernel that needs no unpacking by the loader.  A copy is started only if the checksums
 + * of its header and of its contents are right; the copy in the slot that would start is
 + * tried first, then the other.  If neither is good this returns and the board starts as
-+ * always.
++ * always.  It is started when the screen is held at power-on, and by itself when no slot
++ * can be started (before the board gives up and goes to USB boot mode).
 + */
 +#define NB_SCRATCH	0x8f000000	/* far above anything loaded */
 +#define NB_RESCUE_ROOM	(50 << 11)	/* sectors: 50 MiB */
@@ -83,29 +85,46 @@ index 6e6d88620..875ea35fa 100644
 +	}
 +	if (nb_crc(table, (u8 *)(ih + 1), len) != c)
 +		return;
-+	puts("nocryboot: screen held; rescue\n");
++	puts("nocryboot: rescue\n");
 +	jump_to_image_linux("nocry.rescue=touch");
++}
++
++/* the copy in the slot that would start first, then the other; returns if neither is good */
++static void nocryboot_rescue(int slot)
++{
++	nocryboot_rescue_at(slot ? "rootfs2" : "rootfs");
++	nocryboot_rescue_at(slot ? "rootfs" : "rootfs2");
 +}
 +#endif
 +
  static char *nocryboot_load(void)
  {
  	char *buf = (char *)CONFIG_SYS_TEXT_BASE;
-@@ -2234,6 +2299,14 @@ static char *nocryboot_load(void)
+@@ -2234,6 +2307,13 @@ static char *nocryboot_load(void)
  	if (nocryboot_read_head(CONFIG_SPL_OTA_NAME, (u32 *)buf) &&
  	    !strncmp("ota:"CONFIG_SPL_OS_NAME2, buf, strlen("ota:"CONFIG_SPL_OS_NAME2)))
  		slot = 1;
 +#ifdef CONFIG_NOCRYBOOT_TOUCH
 +	/* the screen held at power-on asks for the rescue system */
 +	if (nocryboot_touch_held()) {
-+		nocryboot_rescue_at(slot ? "rootfs2" : "rootfs");
-+		nocryboot_rescue_at(slot ? "rootfs" : "rootfs2");
++		nocryboot_rescue(slot);
 +		puts("nocryboot: screen held, but no rescue system\n");
 +	}
 +#endif
  
  	spl_get_built_in_gpt_partition(CONFIG_SPL_OTA_NAME, &ota, NULL);
  	memset(buf, 0, 512);
+@@ -2250,6 +2330,10 @@ static char *nocryboot_load(void)
+ 			slot = !slot;
+ 			nocryboot_note(ota, "ota:", slot ? CONFIG_SPL_OS_NAME2 : CONFIG_SPL_OS_NAME, "\n\n");
+ 		} else if (!ok) {
++#ifdef CONFIG_NOCRYBOOT_TOUCH
++			/* nothing to start: the rescue system, if the board has one, before the door */
++			nocryboot_rescue(slot);
++#endif
+ 			nocryboot_usb_boot_mode("no slot can be started");
+ 		} else {
+ 			nocryboot_note(ota + 1, "nocryboot:unconfirmed=", slot ? "B" : "A", "\n");
 diff --git a/common/spl/spl_nocryboot.c b/common/spl/spl_nocryboot.c
 index bc17057ed..9f0476129 100644
 --- a/common/spl/spl_nocryboot.c
@@ -176,7 +195,7 @@ index bc17057ed..9f0476129 100644
   * Someone at the serial console asking for the door: at least three ESC
   * characters, and nothing else, received since the console came up.
 diff --git a/include/configs/nocryboot.h b/include/configs/nocryboot.h
-index 3eda3a42f..4f6213ed0 100644
+index 3eda3a42f..c3b4b2c85 100644
 --- a/include/configs/nocryboot.h
 +++ b/include/configs/nocryboot.h
 @@ -21,7 +21,7 @@
@@ -184,7 +203,7 @@ index 3eda3a42f..4f6213ed0 100644
  #define NOCRYBOOT_VERSION	"0.1-doortest"	/* never installed: it only opens the door */
  #else
 -#define NOCRYBOOT_VERSION	"0.1"
-+#define NOCRYBOOT_VERSION	"0.4"
++#define NOCRYBOOT_VERSION	"0.5"
  #endif
  
  #define CONFIG_ROOTFS_SQUASHFS

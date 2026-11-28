@@ -45,6 +45,15 @@ char *nocry_slots_json(void);
  * Returns the same JSON as nocry_slots_json with the new state. */
 char *nocry_set_active_slot_json(const char *slot, const char *safety_dir);
 
+/* Set slot "a" or "b" active on trial (as `nocry slots --set X --try N`): unless the booted system
+ * reports success within `tries` starts (1-9), nocryboot returns to the other slot. The core refuses
+ * when the loader does not count starts, the slot holds NebulaOS, the other slot is incomplete, or the
+ * success script cannot be stored in rootfs_data. Returns the slots JSON.
+ * The slots JSON also carries "loader_counts":bool, "note":"nocryboot's note in ota, or empty" and, per
+ * slot, "trial_a"/"trial_b": "" when a trial of that slot is possible as far as the slots tell, else
+ * "incomplete|loader|nebulaos|other", with the core's message in "trial_a_why"/"trial_b_why". */
+char *nocry_start_trial_json(const char *slot, int tries);
+
 /* Copy the firmware of slot `from` ("a"|"b") into the other slot, verified. The active slot,
  * settings and identity are not changed. Returns the slots JSON with the new state. */
 char *nocry_copy_slot_json(const char *from, const char *safety_dir);
@@ -148,6 +157,25 @@ char *nocry_net_connect_json(const char *address, const char *code);
  * action 3: look for the board on the networks this computer is on (up to 3 minutes, cancellable) and pair
  *   again with the code used before. {"ok":true,"address":"..."} */
 char *nocry_wifi_json(int action, const char *ssid, const char *password);
+
+/* The rescue image stored on the board (Nebula Pad family, started by nocryboot 0.4 or later when the
+ * screen is held at power-on). action 0: report; 1: install image (NULL: nocry-rescue.uImage among the
+ * board images), verified; 2: remove.
+ * {"ok":true,"stored":"yes|damaged|no","copies":0..2,"loader_old":bool,"image":"path action 1 would use, or empty"} */
+char *nocry_rescue_json(int action, const char *image);
+
+/* Repair actions run by the board itself (recovery or rescue system; as `nocry board ...`). verb:
+ * "health": {"ok":true,"chip","wear_a","wear_b","spare","data_state":"readable|...","data_total_mb",
+ *            "data_used_mb","data_free_mb"}
+ * "check":  fsck; arg "data" (userdata) or "settings" (rootfs_data). A job on the board, waited for;
+ *           cancellable. {"ok":true,"message":"the board's verdict"}
+ * "ls":     arg = folder of the data partition ("" or "/": its root). {"ok":true,"entries":[{"name","dir":bool,"size"}]}
+ * "get":    arg = file of the data partition, saved to `file` (up to 32 MiB). {"ok":true,"bytes":N}
+ * "put":    local `file` stored as arg (replaces a file of that name; up to 32 MiB). {"ok":true,"bytes":N}
+ * "rm":     arg = file or empty folder to delete. {"ok":true}
+ * "bundle": arg "logs" or "config": a tar.gz saved to `file`. {"ok":true,"bytes":N}
+ * Errors: {"ok":false,"cancelled":bool,"error":"..."} */
+char *nocry_board_json(const char *verb, const char *arg, const char *file);
 
 /* Ask the running operation to stop at its next safe point (callable from any thread). */
 void nocry_cancel(void);

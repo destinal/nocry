@@ -30,7 +30,8 @@ start() {
 	echo 0x0200 > bcdUSB; echo 0x0100 > bcdDevice
 	mkdir -p strings/0x409
 	echo nocry > strings/0x409/manufacturer
-	echo "nocry recovery" > strings/0x409/product
+	# desktops show "<manufacturer> <product>": "nocry recovery", or "nocry rescue" for the rescue system
+	if [ -x /usr/sbin/nocry-ui ]; then echo "rescue" > strings/0x409/product; else echo "recovery" > strings/0x409/product; fi
 	sn=$(dd if=/dev/mmcblk0 bs=512 skip=4096 count=1 2>/dev/null | cut -d';' -f1 | tr -cd 'A-Za-z0-9')
 	echo "${sn:-nocry}" > strings/0x409/serialnumber
 	mkdir -p configs/c.1/strings/0x409
