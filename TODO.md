@@ -67,6 +67,7 @@ Last updated: 2026-11-27.
 
 ## Done recently
 
+- [x] **Released v0.2.0-beta.2** (2026-11-27): rescue in the last 50 MiB of both slots (nocryboot 0.4), flash drives, web application, remote access, WPS, self-update, `install.sh`. beta.1 (rescue as a file on the data partition, nocryboot 0.2) was removed from GitHub so the two schemes are not mixed.
 - [x] **Released v0.2.0-beta.1** (2026-11-27): nocry-rescue on the board with touch interface and web pages, nocryboot 0.2 (hold the screen), NebulaOS catalog, boards over Wi-Fi, wording pass. Earlier pre-releases removed on the owner's request.
 - [x] **Released v0.1.0-alpha.4** (2026-11-27): nocryboot, loader installer, firmware on trial, nocry boot logo, K1 family. The packages themselves have not been run on a board.
 
