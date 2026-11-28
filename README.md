@@ -2,6 +2,14 @@
 
 A recovery, backup and firmware-installation tool for Ingenic X2000E-based Creality boards. It replaces Ingenic's Cloner with something safer and easier: everything it loads onto the board runs from RAM, every write is verified, and it cannot send eFuse or secure-boot commands.
 
+**Rescue system on the printer, in one command.** In a root shell on a Nebula Pad family printer (retail Nebula Pad, Ender-3 V3 KE, CR-10 SE, Ender-5 Max; ssh into it while it runs its normal firmware):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/destinal/nocry/main/install.sh | sh
+```
+
+Then switch the printer off, hold a finger on the screen and switch it on: the rescue system starts, with no computer needed. What the script checks and how to undo it: [below](#rescue-on-the-printer-without-a-computer).
+
 **Status: early.** Most of it has been run on a retail Creality Nebula Pad (and the same board converted to Ender-3 V3 KE firmware and back). On a K1 mainboard the loader, the recovery system and a full backup work; installing K1-family firmware has so far only been tested on image copies of that board. Use it at your own risk and take a backup first.
 
 ## Boards
